@@ -10,6 +10,7 @@
 ## memory plus installed skills can be written. That keeps an unattended
 ## background call unable to act on anything else.
 
+import ../config/environment
 import std/[os, strutils, tables]
 import chronos
 import ../core/log
@@ -52,10 +53,10 @@ type
 
 # ── config ────────────────────────────────────────────────────────────────────
 
-proc intervalFromEnv(name: string; fallback: int): int =
+proc intervalFromEnv(env: Environment; name: string; fallback: int): int =
   ## A missing or unparsable value keeps the default; a parsed zero is
   ## meaningful and disables that half of the review.
-  let raw = getEnv(name).strip
+  let raw = env.stripped(name)
   if raw.len == 0:
     return fallback
   try:
@@ -64,21 +65,21 @@ proc intervalFromEnv(name: string; fallback: int): int =
   except ValueError:
     fallback
 
-proc boolFromEnv(name: string; fallback: bool): bool =
-  let raw = getEnv(name).strip.toLowerAscii
+proc boolFromEnv(env: Environment; name: string; fallback: bool): bool =
+  let raw = env.stripped(name).toLowerAscii
   case raw
   of "", "auto": fallback
   of "1", "true", "yes", "on": true
   of "0", "false", "no", "off": false
   else: fallback
 
-proc reviewConfigFromEnv*(): ReviewConfig =
+proc reviewConfigFromEnv*(env: Environment): ReviewConfig =
   ## `DONKEY_REVIEW_ENABLED` gates the automatic post-turn pass; an explicit
   ## review (the `/refine` analogue) still works when it is off.
   ReviewConfig(
-    enabled:        boolFromEnv("DONKEY_REVIEW_ENABLED", true),
-    memoryInterval: intervalFromEnv("DONKEY_REVIEW_MEMORY_INTERVAL", DefaultMemoryInterval),
-    skillInterval:  intervalFromEnv("DONKEY_REVIEW_SKILL_INTERVAL", DefaultSkillInterval),
+    enabled:        env.boolFromEnv("DONKEY_REVIEW_ENABLED", true),
+    memoryInterval: env.intervalFromEnv("DONKEY_REVIEW_MEMORY_INTERVAL", DefaultMemoryInterval),
+    skillInterval:  env.intervalFromEnv("DONKEY_REVIEW_SKILL_INTERVAL", DefaultSkillInterval),
   )
 
 proc skillsHomeFor*(memory: MemoryRuntimePort; userId: UserId): string =

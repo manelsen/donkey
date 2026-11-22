@@ -8,6 +8,7 @@ import std/[json, options, os, strutils, unittest]
 import chronos
 import chronos/asyncsync
 import results
+import donkey/config/environment
 import donkey/app/native_tools
 import donkey/app/session_state
 import donkey/app/tools/audio_tools
@@ -56,6 +57,7 @@ proc stubComplete(req: CompletionRequest): Result[CompletionResponse, string] =
 proc baseCtx(paddock: string; http: HttpRuntimePort;
              channel = ckTelegram; replyTo = ""): NativeCtx =
   NativeCtx(
+    env:        environmentOf({"DONKEY_TTS_API_KEY": "voice-key"}),
     uid:        UserId("voice-user"),
     channel:    channel,
     outbox:     newAsyncQueue[OutboundMessage](),
@@ -65,6 +67,8 @@ proc baseCtx(paddock: string; http: HttpRuntimePort;
     paddockDir: paddock,
     replyTo:    replyTo,
   )
+
+let voiceSpeech = speechSettings(environmentOf({"DONKEY_TTS_API_KEY": "voice-key"}))
 
 proc runTests*() =
   suite "estimateSpeechSeconds":
@@ -87,19 +91,13 @@ proc runTests*() =
 
   suite "prepareVoiceReply":
 
-    setup:
-      putEnv("DONKEY_TTS_API_KEY", "voice-key")
-
-    teardown:
-      delEnv("DONKEY_TTS_API_KEY")
-
     test "telegram stores an opus file and describes the outbound voice":
       let dir = freshDir("ok")
       defer: removeDir(dir)
       let cap = PostCapture(status: 200, response: "OPUSBYTES")
       let prepared = prepareVoiceReply("olá mundo", "recado",
                                        dir, ckTelegram, UserId("u1"),
-                                       fakeHttp(cap))
+                                       fakeHttp(cap), voiceSpeech)
       check prepared.isOk
       check cap.posts == 1
       let body = parseJson(cap.body)
@@ -126,7 +124,8 @@ proc runTests*() =
       let cap = PostCapture(status: 200, response: "OPUSBYTES")
       let prepared = prepareVoiceReply("olá mundo", "recado",
                                        dir, ckTelegram, UserId("u1"),
-                                       fakeHttp(cap), replyTo = "77")
+                                       fakeHttp(cap), voiceSpeech,
+                                       replyTo = "77")
       check prepared.isOk
       check prepared.get().replyTo == "77"
 
@@ -136,7 +135,7 @@ proc runTests*() =
       let cap = PostCapture(status: 200, response: "OPUSBYTES")
       let prepared = prepareVoiceReply("olá mundo", "recado",
                                        dir, ckEmail, UserId("u1"),
-                                       fakeHttp(cap))
+                                       fakeHttp(cap), voiceSpeech)
       check prepared.isErr
       check prepared.error.len > 0
       check cap.posts == 0
@@ -148,7 +147,7 @@ proc runTests*() =
       let cap = PostCapture(status: 500, response: "boom")
       let prepared = prepareVoiceReply("olá mundo", "recado",
                                        dir, ckTelegram, UserId("u1"),
-                                       fakeHttp(cap))
+                                       fakeHttp(cap), voiceSpeech)
       check prepared.isErr
       check prepared.error.contains("500")
       check cap.posts == 1
@@ -160,17 +159,11 @@ proc runTests*() =
       let cap = PostCapture(status: 200, response: "")
       let prepared = prepareVoiceReply("olá mundo", "recado",
                                        dir, ckTelegram, UserId("u1"),
-                                       fakeHttp(cap))
+                                       fakeHttp(cap), voiceSpeech)
       check prepared.isErr
       check ttsFiles(dir).len == 0
 
   suite "text_to_speech as_voice wiring":
-
-    setup:
-      putEnv("DONKEY_TTS_API_KEY", "voice-key")
-
-    teardown:
-      delEnv("DONKEY_TTS_API_KEY")
 
     proc speak(ctx: NativeCtx; input: string): Future[NativeToolResult] {.async.} =
       await executeNativeTool(

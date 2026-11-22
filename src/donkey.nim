@@ -941,7 +941,9 @@ proc setupIpcServer(cfg: DonkeyConfig;
                                           sessionActionFn = gwSessionActionFn,
                                           authorizeFn = gwAuthorizeFn,
                                           chatBridge = gwChatBridge,
-                                          modelName = cfg.defaultModel)
+                                          modelName = cfg.defaultModel,
+                                          agentTimeoutMs = resolveAgentTimeoutMs(
+                                            cfg.env.get("DONKEY_HTTP_AGENT_TIMEOUT_SEC")))
       if gatewayStart.isErr:
         log.error("HTTP gateway disabled: " & gatewayStart.error)
       else:
@@ -1502,7 +1504,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     posix.signal(posix.SIGTERM, handleShutdownSignal)
     posix.signal(posix.SIGINT, handleShutdownSignal)
   initMetrics()
-  startOptionalMetricsServer(log)
+  startOptionalMetricsServer(cfg.env, log)
 
   ## One daemon per state directory. A lease left by a dead process is taken
   ## over; a live one stops this startup before any store is opened.
@@ -1811,7 +1813,7 @@ proc main =
   ## snapshot installed here, on the loop thread that uses them.
   useCredentials(cfg.env)
   configureApprovalServiceFromEnv(
-    newApprovalStore(cfg.home / "state" / "approvals.json").toApprovalPort())
+    newApprovalStore(cfg.home / "state" / "approvals.json").toApprovalPort(), cfg.env)
 
   let sandboxPolicy = validateSandboxPolicy(cfg, devMode)
   if sandboxPolicy.isErr:
@@ -1860,7 +1862,7 @@ proc main =
   cmdReg.register(CommandEntry(
     name: "service", minArgs: 2,
     handler: proc(a: seq[string]): int =
-      dispatchService(a, logsFollow),
+      dispatchService(a, logsFollow, cfg.env),
     context: ccNone, description: "Systemd --user service management"))
   cmdReg.register(CommandEntry(
     name: "tui", minArgs: 1,

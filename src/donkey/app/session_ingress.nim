@@ -261,7 +261,7 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                              errorExplainFn = bootstrap.errorExplainFn,
                              asyncCompleteFn = bootstrap.asyncCompleteFn,
                              subagentWorkspace = bootstrap.subagentWorkspace,
-                             fs = fs)
+                             fs = fs, env = cfg.env)
 
 func sessionTaskMsg(msg: InboundMessage; msgId: string;
                      recentContext = ""): AgentMessage =

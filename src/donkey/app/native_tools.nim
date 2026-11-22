@@ -66,6 +66,7 @@ import ../ports/http as httpPort
 import ../ports/provider
 import ../ports/memory
 import ../config/types as cfgTypes
+import ../config/environment
 import ../infra/sandbox/wasm_tools
 import ./sandbox
 import ./session_state
@@ -115,6 +116,7 @@ type
     asyncCompleteFn*: AsyncCompleteFn
     http*:         httpPort.HttpRuntimePort
     braveApiKey*:  string
+    env*:          Environment  ## the snapshot tool settings are read from
     webAllowlist*: seq[string]
     toolWebPolicy*: seq[cfgTypes.ToolWebPolicy]
     tools*:        seq[ToolDescription]
@@ -1130,7 +1132,7 @@ proc executeCodeNativeTool(tc: ToolCallRequest;
   discard history
   if tc.name != ExecuteCodeToolName:
     return NativeToolResult(handled: false)
-  let cfg = codeConfigFromEnv(ctx.sandboxMode,
+  let cfg = codeConfigFromEnv(ctx.env, ctx.sandboxMode,
                               ctx.sandboxRuntimeCmd).valueOr:
     return handledError(error)
   let req = parseCodeRequest(j, ctx.paddockDir, cfg.maxSourceBytes,
@@ -1166,15 +1168,19 @@ proc executeUtilityNativeTool(tc: ToolCallRequest;
     let ctxAudio = parseTranscribeContext(j, ctx.paddockDir, ctx.log,
                                           ctx.fs).valueOr:
       return handledError(error)
+    let speech = speechSettings(ctx.env)
     return handledOutcome(performTranscribe(ctxAudio.path, ctx.http,
-      language = ctxAudio.language, prompt = ctxAudio.prompt))
+      language = ctxAudio.language, prompt = ctxAudio.prompt,
+      apiKey = speech.sttApiKey, endpoint = speech.sttEndpoint,
+      model = speech.sttModel))
   of TextToSpeechToolName:
     let speechCtx = parseSpeechContext(j).valueOr:
       return handledError(error)
+    let speech = speechSettings(ctx.env)
     if speechCtx.asVoice:
       let prepared = prepareVoiceReply(
         speechCtx.text, speechCtx.caption, ctx.paddockDir, ctx.channel,
-        ctx.uid, ctx.http, replyTo = ctx.replyTo)
+        ctx.uid, ctx.http, speech, replyTo = ctx.replyTo)
       if prepared.isErr:
         return handledError(prepared.error)
       return NativeToolResult(
@@ -1183,7 +1189,12 @@ proc executeUtilityNativeTool(tc: ToolCallRequest;
         resultKind: trkOutput,
         outbound: some(prepared.get()))
     let saved = performSpeech(speechCtx.text, ctx.paddockDir, ctx.http,
-                              voice = speechCtx.voice, format = speechCtx.format)
+                              voice = (if speechCtx.voice.strip.len > 0: speechCtx.voice
+                                       else: speech.ttsVoice),
+                              format = speechCtx.format,
+                              apiKey = speech.ttsApiKey,
+                              endpoint = speech.ttsEndpoint,
+                              model = speech.ttsModel)
     if saved.isErr:
       return handledError(saved.error)
     return handledOutcome("Audio saved: " & saved.get())
@@ -1415,16 +1426,16 @@ func structuredReplaceSummary(j: JsonNode): string =
   "path=" & path & " find_bytes=" & $find.len & " replace_bytes=" & $replace.len &
     " sha1=" & digest & "\npreview:\n" & escapedApprovalPreview(replace, 800)
 
-func largeWritesSummaryMode(): bool =
-  getEnv("DONKEY_APPROVAL_LARGE_WRITES").strip.toLowerAscii() == "summary"
+func largeWritesSummaryMode(env: Environment): bool =
+  env.stripped("DONKEY_APPROVAL_LARGE_WRITES").toLowerAscii() == "summary"
 
-func approvalSummary(toolName: string; j: JsonNode): string =
+func approvalSummary(env: Environment; toolName: string; j: JsonNode): string =
   ## The approval must reflect the complete action. Oversized requests are
   ## rejected instead of showing a truncated command/edit. A file-write
   ## summary is available as an explicit opt-in for large fs_write/text_replace
   ## payloads; bash/execute_code remain full-display-only.
   const MaxApprovalSummaryChars = 1500
-  if largeWritesSummaryMode():
+  if largeWritesSummaryMode(env):
     let serializedLen = ($j).len
     if toolName == FsWriteToolName and serializedLen > MaxApprovalSummaryChars:
       return structuredWriteSummary(j)
@@ -1442,7 +1453,7 @@ func approvalSummary(toolName: string; j: JsonNode): string =
       if timeoutNode != nil and timeoutNode.kind == JInt:
         clampCodeTimeoutSec(timeoutNode.getInt())
       else:
-        parseCodeTimeoutSec(getEnv("DONKEY_CODE_TIMEOUT_SEC"))
+        parseCodeTimeoutSec(env.get("DONKEY_CODE_TIMEOUT_SEC"))
     result = "language=" & language & " timeout=" & $timeoutSec & "s\n"
     let languageOpt = parseCodeLanguage(language)
     let isWasm = languageOpt.isSome and languageOpt.get() == clWasm
@@ -1502,7 +1513,7 @@ proc executeNativeTool*(tc:      ToolCallRequest;
     ctx.budget.recordToolCall(epochMs())
   let categories = classifyNativeTool(tc.name)
   if categories.len > 0 and requiresApproval(ctx.approval, tc.name):
-    var summary = approvalSummary(tc.name, j)
+    var summary = approvalSummary(ctx.env, tc.name, j)
     if summary.len > 0 and ctx.subagentId.len > 0:
       summary = "[subagent " & ctx.subagentId & "] " & summary
     if summary.len == 0:

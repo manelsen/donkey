@@ -43,6 +43,7 @@ import ../domain/message
 import ../domain/personality
 import ../domain/providers/media_pure
 import ../config/types as cfgTypes
+import ../config/environment
 import ./memory_consolidation
 import ./session_manager
 import ./sandbox
@@ -82,11 +83,11 @@ proc nowMonoMs*(): int64 =
   ## layer so `core/debounce` stays effect-free.
   getMonoTime().ticks div 1_000_000
 
-proc debounceConfigFromEnv*(): DebounceConfig =
+proc debounceConfigFromEnv*(env: Environment): DebounceConfig =
   ## Reads DONKEY_DEBOUNCE_* overrides. Invalid or non-positive values fall
   ## back to the compiled policy, so a bad env cannot disable debouncing.
   proc posInt(name: string; fallback: int64): int64 =
-    let raw = getEnv(name).strip
+    let raw = env.stripped(name)
     if raw.len == 0:
       return fallback
     let parsed = try:
@@ -105,15 +106,16 @@ proc debounceConfigFromEnv*(): DebounceConfig =
   if result.maxWindowMs < result.minWindowMs:
     result.maxWindowMs = result.minWindowMs
 
-func suppressToolProgressFromEnv*(): bool =
+func suppressToolProgressFromEnv*(env: Environment): bool =
   ## Hides the `🔧 tool [n]` progress messages for deployments that only want
   ## the final answer and approval prompts. Set DONKEY_SUPPRESS_TOOL_PROGRESS=1.
-  getEnv("DONKEY_SUPPRESS_TOOL_PROGRESS").strip.toLowerAscii() in
+  env.stripped("DONKEY_SUPPRESS_TOOL_PROGRESS").toLowerAscii() in
     ["1", "true", "yes", "on"]
 
 # ── Orchestrator state and pipe ops ────────────────────────────────────────────
 
 type OrchestratorState = object
+  env*:           Environment  ## the snapshot settings are read from
   history*:       ConversationHistory
   debugMode*:     bool
   showReasoning*: bool
@@ -231,6 +233,7 @@ proc buildNativeCtx*(uid: UserId;
     http:         http,
     fs:           fs,
     braveApiKey:  webSearchKey(),
+    env:          cfg.env,
     webAllowlist: cfg.webAllowlist,
     toolWebPolicy: cfg.toolWebPolicy,
     tools:        tools,
@@ -290,7 +293,7 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
       sandboxRuntimeCmd: sandboxRuntimeCmd, sandboxImage: sandboxImage,
       sandboxAllowHostFallback: false, sandboxAllowNetwork: false,
       sandboxReadOnlyRootfs: true, wasmShellPath: "",
-      dmPolicy: DmPolicyOpen, wiring: false),
+      dmPolicy: DmPolicyOpen, wiring: false, env: stateRuntime.env),
     tools, log,
     paddockDir, sandboxMode, sandboxRuntimeCmd, sandboxImage)
   result.nativeCtx.replyTo = msg.replyTo
@@ -503,7 +506,8 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
            $turnSetup.userText.len & "|")
   let suppressHeartbeatProgress = msg.taskKind in {tkHeartbeat, tkSchedule}
   let suppressQuietHeartbeatFinal = msg.taskKind in {tkHeartbeat, tkSchedule}
-  let suppressProgress = suppressHeartbeatProgress or suppressToolProgressFromEnv()
+  let suppressProgress = suppressHeartbeatProgress or
+    suppressToolProgressFromEnv(turnSetup.nativeCtx.env)
   let loopResult = await runToolLoop(
     globalOutbox, toolInbox, toolOut, memory, completeFn, errorExplainFn, streamFactory, turnSetup.nativeCtx,
     state, history, turnSetup.uid, msg.channel, msg.replyTo, msg.id, turnSetup.streamId,
@@ -613,7 +617,8 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
     let fingerprint = historyFingerprint(result.history)
     if fingerprint != result.lastConsolidatedFingerprint:
       let consolidation = await consolidateSessionAsync(
-        memory, completeFn, asyncCompleteFn, uid, sessionId, result.history, log)
+        memory, completeFn, asyncCompleteFn, uid, sessionId, result.history, log,
+        enabled = consolidationEnabled(result.env))
       if consolidation.completed:
         result.lastConsolidatedFingerprint = fingerprint
 
@@ -707,7 +712,7 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
 # ── Debounce collector ─────────────────────────────────────────────────────────
 
 proc collectWithDebounce*(inbox: AsyncQueue[AgentMessage];
-                          cfg: DebounceConfig = debounceConfigFromEnv()):
+                          cfg: DebounceConfig = defaultDebounceConfig()):
                           Future[AgentMessage] {.async.} =
   ## Waits for the first amkTask, then accumulates fragments while they keep
   ## arriving inside the adaptive window: more parts (or a short last part)
@@ -803,8 +808,10 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
                       asyncCompleteFn: AsyncCompleteFn = nil;
                       subagentWorkspace: SubagentWorkspacePort = SubagentWorkspacePort();
                       fs:             FsRuntimePort = unavailableFs();
-                      reviewRuntime:  ReviewRuntime = nil): Future[void] {.async.} =
+                      reviewRuntime:  ReviewRuntime = nil;
+                      env:            Environment = Environment()): Future[void] {.async.} =
   ## Persistent actor. Loops: debounce → memory → LLM → reply → repeat.
+  ## `env` is the snapshot tool and turn settings are read from.
   if daemonShuttingDown():
     return
   let memInbox  = newAsyncQueue[AgentMessage]()
@@ -821,6 +828,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
       false, true, log)
 
   var stateRuntime = newOrchestratorState()
+  stateRuntime.env = env
   stateRuntime.subagents = newSubagentManager(subagentWorkspace)
   stateRuntime.stopGeneration = currentSessionStopGeneration()
   let sessionId   = $nowMs()
@@ -839,13 +847,13 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
       reviewRuntime
     else:
       newReviewRuntime(
-        reviewConfigFromEnv(), asyncCompleteFn, memory,
+        reviewConfigFromEnv(stateRuntime.env), asyncCompleteFn, memory,
         homeDir = (if paddockDir.len > 0: parentDir(parentDir(paddockDir)) else: ""),
         log = log.child("review"))
 
   try:
     while true:
-      let msg = await collectWithDebounce(inbox)
+      let msg = await collectWithDebounce(inbox, debounceConfigFromEnv(stateRuntime.env))
       let actorResult = await handleActorMessage(
         inbox, session, globalOutbox, memInbox, toolInbox, memOut, toolOut, memory,
         completeFn, errorExplainFn, http, fs, streamFactory, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,

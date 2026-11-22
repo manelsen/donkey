@@ -3,6 +3,7 @@
 ## Runs in its own OS thread so provider/email blocking calls in the daemon
 ## cannot delay scrapes. The handler only reads the gcsafe metrics registry.
 
+import ../config/environment
 import std/[net, os, strutils, times]
 import std/posix
 import ../core/pipeops
@@ -197,17 +198,16 @@ proc startMetricsServer*(host: string; port: int; log: Logger): Result[void, str
   gMetricsThreadStarted = true
   ok()
 
-proc startOptionalMetricsServer*(log: Logger) =
+proc startOptionalMetricsServer*(env: Environment; log: Logger) =
   ## Starts the Prometheus exporter only when explicitly configured.
   ## Default bind is loopback: metrics can contain provider/channel names.
-  let portRaw = getEnv("DONKEY_METRICS_PORT").strip()
+  let portRaw = env.stripped("DONKEY_METRICS_PORT")
   if portRaw.len == 0:
     return
   let port = parseMetricsPort(portRaw).valueOr:
     log.warn("metrics: DONKEY_METRICS_PORT inválido (" & portRaw & ") — " & error)
     return
-  let bindRaw = getEnv("DONKEY_METRICS_BIND").strip()
-  let bindAddr = if bindRaw.len > 0: bindRaw else: "127.0.0.1"
+  let bindAddr = env.stripped("DONKEY_METRICS_BIND", "127.0.0.1")
   let host = validateMetricsBind(bindAddr, port).valueOr:
     log.warn("metrics: DONKEY_METRICS_BIND inválido (" & bindAddr & ") — " & error)
     return
