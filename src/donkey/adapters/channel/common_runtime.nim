@@ -16,9 +16,16 @@ import ../identity/identity_resolver
 import ./command_services
 import ./model_catalog_ui
 import ../../core/commands/preference_commands
+import ../../core/pipeops
 
 export command_text, channel_prefs_store, model_catalog_ui, command_services
 export preference_commands.preferencesUnreadableText
+
+proc configViewText*(memory: MdFileAdapter; userId: UserId;
+                     withButtons = true): Result[string, string] =
+  ## The /config view of the user's preferences. Presentation belongs to the
+  ## channels; the store only reads.
+  ok(buildConfigText(? memory.loadChannelPrefs(userId), withButtons))
 
 const UiSlotMenu* = "menu"
 const UiSlotConfig* = "config"

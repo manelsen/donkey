@@ -108,7 +108,7 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
   case command.kind
   of cmdConfig:
     let kbdId = common_runtime.getUiMsgId(presentationState, ckDiscord, userId, UiSlotConfig)
-    let configText = memory.buildConfigText(userId).valueOr:
+    let configText = configViewText(memory, userId).valueOr:
       tellPrefsUnreadable(event, dcAdapter, userId, error, logger)
       return true
     if kbdId.len > 0 and event.interactionId.len == 0:

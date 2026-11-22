@@ -5,7 +5,7 @@
 ## previously lived in outbound_builder.nim.
 
 import ../core/types
-import ../core/commands/command_text
+import ../core/commands/command_surface
 
 type
   ChannelCapabilityFlag* = enum

@@ -64,6 +64,18 @@ proc runTests*() =
           check execCmdEx("bash scripts/check_boundaries.sh").exitCode != 0
       check execCmd("bash scripts/check_boundaries.sh") == 0
 
+    test "command texts stay out of ports and the memory store":
+      ## Presentation belongs to the channels: a port or the store that
+      ## imports the texts module is refused.
+      for (dir, form) in [("src/donkey/ports", "import ../core/commands/command_text"),
+                          ("src/donkey/adapters/memory",
+                           "import ../../core/commands/command_text")]:
+        let probe = dir & "/zz_boundary_probe.nim"
+        writeFile(probe, form & "\n")
+        defer: removeFile(probe)
+        check execCmdEx("bash scripts/check_boundaries.sh").exitCode != 0
+      check execCmd("bash scripts/check_boundaries.sh") == 0
+
     test "genDepend edges are read":
       let graph = parseDependDot("digraph x {\n\"a\" -> \"../adapters/b\";\n" &
                                  "\"b\" -> \"std/os\";\n}")
