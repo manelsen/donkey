@@ -13,7 +13,7 @@ proc clearCreds() =
   resetCredentialPools()
   for name in ["OPENAI_API_KEY", "OPENAI_API_KEYS",
                "GROQ_API_KEY", "GROQ_API_KEYS"]:
-    delEnv(name)
+    setCredentialForTest(name, "")
 
 var gSeenKeys: seq[string]
 
@@ -56,14 +56,14 @@ proc runTests*() =
     test "a plural-only value still counts as available":
       clearCreds()
       defer: clearCreds()
-      putEnv("OPENAI_API_KEYS", "a,b")
+      setCredentialForTest("OPENAI_API_KEYS", "a,b")
       check hasCredentialKey(["OPENAI_API_KEY"])
       check detectProviderAvailability().openai
 
     test "resolve rotates through the pool":
       clearCreds()
       defer: clearCreds()
-      putEnv("OPENAI_API_KEYS", "a,b")
+      setCredentialForTest("OPENAI_API_KEYS", "a,b")
       check resolveCredentialKey("openai", ["OPENAI_API_KEY"]) == "a"
       check resolveCredentialKey("openai", ["OPENAI_API_KEY"]) == "b"
       check resolveCredentialKey("openai", ["OPENAI_API_KEY"]) == "a"
@@ -71,14 +71,14 @@ proc runTests*() =
     test "a single key becomes a one-key pool":
       clearCreds()
       defer: clearCreds()
-      putEnv("OPENAI_API_KEY", "solo")
+      setCredentialForTest("OPENAI_API_KEY", "solo")
       check resolveCredentialKey("openai", ["OPENAI_API_KEY"]) == "solo"
       check resolveCredentialKey("openai", ["OPENAI_API_KEY"]) == "solo"
 
     test "a failed key cools down and the next request uses another":
       clearCreds()
       defer: clearCreds()
-      putEnv("OPENAI_API_KEYS", "a,b")
+      setCredentialForTest("OPENAI_API_KEYS", "a,b")
       check resolveCredentialKey("openai", ["OPENAI_API_KEY"]) == "a"
       noteCredentialResult("openai", "a", ok = false, error = "429 rate limit")
       check resolveCredentialKey("openai", ["OPENAI_API_KEY"]) == "b"
@@ -92,7 +92,7 @@ proc runTests*() =
     test "buildProviderSpec takes its key from the pool":
       clearCreds()
       defer: clearCreds()
-      putEnv("OPENAI_API_KEYS", "a,b")
+      setCredentialForTest("OPENAI_API_KEYS", "a,b")
       let first = buildProviderSpec(ProviderPrefs(providerName: "openai"))
       let second = buildProviderSpec(ProviderPrefs(providerName: "openai"))
       check first.apiKey == "a"
@@ -104,7 +104,7 @@ proc runTests*() =
       clearCreds()
       defer: clearCreds()
       gSeenKeys = @[]
-      putEnv("OPENAI_API_KEYS", "a,b")
+      setCredentialForTest("OPENAI_API_KEYS", "a,b")
       let h = hooks()
       let fn = buildAsyncCompleteFn(
         "provider = \"openai\"", keyedBuilderImpl,
@@ -119,7 +119,7 @@ proc runTests*() =
       clearCreds()
       defer: clearCreds()
       gSeenKeys = @[]
-      putEnv("OPENAI_API_KEYS", "a,b")
+      setCredentialForTest("OPENAI_API_KEYS", "a,b")
       let h = hooks()
       let fn = buildAsyncCompleteFn(
         "provider = \"openai\"", staleKeyBuilderImpl,

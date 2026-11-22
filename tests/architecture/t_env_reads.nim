@@ -21,7 +21,7 @@ const
     "src/donkey/config/dotenv.nim",       ## fills the environment from donkey.env
     "src/donkey/adapters/secrets/vault.nim",  ## fills it from the vault
   ]
-  ReadBudget = 133
+  ReadBudget = 82
     ## Reads outside the owners. Only goes down.
 
 func readLines(code: string): seq[int] =

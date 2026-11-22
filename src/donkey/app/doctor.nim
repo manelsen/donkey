@@ -15,6 +15,7 @@
 import std/[os, osproc, strutils]
 import ../core/pipeops
 import ../core/diagnostics
+import ../config/environment
 import ../config/types
 import ../domain/providers/descriptors
 import ./credential_runtime
@@ -76,15 +77,15 @@ proc checkContainerRuntime*(runtimeCmd = "docker"): DiagResult =
 proc checkSandboxRuntime*(cfg: DonkeyConfig): DiagResult =
   sandboxAvailabilityResult(cfg) |>-> toDiagResult("sandbox runtime")
 
-proc checkApiKey*(name: string; envVar: string): DiagResult =
+proc checkApiKey*(env: Environment; name: string; envVar: string): DiagResult =
   ## Checks whether an API key environment variable is set.
-  ##   ``checkApiKey("OpenRouter", "OPENROUTER_API_KEY") |> markWarn``
-  apiKeyResult(getEnv(envVar), envVar) |>-> toDiagResult(name)
+  ##   ``checkApiKey(cfg.env, "OpenRouter", "OPENROUTER_API_KEY") |> markWarn``
+  apiKeyResult(env.get(envVar), envVar) |>-> toDiagResult(name)
 
-proc checkPgvector*(): DiagResult =
+proc checkPgvector*(env: Environment): DiagResult =
   ## Checks for Postgres + pgvector extension (optional in F1 mode).
   ## Downgrades to dsWarn — pgvector is an F2+ dependency.
-  (pgvectorResult(getEnv("DONKEY_PG_DSN")) |>-> toDiagResult("pgvector")) |> markWarn
+  (pgvectorResult(env.get("DONKEY_PG_DSN")) |>-> toDiagResult("pgvector")) |> markWarn
 
 proc sandboxPolicyResult*(cfg: DonkeyConfig;
                           devMode: bool): Result[string, string] =
@@ -103,11 +104,11 @@ proc sandboxPolicyResult*(cfg: DonkeyConfig;
   )
 
 proc storageSummary*(cfg: DonkeyConfig): string =
-  let pgDsn = getEnv("DONKEY_PG_DSN").strip()
+  let pgDsn = cfg.env.stripped("DONKEY_PG_DSN")
   if pgDsn.len > 0:
     return "PostgreSQL-backed MAGMA (DONKEY_PG_DSN set)"
   when defined(withSqlite):
-    let sqlitePath = getEnv("DONKEY_MAGMA_SQLITE_PATH").strip()
+    let sqlitePath = cfg.env.stripped("DONKEY_MAGMA_SQLITE_PATH")
     if sqlitePath.len > 0:
       return "SQLite-first MAGMA (" & sqlitePath & ")"
     return "SQLite-first MAGMA (" & cfg.home / "state" / "magma.sqlite" & ")"
@@ -124,8 +125,8 @@ proc defaultModelSummary*(cfg: DonkeyConfig): string =
   else:
     "smart routing"
 
-proc webSearchSummary*(): string =
-  if getEnv("BRAVE_API_KEY").len > 0:
+proc webSearchSummary*(env: Environment): string =
+  if env.get("BRAVE_API_KEY").len > 0:
     "enabled via Brave Search"
   else:
     "disabled (set BRAVE_API_KEY to enable web_search)"
@@ -137,7 +138,7 @@ proc buildDoctorSummary*(cfg: DonkeyConfig;
   result &= "--------\n"
   result &= "- storage: " & storageSummary(cfg) & "\n"
   result &= "- default model: " & defaultModelSummary(cfg) & "\n"
-  result &= "- web search: " & webSearchSummary() & "\n"
+  result &= "- web search: " & webSearchSummary(cfg.env) & "\n"
   result &= "- sandbox: " & sandboxLine & "\n"
 
 proc checkSandboxPolicy*(cfg: DonkeyConfig;
@@ -188,30 +189,19 @@ func doctorProviderRows*(): seq[DoctorProviderRow] =
       envVar: (if descriptor.envNames.len > 0: descriptor.envNames[0] else: ""),
     ))
 
-func credentialValue(envNames: openArray[string]): string =
-  ## The first configured value over every descriptor env name, single or
-  ## plural. Used only to measure presence; never printed.
-  for envName in envNames:
-    let single = getEnv(envName).strip()
-    if single.len > 0:
-      return single
-    let plural = splitKeys(getEnv(poolEnvName(envName)))
-    if plural.len > 0:
-      return plural[0]
-
-proc checkProviderRow*(row: DoctorProviderRow): DiagResult =
+proc checkProviderRow*(env: Environment; row: DoctorProviderRow): DiagResult =
   ## The real credential check: all descriptor env names and their plural
   ## `*_KEYS` form. `atNone` providers (ollama) are endpoint-configured, not
   ## API-key providers. The detail never contains the secret.
   let descriptor = descriptorOr(row.id)
   if descriptor.authType == atNone:
     let envName = if descriptor.envNames.len > 0: descriptor.envNames[0] else: ""
-    let endpoint = if envName.len > 0: getEnv(envName).strip() else: ""
+    let endpoint = if envName.len > 0: env.stripped(envName) else: ""
     endpointResult(endpoint, envName) |>-> toDiagResult(row.label)
-  elif providerConfigured(row.id):
-    ## `providerConfigured` is the single truth: every descriptor env name and
-    ## the plural `*_KEYS` form. The value is measured, never echoed.
-    apiKeyResult(credentialValue(descriptor.envNames), row.envVar) |>->
+  elif configuredIn(env, row.id):
+    ## `configuredIn` is the single truth: every descriptor env name and the
+    ## plural `*_KEYS` form. The value is measured, never echoed.
+    apiKeyResult(firstCredential(env, descriptor.envNames), row.envVar) |>->
       toDiagResult(row.label)
   else:
     missingKeyResult(descriptor.envNames) |>-> toDiagResult(row.label)
@@ -232,9 +222,9 @@ proc runDoctorChecks*(cfg: DonkeyConfig;
   result.add checkSandboxRuntime(cfg)
   if cfg.sandboxMode == smOci:
     result.add checkContainerRuntime(cfg.sandboxRuntimeCmd)
-  result.add checkPgvector()
+  result.add checkPgvector(cfg.env)
   for (name, envVar) in AuxKeyChecks:
-    result.add checkApiKey(name, envVar) |> markWarn
+    result.add checkApiKey(cfg.env, name, envVar) |> markWarn
   ## One credential probe per primary env: opencode-go and zen share
   ## OPENCODE_API_KEY, so the second row reuses the first result instead of
   ## asking the environment twice. Provider identity rows are kept.
@@ -252,7 +242,7 @@ proc runDoctorChecks*(cfg: DonkeyConfig;
       check = probed[reused][1]
       check.name = row.label
     else:
-      check = checkProviderRow(row)
+      check = checkProviderRow(cfg.env, row)
       probed.add((primary, check))
     result.add check |> markWarn
 

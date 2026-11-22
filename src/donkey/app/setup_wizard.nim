@@ -18,6 +18,7 @@ import ../core/app_meta
 import ../core/providers/smart_routing
 import ../domain/providers/descriptors
 import ./credential_runtime
+import ../config/environment
 
 # ── Pure helpers (unit-tested) ────────────────────────────────────────────────
 
@@ -29,7 +30,7 @@ func providerEnvVar*(providerName: string): string =
     return ""
   descriptor.get().envNames[0]
 
-func providerCredentialFromEnv*(providerName: string):
+func providerCredentialFromEnv*(env: Environment; providerName: string):
     tuple[envName: string, value: string] =
   ## The credential the environment holds for a provider, together with the
   ## env name it came from. A plural `*_KEYS` pool is returned whole (joined by
@@ -44,20 +45,20 @@ func providerCredentialFromEnv*(providerName: string):
   if d.authType == atNone:
     return ("", "")
   for envName in d.envNames:
-    let single = getEnv(envName).strip()
+    let single = env.stripped(envName)
     if single.len > 0:
       return (envName, single)
     let pluralName = poolEnvName(envName)
-    let plural = splitKeys(getEnv(pluralName))
+    let plural = splitKeys(env.get(pluralName))
     if plural.len > 0:
       return (pluralName, plural.join(","))
   ("", "")
 
-func providerKeyFromEnv*(providerName: string): string =
+func providerKeyFromEnv*(env: Environment; providerName: string): string =
   ## The first configured credential for a provider, considering every
   ## descriptor env name and the plural `*_KEYS` form. Endpoint-configured
   ## providers (`atNone`, e.g. ollama) never yield an API key.
-  let credential = providerCredentialFromEnv(providerName)
+  let credential = providerCredentialFromEnv(env, providerName)
   let keys = splitKeys(credential.value)
   if keys.len > 0: keys[0] else: ""
 
@@ -316,8 +317,9 @@ proc printHeader =
   echo "╚══════════════════════════════════════════════════╝"
   echo ""
 
-proc runSetupWizard*(home: string) =
-  ## Interactive first-run wizard.  Writes donkey.toml and donkey.env.
+proc runSetupWizard*(home: string; env: Environment) =
+  ## Interactive first-run wizard.  Writes donkey.toml and donkey.env. Keys
+  ## already in `env` are offered instead of asked for.
   printHeader()
 
   let cfgDir = configDirPath()
@@ -358,7 +360,7 @@ proc runSetupWizard*(home: string) =
       let localOnly = descriptor.isSome and descriptor.get().authType == atNone
       if not localOnly:
         let defaultEnvVar = providerEnvVar(providerName)
-        let existing = providerCredentialFromEnv(providerName)
+        let existing = providerCredentialFromEnv(env, providerName)
         var apiKey = ""
         var sourceEnv = defaultEnvVar
         if existing.envName.len > 0:
@@ -416,7 +418,7 @@ proc runSetupWizard*(home: string) =
   echo "Busca web opcional"
   echo "  O tool `web_search` usa a Brave Search API."
   echo "  Se você preencher `BRAVE_API_KEY`, o agente poderá pesquisar na web."
-  let existingBrave = getEnv("BRAVE_API_KEY")
+  let existingBrave = env.get("BRAVE_API_KEY")
   let braveApiKey =
     if existingBrave.len > 0:
       echo "    (usando BRAVE_API_KEY do ambiente)"
@@ -430,7 +432,7 @@ proc runSetupWizard*(home: string) =
   echo ""
   var channels: seq[(string, string)]
 
-  let existingTg = getEnv("TELEGRAM_BOT_TOKEN")
+  let existingTg = env.get("TELEGRAM_BOT_TOKEN")
   let tgToken =
     if existingTg.len > 0:
       echo "    (usando TELEGRAM_BOT_TOKEN do ambiente)"
@@ -439,7 +441,7 @@ proc runSetupWizard*(home: string) =
       ask("  Telegram bot token  (BotFather → /newbot)")
   if tgToken.len > 0: channels.add(("telegram", tgToken))
 
-  let existingDc = getEnv("DISCORD_BOT_TOKEN")
+  let existingDc = env.get("DISCORD_BOT_TOKEN")
   let dcToken =
     if existingDc.len > 0:
       echo "    (usando DISCORD_BOT_TOKEN do ambiente)"
