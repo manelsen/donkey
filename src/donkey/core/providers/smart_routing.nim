@@ -123,12 +123,15 @@ func normalizeBudgetPolicy*(value: string): string =
     "balanced"
 
 func preferenceValue(raw: string): string =
-  ## The value of a `key = value` line as TOML reads a string: inside the
-  ## quotes when quoted, otherwise up to a `#` comment.
+  ## The value of a `key = value` line as TOML reads a one-line string:
+  ## between its delimiters (`"`, `'`, or the triple forms), otherwise up to
+  ## a `#` comment.
   let text = raw.strip()
-  if text.len > 0 and text[0] == '"':
-    let close = text.find('"', 1)
-    return if close > 0: text[1 ..< close] else: text[1 .. ^1]
+  for delim in ["\"\"\"", "'''", "\"", "'"]:
+    if text.startsWith(delim):
+      let close = text.find(delim, delim.len)
+      return if close >= delim.len: text[delim.len ..< close]
+             else: text[delim.len .. ^1]
   let hash = text.find('#')
   (if hash >= 0: text[0 ..< hash] else: text).strip()
 

@@ -187,14 +187,17 @@ proc sendTelegramText(tgAdapter: var TelegramAdapter; msg: InboundMessage;
   )).isOkOr:
     logger.error("tg send failed for user=" & $msg.userId & " reason=" & error)
 
-proc tellPrefsUnreadable(tgAdapter: var TelegramAdapter; msg: InboundMessage;
-                         reason: string; kbdId = "") =
+proc tellPrefsUnreadable(tgAdapter: var TelegramAdapter;
+                         presentationState: var PresentationState;
+                         msg: InboundMessage; reason, slot: string) =
   ## A picker needs the current preferences to mark the selection. When they
   ## cannot be read the user is told so: in the picker message when there is
-  ## one, otherwise in a new message.
-  ## The picker message may be gone (deleted by the user): then the text
-  ## goes out as a new message, so the user is told either way.
+  ## one, otherwise (none, or deleted by the user) in a new message. Either
+  ## way the picker is over, so its slot is cleared: the next command opens
+  ## a fresh one instead of editing a notice that may be gone.
   let text = preferencesUnreadableText(reason)
+  let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, slot)
+  common_runtime.clearUiMsgId(presentationState, ckTelegram, msg.userId, slot)
   if kbdId.len > 0 and
      tgAdapter.editKeyboardText(msg.userId, kbdId, text, @[]).isOk:
     return
@@ -258,7 +261,7 @@ proc handleTelegramModels*(msg: InboundMessage;
     let catalog = modelCatalogLoader(providerOnly).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(providerOnly, catalog.entries))
     let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId).valueOr:
-      tellPrefsUnreadable(tgAdapter, msg, error, currentKbdId)
+      tellPrefsUnreadable(tgAdapter, presentationState, msg, error, UiSlotModels)
       return true
     let title = buildModelPageText(providerOnly, 0, entries, catalog)
     let buttons = buildModelPageButtons(providerOnly, entries, currProv, currModel, 0)
@@ -275,7 +278,7 @@ proc handleTelegramModels*(msg: InboundMessage;
     return presentTelegramUiText(tgAdapter, msg, command, memory, modelCatalogLoader)
   let currentKbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels)
   let (currProv, _) = memory.getCurrentProviderModel(msg.userId).valueOr:
-    tellPrefsUnreadable(tgAdapter, msg, error, currentKbdId)
+    tellPrefsUnreadable(tgAdapter, presentationState, msg, error, UiSlotModels)
     return true
   if currentKbdId.len > 0:
     tgAdapter.editKeyboardText(
@@ -307,7 +310,7 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
     logger.info("tg callback models:provider:" & callback.provider)
     let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels)
     let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId).valueOr:
-      tellPrefsUnreadable(tgAdapter, msg, error, kbdId)
+      tellPrefsUnreadable(tgAdapter, presentationState, msg, error, UiSlotModels)
       return true
     let catalog = modelCatalogLoader(callback.provider).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(callback.provider, catalog.entries))
@@ -356,7 +359,7 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
     logger.info("tg callback models:page:" & callback.provider & ":" & $callback.page)
     let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels)
     let (currProv, currModel) = memory.getCurrentProviderModel(msg.userId).valueOr:
-      tellPrefsUnreadable(tgAdapter, msg, error, kbdId)
+      tellPrefsUnreadable(tgAdapter, presentationState, msg, error, UiSlotModels)
       return true
     let catalog = modelCatalogLoader(callback.provider).valueOr: emptyCatalogResult()
     let entries = sortModelCatalog(normalizeModelCatalog(callback.provider, catalog.entries))
@@ -371,7 +374,7 @@ proc handleTelegramModelCallback*(msg: InboundMessage;
   of cbkModelsBack:
     let kbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotModels)
     let (currProv, _) = memory.getCurrentProviderModel(msg.userId).valueOr:
-      tellPrefsUnreadable(tgAdapter, msg, error, kbdId)
+      tellPrefsUnreadable(tgAdapter, presentationState, msg, error, UiSlotModels)
       return true
     if kbdId.len > 0:
       tgAdapter.editKeyboard(msg.userId, kbdId,
@@ -425,7 +428,7 @@ proc handleTelegramThink*(msg: InboundMessage;
     return presentTelegramUiText(tgAdapter, msg, command, memory)
   let currentKbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotThink)
   let level = memory.getCurrentThinkLevel(msg.userId).valueOr:
-    tellPrefsUnreadable(tgAdapter, msg, error, currentKbdId)
+    tellPrefsUnreadable(tgAdapter, presentationState, msg, error, UiSlotThink)
     return true
   if currentKbdId.len > 0:
     tgAdapter.editKeyboardText(
@@ -463,7 +466,7 @@ proc handleTelegramUiCommand*(msg: InboundMessage;
   of cmdConfig:
     let currentKbdId = common_runtime.getUiMsgId(presentationState, ckTelegram, msg.userId, UiSlotConfig)
     let configText = memory.buildConfigText(msg.userId).valueOr:
-      tellPrefsUnreadable(tgAdapter, msg, error, currentKbdId)
+      tellPrefsUnreadable(tgAdapter, presentationState, msg, error, UiSlotConfig)
       return true
     if currentKbdId.len > 0:
       discard tgAdapter.editKeyboardText(

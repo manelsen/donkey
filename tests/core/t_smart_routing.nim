@@ -18,6 +18,13 @@ proc runTests*() =
       check prefs.thinking == "high"
       check parseSmartRoutingPrefs("model = \"a#b\"").modelName == "a#b"
 
+    test "parseSmartRoutingPrefs reads triple-quoted and literal strings":
+      let triple = parseSmartRoutingPrefs("provider = \"\"\"anthropic\"\"\"")
+      check triple.providerName == "anthropic"
+      check triple.providerExplicit
+      check parseSmartRoutingPrefs("budget = 'quality-first' # c").budgetPolicy == "quality-first"
+      check parseSmartRoutingPrefs("model = '''x#y''' # c").modelName == "x#y"
+
     test "parseSmartRoutingPrefs keeps auto routing when no provider override":
       let prefs = parseSmartRoutingPrefs("thinking = \"high\"")
       check prefs.providerName == "zai-coding"
