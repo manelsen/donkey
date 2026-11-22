@@ -1100,6 +1100,26 @@ proc handleGatewayConn(ctx: GatewayContext; client: StreamTransport)
 
 # ── Server ────────────────────────────────────────────────────────────────────
 
+proc gatewayBindAddress*(bindAddr: string; port: int):
+    Result[TransportAddress, string] =
+  ## The address to listen on. A literal IP (`127.0.0.1`, `::1`, `[::1]`) is
+  ## used as it is; a host name such as `localhost` is resolved over IPv4,
+  ## as the previous `std/net` socket did for any address without a colon.
+  let host =
+    if bindAddr.startsWith("[") and bindAddr.endsWith("]"): bindAddr[1 .. ^2]
+    else: bindAddr
+  try:
+    return ok(initTAddress(host, Port(port)))
+  except CatchableError:
+    discard
+  try:
+    let resolved = resolveTAddress(host, Port(port), Domain.AF_INET)
+    if resolved.len > 0:
+      return ok(resolved[0])
+    err("cannot resolve " & host)
+  except CatchableError as e:
+    err("cannot resolve " & host & ": " & e.msg)
+
 proc startHttpGateway*(port: int;
                        statusFn: GatewayStatusFn;
                        logFn:    GatewayLogFn;
@@ -1151,16 +1171,16 @@ proc startHttpGateway*(port: int;
       releaseHttpConnection()
       await client.closeWait()
 
-  let host =
-    if bindAddr.startsWith("[") and bindAddr.endsWith("]"): bindAddr[1 .. ^2]
-    else: bindAddr
+  let address = gatewayBindAddress(bindAddr, port).valueOr:
+    let msg = "http_gateway: bind " & bindAddr & ":" & $port & " failed — " & error
+    log.error(msg)
+    return err(msg)
   try:
-    let server = createStreamServer(initTAddress(host, Port(port)), onConnection,
-                                    {ServerFlags.ReuseAddr})
+    let server = createStreamServer(address, onConnection, {ServerFlags.ReuseAddr})
     server.start()
     ok(GatewayServer(server: server, port: port))
   except CatchableError as e:
-    let msg = "http_gateway: bind " & host & ":" & $port & " failed — " & e.msg
+    let msg = "http_gateway: bind " & bindAddr & ":" & $port & " failed — " & e.msg
     log.error(msg)
     err(msg)
 

@@ -52,6 +52,7 @@ type DispatchMode = enum
   dmCumulativePartials
   dmTokenEchoFinal        ## the terminal carries the inbound turn token
   dmWrongTokenFinal       ## a terminal from another generation
+  dmManyPartials          ## more partial deltas than a stream may send, no terminal
 
 var fakeBridge {.threadvar.}: ChatBridge
 var dispatched {.threadvar.}: seq[InboundMessage]
@@ -79,6 +80,9 @@ proc fakeDispatch(msg: InboundMessage) {.gcsafe.} =
   case dispatchMode
   of dmNothing:
     discard
+  of dmManyPartials:
+    for i in 0 ..< MaxSseChunksPerTurn + 10:
+      deliverToBridge(msg.userId, "[" & $i & "]", rkFinalAnswer, partial = true)
   of dmFinal:
     deliverToBridge(msg.userId, finalText, rkFinalAnswer,
                                inputTokens = 11, outputTokens = 7)
@@ -519,6 +523,20 @@ proc runTests*() =
       check nodes[^1]["choices"][0]["finish_reason"].getStr() == "length"
 
   suite "runAgentStream SSE":
+
+    test "a stream cut by the chunk limit on partials releases the user's turn":
+      ## No terminal ever arrives: the stream closes with `length`, and the
+      ## bridge must not keep the turn reserved for a reader that left.
+      resetStream()
+      dispatchMode = dmManyPartials
+      let result = runStream(bodyFor("alice", "oi"))
+      check result.outcome == asCompleted
+      check doneCount() == 1
+      check streamNodes()[^1]{"choices"}[0]{"finish_reason"}.getStr() == "length"
+      ## The turn was abandoned, not left pending: its late terminal is
+      ## discarded and frees the user, who can start a new turn.
+      deliverToBridge(UserId("api:alice"), "late answer", rkFinalAnswer)
+      check fakeBridge.register(UserId("api:alice"), timeoutMs = 1_000).isOk
 
     test "emits role, one content chunk per partial, a final stop and one [DONE]":
       resetStream()

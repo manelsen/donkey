@@ -275,6 +275,7 @@ proc react(state: var StreamState; event: ChatBridgeEvent): seq[string] =
           if state.planned >= MaxSseChunksPerTurn:
             state.finishReason = "length"
             state.finished = true
+            state.gaveUpForChunks = true
             return
           state.plan(result, buildAgentChunk(
             state.chunkId, state.model, state.created, content = text))

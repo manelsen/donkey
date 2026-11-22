@@ -269,6 +269,15 @@ proc runTests*() =
         check gatewayAuthVerdict(action, "", "secret") == gavRejected
         check gatewayAuthVerdict(action, "Bearer secret", "secret") == gavAllowed
 
+    test "the bind address accepts literal IPs and resolves host names":
+      ## DONKEY_HTTP_BIND=localhost must keep working: a name resolves over
+      ## IPv4, as the previous socket did; literals are used as they are.
+      check $gatewayBindAddress("127.0.0.1", 8080).get() == "127.0.0.1:8080"
+      check $gatewayBindAddress("localhost", 8080).get() == "127.0.0.1:8080"
+      check $gatewayBindAddress("[::1]", 8080).get() == "[::1]:8080"
+      check $gatewayBindAddress("::1", 8080).get() == "[::1]:8080"
+      check gatewayBindAddress("no-such-host.invalid", 8080).isErr
+
     test "non-loopback bind requires a token and explicit insecure opt-in":
       check gatewayBindIsAllowed("127.0.0.1", "")
       check gatewayBindIsAllowed("localhost", "")
