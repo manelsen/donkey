@@ -7,6 +7,7 @@
 ## episodes lost to the raw episodes in every comparison we ran. The same
 ## module also maintains a session-scoped blackboard of detected commitments.
 
+import ../config/environment
 import std/[hashes, options, os, strutils, unicode]
 
 import chronos
@@ -172,10 +173,15 @@ func buildContemplationMemories(history: ConversationHistory;
         timestamp: nowSec,
       ))
 
+func consolidationEnabled*(env: Environment): bool =
+  ## `DONKEY_MEMORY_CONSOLIDATE=0|off|false|no` turns consolidation off.
+  env.stripped("DONKEY_MEMORY_CONSOLIDATE", "1").toLowerAscii() notin
+    ["0", "off", "false", "no"]
+
 proc consolidationSkipReason(memory: MemoryRuntimePort;
-                             history: ConversationHistory): string =
-  let mode = getEnv("DONKEY_MEMORY_CONSOLIDATE", "1").strip.toLowerAscii()
-  if mode in ["0", "off", "false", "no"]:
+                             history: ConversationHistory;
+                             enabled: bool): string =
+  if not enabled:
     return "disabled"
   if not memory.hasMemoryConsolidation:
     return "backend has no consolidation hooks"
@@ -237,10 +243,11 @@ proc consolidateSession*(memory: MemoryRuntimePort;
                          userId: UserId;
                          sessionId: string;
                          history: ConversationHistory;
-                         log: Logger): ConsolidationResult {.gcsafe, raises: [].} =
+                         log: Logger;
+                         enabled = true): ConsolidationResult {.gcsafe, raises: [].} =
   ## Synchronous variant for tests and non-Chronos callers. The orchestrator
   ## uses `consolidateSessionAsync` so the completion runs on a provider worker.
-  result.skippedReason = consolidationSkipReason(memory, history)
+  result.skippedReason = consolidationSkipReason(memory, history, enabled)
   if result.skippedReason.len > 0:
     return
 
@@ -259,10 +266,11 @@ proc consolidateSessionAsync*(memory: MemoryRuntimePort;
                               userId: UserId;
                               sessionId: string;
                               history: ConversationHistory;
-                              log: Logger): Future[ConsolidationResult] {.async.} =
+                              log: Logger;
+                              enabled = true): Future[ConsolidationResult] {.async.} =
   ## Production path for the Chronos orchestrator: the silent-turn completion
   ## is awaited through the provider worker pool instead of blocking the loop.
-  result.skippedReason = consolidationSkipReason(memory, history)
+  result.skippedReason = consolidationSkipReason(memory, history, enabled)
   if result.skippedReason.len > 0:
     return
   if asyncCompleteFn == nil:

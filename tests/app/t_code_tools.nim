@@ -1,6 +1,7 @@
 ## Tests for execute_code input validation and fail-closed policy.
 
 import std/[json, os, strutils, unittest]
+import donkey/config/environment
 import donkey/adapters/filesystem/fs_adapter
 import donkey/app/tools/code_tools
 import donkey/app/sandbox
@@ -20,29 +21,24 @@ proc runTests*() =
   suite "execute_code config":
 
     test "none sandbox is refused":
-      check codeConfigFromEnv(smNone, "docker").isErr
+      check codeConfigFromEnv(Environment(), smNone, "docker").isErr
 
     test "oci and wasm modes map to code sandboxes":
-      check codeConfigFromEnv(smOci, "docker").get().sandbox == cskOci
-      check codeConfigFromEnv(smWasm, "wasmtime").get().sandbox == cskWasm
+      check codeConfigFromEnv(Environment(), smOci, "docker").get().sandbox == cskOci
+      check codeConfigFromEnv(Environment(), smWasm, "wasmtime").get().sandbox == cskWasm
 
     test "environment limits are clamped":
-      putEnv("DONKEY_CODE_TIMEOUT_SEC", "999")
-      putEnv("DONKEY_CODE_MAX_OUTPUT_BYTES", "1")
-      putEnv("DONKEY_CODE_MAX_SOURCE_BYTES", "99999999")
-      defer:
-        delEnv("DONKEY_CODE_TIMEOUT_SEC")
-        delEnv("DONKEY_CODE_MAX_OUTPUT_BYTES")
-        delEnv("DONKEY_CODE_MAX_SOURCE_BYTES")
-      let cfg = codeConfigFromEnv(smOci, "docker").get()
+      let env = environmentOf({"DONKEY_CODE_TIMEOUT_SEC": "999",
+                               "DONKEY_CODE_MAX_OUTPUT_BYTES": "1",
+                               "DONKEY_CODE_MAX_SOURCE_BYTES": "99999999"})
+      let cfg = codeConfigFromEnv(env, smOci, "docker").get()
       check cfg.timeoutSec == CodeMaxTimeoutSec
       check cfg.maxOutputBytes == CodeMinMaxOutputBytes
       check cfg.maxSourceBytes == CodeMaxMaxSourceBytes
 
     test "custom code image is used verbatim":
-      putEnv("DONKEY_CODE_IMAGE", "python:3.12-slim")
-      defer: delEnv("DONKEY_CODE_IMAGE")
-      check codeConfigFromEnv(smOci, "docker").get().image ==
+      let env = environmentOf({"DONKEY_CODE_IMAGE": "python:3.12-slim"})
+      check codeConfigFromEnv(env, smOci, "docker").get().image ==
         "python:3.12-slim"
 
   suite "execute_code input validation":

@@ -6,6 +6,9 @@
 ## pass it down: code that needs a variable receives the snapshot or the typed
 ## settings parsed from it, never `getEnv`. A test builds one with
 ## `environmentOf` instead of mutating the process with `putEnv`.
+##
+## `inheritedByChild` is the other reader: the filtered environment handed to
+## child processes, which the daemon forwards and never interprets.
 
 import std/[os, strutils, tables]
 
@@ -22,6 +25,17 @@ proc readEnvironment*(): Environment =
   ## Snapshot of the process environment as it is now.
   for name, value in envPairs():
     result.vars[name] = value
+
+proc inheritedByChild*(name: string; default = ""): string {.gcsafe, raises: [].} =
+  ## A variable passed on to a child process (sandbox shell, code runner,
+  ## browser), read from the live process when the child is built. Only for
+  ## those filtered copies: the daemon's own settings come from the snapshot.
+  ## Unset or empty yields `default`, like `get`.
+  try:
+    let value = getEnv(name)
+    if value.len > 0: value else: default
+  except CatchableError:
+    default
 
 func get*(env: Environment; name: string; default = ""): string =
   ## The value of `name`, or `default` when it is unset or empty (the same as

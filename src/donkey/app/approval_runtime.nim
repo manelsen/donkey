@@ -4,6 +4,7 @@
 ## `tryHandleApprovalInput` with message text or inline callback data; the
 ## file-backed store is injected through `ApprovalStorePort`.
 
+import ../config/environment
 import std/[options, os, parseutils, strutils]
 import chronos
 import chronos/asyncsync
@@ -54,15 +55,15 @@ proc configureApprovalService*(store: ApprovalStorePort;
     timeoutMs: int64(max(10.0, timeoutSec) * 1000.0),
   )
 
-proc configureApprovalServiceFromEnv*(store: ApprovalStorePort) =
+proc configureApprovalServiceFromEnv*(store: ApprovalStorePort; env: Environment) =
   var timeoutSec = 300.0
-  let rawTimeout = getEnv("DONKEY_APPROVAL_TIMEOUT_SEC").strip()
+  let rawTimeout = env.stripped("DONKEY_APPROVAL_TIMEOUT_SEC")
   if rawTimeout.len > 0:
     var parsed: float
     let consumed = parseutils.parseFloat(rawTimeout, parsed)
     if consumed > 0 and consumed == rawTimeout.len:
       timeoutSec = parsed
-  configureApprovalService(store, parseApprovalTools(getEnv("DONKEY_APPROVAL_TOOLS")),
+  configureApprovalService(store, parseApprovalTools(env.get("DONKEY_APPROVAL_TOOLS")),
                            timeoutSec)
 
 proc resetApprovalService*() =

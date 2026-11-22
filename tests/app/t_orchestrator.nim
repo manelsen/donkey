@@ -7,6 +7,7 @@
 import std/[json, os, strutils, unittest]
 import chronos
 import chronos/asyncsync
+import donkey/config/environment
 import donkey/domain/agent_message
 import donkey/domain/message
 import donkey/domain/personality
@@ -114,26 +115,14 @@ proc longText(prefix: string; targetLen: int): string =
 
 # ── AsyncQueue round-trip ──────────────────────────────────────────────────────
 
+proc fastDebounce(): Environment =
+  environmentOf({"DONKEY_DEBOUNCE_MIN_MS": "10", "DONKEY_DEBOUNCE_SHORT_EXT_MS": "10"})
+
 proc runTests*() =
   # The orchestrator uses the production adaptive debounce window (1.2s plus
   # 600ms for short fragments). These integration tests assert routing, not
-  # wall-clock debounce behavior, and the dedicated debounce suite passes its
-  # own config. Keep the production defaults elsewhere and restore the
-  # environment when the test module exits.
-  let oldDebounceMin = getEnv("DONKEY_DEBOUNCE_MIN_MS", "")
-  let oldDebounceShort = getEnv("DONKEY_DEBOUNCE_SHORT_EXT_MS", "")
-  putEnv("DONKEY_DEBOUNCE_MIN_MS", "10")
-  putEnv("DONKEY_DEBOUNCE_SHORT_EXT_MS", "10")
-  defer:
-    if oldDebounceMin.len == 0:
-      delEnv("DONKEY_DEBOUNCE_MIN_MS")
-    else:
-      putEnv("DONKEY_DEBOUNCE_MIN_MS", oldDebounceMin)
-    if oldDebounceShort.len == 0:
-      delEnv("DONKEY_DEBOUNCE_SHORT_EXT_MS")
-    else:
-      putEnv("DONKEY_DEBOUNCE_SHORT_EXT_MS", oldDebounceShort)
-
+  # wall-clock debounce behavior, so every actor here runs with `fastDebounce()`;
+  # the dedicated debounce suite passes its own config.
   suite "AsyncQueue round-trip":
 
     test "put and get a task message":
@@ -370,7 +359,7 @@ proc runTests*() =
         var sm: SessionManager
         let actor = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(),
           complete, newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[client],
-          @[ToolDescription(name: "browser_navigate")], userDir, newSessionState())
+          @[ToolDescription(name: "browser_navigate")], userDir, newSessionState(), env = fastDebounce())
         try:
           await inbox.put(newTaskMsg("browse", tkUserMsg, $user, "browse"))
           await started.wait().wait(seconds(3))
@@ -408,7 +397,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete, newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
-                                   dir / "u42", state)
+                                   dir / "u42", state, env = fastDebounce())
         await inbox.put(newTaskMsg("req4", tkUserMsg, "u42", "ping"))
         let reply = await outbox.get()
         await inbox.put(newCancelMsg())
@@ -434,7 +423,7 @@ proc runTests*() =
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
                                    newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
-                                   userDir, state)
+                                   userDir, state, env = fastDebounce())
         await inbox.put(newTaskMsg("req-api-new", tkUserMsg, "api:alice", "ping"))
         let reply = await outbox.get()
         await inbox.put(newCancelMsg())
@@ -461,7 +450,7 @@ proc runTests*() =
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
                                    newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
-                                   userDir, state)
+                                   userDir, state, env = fastDebounce())
         var task = newTaskMsg("req-api-token", tkUserMsg, "api:alice", "ping")
         task.bridgeToken = 7'u64
         await inbox.put(task)
@@ -490,7 +479,7 @@ proc runTests*() =
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
                                    newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
-                                   userDir, state)
+                                   userDir, state, env = fastDebounce())
         await inbox.put(newTaskMsg("req-no-token", tkUserMsg, "u-no-token", "ping"))
         let reply = await outbox.get()
         await inbox.put(newCancelMsg())
@@ -516,7 +505,7 @@ proc runTests*() =
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
                                    newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
-                                   userDir, state)
+                                   userDir, state, env = fastDebounce())
         await inbox.put(newTaskMsg("req-interactive-new", tkUserMsg, "u-new", "ping"))
         let reply = await outbox.get()
         await inbox.put(newCancelMsg())
@@ -552,7 +541,7 @@ proc runTests*() =
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), leakyComplete,
                                    newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
-                                   dir / "u-sanitize", state)
+                                   dir / "u-sanitize", state, env = fastDebounce())
         await inbox.put(newTaskMsg("req-sanitize", tkUserMsg, "u-sanitize", "ping"))
         let reply = await outbox.get()
         await inbox.put(newCancelMsg())
@@ -591,7 +580,7 @@ proc runTests*() =
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), thinkingOnly,
                                    newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
-                                   dir / "u-thinking", state)
+                                   dir / "u-thinking", state, env = fastDebounce())
         await inbox.put(newTaskMsg("req-thinking", tkUserMsg, "u-thinking", "ping"))
         let reply = await outbox.get()
         await inbox.put(newCancelMsg())
@@ -618,7 +607,7 @@ proc runTests*() =
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
                                    newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
-                                   dir / "u-heartbeat", state)
+                                   dir / "u-heartbeat", state, env = fastDebounce())
         await inbox.put(newTaskMsg("req-hb", tkHeartbeat, "u-heartbeat",
           "Heartbeat automático.\nTarefas pendentes:\n- [ ] Review the logs"))
         let reply = await outbox.get()
@@ -649,7 +638,7 @@ proc runTests*() =
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
                                    newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
-                                   dir / "u-schedule", state)
+                                   dir / "u-schedule", state, env = fastDebounce())
         await inbox.put(newTaskMsg("req-sched", tkSchedule, "u-schedule",
           "Resumo diário.\n\n[schedule daily fired at 1700000000000 ms]"))
         ## Bounded: if the actor gate ever drops `tkSchedule` again, the test
@@ -687,7 +676,7 @@ proc runTests*() =
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), countingComplete,
                                    newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
-                                   dir / "u-heartbeat-new", state)
+                                   dir / "u-heartbeat-new", state, env = fastDebounce())
         await inbox.put(newTaskMsg("req-hb", tkHeartbeat, "u-heartbeat-new",
           "Heartbeat automático.\nTarefas pendentes:\n- [ ] Review the logs"))
         await sleepAsync(chronos.milliseconds(50))
@@ -717,7 +706,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubCompleteRetry, newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
-                                   dir / "u1", state)
+                                   dir / "u1", state, env = fastDebounce())
         await inbox.put(newTaskMsg("req6", tkUserMsg, "u1", "hello"))
         let reply = await outbox.get()
         await inbox.put(newCancelMsg())
@@ -744,7 +733,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubCompleteEmpty, newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
-                                   dir / "u1", state)
+                                   dir / "u1", state, env = fastDebounce())
         await inbox.put(newTaskMsg("req5", tkUserMsg, "u1", "hello"))
         let reply = await outbox.get()
         await inbox.put(newCancelMsg())
@@ -771,7 +760,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete, newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
-                                   dir / "u-seq", state)
+                                   dir / "u-seq", state, env = fastDebounce())
         await inbox.put(newTaskMsg("req-a", tkUserMsg, "u-seq", "ping"))
         discard await outbox.get()
         await inbox.put(newTaskMsg("req-b", tkUserMsg, "u-seq", "ping"))
@@ -817,7 +806,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), longComplete,
-          newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-long-memory", state)
+          newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-long-memory", state, env = fastDebounce())
         await inbox.put(newTaskMsg("req-long", tkUserMsg, "u-long-memory", longText("Pergunta longa:", 900)))
         discard await outbox.get()
         await inbox.put(newCancelMsg())
@@ -845,7 +834,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubOperationalMemoryFailure,
-          newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-skip-memory", state)
+          newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-skip-memory", state, env = fastDebounce())
         await inbox.put(newTaskMsg("req-skip", tkUserMsg, "u-skip-memory",
           "Pesquise online por Mythos e registre na memória tudo o que descobriu."))
         discard await outbox.get()
@@ -875,7 +864,7 @@ proc runTests*() =
         let orchFut = runOrchestrator(
           inbox, addr session, outbox, mem.toRuntimePort(),
           stubProvider500, newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
-          dir / "u1", state, errorExplainFn = stubErrorExplainer)
+          dir / "u1", state, errorExplainFn = stubErrorExplainer, env = fastDebounce())
         await inbox.put(newTaskMsg("req-err", tkUserMsg, "u1", "hello"))
         let reply = await outbox.get()
         await inbox.put(newCancelMsg())
@@ -901,7 +890,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let fut    = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete, newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[],
-                                     dir / "u1", state)
+                                     dir / "u1", state, env = fastDebounce())
         await inbox.put(newCancelMsg())
         await fut
       waitFor doTest(tmpDir)
@@ -930,7 +919,7 @@ proc runTests*() =
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
                                    newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-reset",
-                                   state, log = orchLog)
+                                   state, log = orchLog, env = fastDebounce())
         await inbox.put(newTaskMsg("req-reset-1", tkUserMsg, "u-reset", "ping"))
         let firstReply = await outbox.get()
         await inbox.put(newTaskMsg("req-reset-2", tkReset, "u-reset", ""))
@@ -976,7 +965,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), countingComplete,
-                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-reset-guard", state)
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-reset-guard", state, env = fastDebounce())
         await inbox.put(newTaskMsg("req-reset-1", tkReset, "u-reset-guard", ""))
         let resetReply = await outbox.get()
         await inbox.put(newTaskMsg("req-reset-2", tkUserMsg, "u-reset-guard", "oi"))
@@ -1005,7 +994,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
-                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-tg-bootstrap", state)
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-tg-bootstrap", state, env = fastDebounce())
         await inbox.put(newTaskMsg("req-tg-1", tkUserMsg, "u-tg-bootstrap", "oi", ckTelegram, "101"))
         let wakeupReply = await outbox.get()
         await inbox.put(newTaskMsg("req-tg-2", tkPersonalityChoice, "u-tg-bootstrap",
@@ -1040,7 +1029,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), countingComplete,
-                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-heartbeat-mid-bootstrap", state)
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-heartbeat-mid-bootstrap", state, env = fastDebounce())
         await inbox.put(newTaskMsg("req-mid-1", tkUserMsg, "u-heartbeat-mid-bootstrap", "oi", ckTelegram, "101"))
         discard await outbox.get()
         await inbox.put(newTaskMsg("req-mid-2", tkPersonalityChoice, "u-heartbeat-mid-bootstrap", "personality:mode:guided", ckTelegram, "555"))
@@ -1340,7 +1329,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubNameChoiceReady,
-                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-name-dialogue", state)
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-name-dialogue", state, env = fastDebounce())
         await inbox.put(newTaskMsg("req-1", tkUserMsg, "u-name-dialogue", "oi", ckTelegram, "101"))
         discard await outbox.get()
         await inbox.put(newTaskMsg("req-2", tkPersonalityChoice, "u-name-dialogue", "personality:mode:guided", ckTelegram, "555"))
@@ -1381,7 +1370,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
-                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-profile-msgs", state)
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-profile-msgs", state, env = fastDebounce())
         await inbox.put(newTaskMsg("req-1", tkUserMsg, "u-profile-msgs", "oi", ckTelegram, "101"))
         discard await outbox.get()
         await inbox.put(newTaskMsg("req-2", tkPersonalityChoice, "u-profile-msgs", "personality:mode:guided", ckTelegram, "555"))
@@ -1420,7 +1409,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubUserProfileReady,
-                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-micro-profile", state)
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-micro-profile", state, env = fastDebounce())
         await inbox.put(newTaskMsg("req-1", tkUserMsg, "u-micro-profile", "oi", ckTelegram, "101"))
         discard await outbox.get()
         await inbox.put(newTaskMsg("req-2", tkPersonalityChoice, "u-micro-profile", "personality:mode:guided", ckTelegram, "555"))
@@ -1459,7 +1448,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubFreeConvoReady,
-                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-resume-convo", state)
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-resume-convo", state, env = fastDebounce())
         await inbox.put(newTaskMsg("req-1", tkUserMsg, "u-resume-convo", "oi", ckTelegram, "101"))
         discard await outbox.get()
         await inbox.put(newTaskMsg("req-2", tkPersonalityChoice, "u-resume-convo", "personality:mode:free", ckTelegram, "555"))
@@ -1478,7 +1467,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
-                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-resume-convo", state)
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-resume-convo", state, env = fastDebounce())
         await inbox.put(newTaskMsg("req-4", tkUserMsg, "u-resume-convo", "Nex", ckTelegram, "101"))
         let reply = await outbox.get()
         await inbox.put(newCancelMsg())
@@ -1493,7 +1482,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubUserProfileReady,
-                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-resume-convo", state)
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-resume-convo", state, env = fastDebounce())
         await inbox.put(newTaskMsg("req-5", tkUserMsg, "u-resume-convo",
           "Sou Manel, pode me chamar de Void. Gosto de franqueza. UTC-3. Português brasileiro.",
           ckTelegram, "101"))
@@ -1535,7 +1524,7 @@ proc runTests*() =
         session.inbox = inbox
         let state = newSessionState()
         let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), stubComplete,
-                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-bootstrap-latch", state)
+                                   newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-bootstrap-latch", state, env = fastDebounce())
         await inbox.put(newTaskMsg("req-1", tkUserMsg, "u-bootstrap-latch", "oi", ckTelegram, "101"))
         discard await outbox.get()
         await inbox.put(newTaskMsg("req-2", tkPersonalityChoice, "u-bootstrap-latch", "personality:mode:guided", ckTelegram, "555"))
@@ -1574,13 +1563,12 @@ proc runTests*() =
 
     test "suppress tool progress env values":
       for value in ["1", "true", "YES", "on"]:
-        putEnv("DONKEY_SUPPRESS_TOOL_PROGRESS", value)
-        check suppressToolProgressFromEnv()
+        check suppressToolProgressFromEnv(
+          environmentOf({"DONKEY_SUPPRESS_TOOL_PROGRESS": value}))
       for value in ["0", "false", "off", ""]:
-        putEnv("DONKEY_SUPPRESS_TOOL_PROGRESS", value)
-        check not suppressToolProgressFromEnv()
-      delEnv("DONKEY_SUPPRESS_TOOL_PROGRESS")
-      check not suppressToolProgressFromEnv()
+        check not suppressToolProgressFromEnv(
+          environmentOf({"DONKEY_SUPPRESS_TOOL_PROGRESS": value}))
+      check not suppressToolProgressFromEnv(Environment())
 
 
   suite "adaptive debounce collector":

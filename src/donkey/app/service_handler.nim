@@ -3,6 +3,7 @@
 ## Owns systemd --user service install/remove/start/stop/restart/logs.
 ## Extracted from main() so the entrypoint stays lean.
 
+import ../config/environment
 import std/[os, strutils]
 import ../core/app_meta
 import ../domain/providers/descriptors
@@ -136,7 +137,8 @@ proc buildServiceFileContent*(binPath: string): string =
 
 # ── service command handlers ───────────────────────────────────────────────────
 
-proc ctlServiceInstall*() =
+proc ctlServiceInstall*(env: Environment) =
+  ## Keys already in `env` are copied into the service env file.
   # Directories
   createDir(svcUnitDir())
   createDir(svcCfgDir())
@@ -158,7 +160,7 @@ proc ctlServiceInstall*() =
   var envContent = readFile(envPath)
   var injected: seq[string]
   for k in knownKeys:
-    let v = getEnv(k)
+    let v = env.get(k)
     if v.len == 0: continue
     var lines = envContent.splitLines()
     var found = false
@@ -192,7 +194,7 @@ proc ctlServiceInstall*() =
     echo ""
     echo "✓ Installed. Run: " & AppSlug & " service start"
     echo "  Logs:         " & AppSlug & " service logs -f"
-    echo "  Auto-start:   loginctl enable-linger " & getEnv("USER", "your-user")
+    echo "  Auto-start:   loginctl enable-linger " & env.get("USER", "your-user")
   else:
     echo "Warning: systemctl enable failed — is systemd --user running?"
 
@@ -230,11 +232,11 @@ proc ctlServiceLogs*(follow: bool) =
 
 # ── dispatch ───────────────────────────────────────────────────────────────────
 
-proc dispatchService*(args: seq[string]; logsFollow: bool): int =
+proc dispatchService*(args: seq[string]; logsFollow: bool; env: Environment): int =
   ## Routes service subcommands. Returns exit code (0=ok, 2=unrecognized).
   if args.len < 2: return 2
   case args[1]
-  of "install": ctlServiceInstall(); 0
+  of "install": ctlServiceInstall(env); 0
   of "remove":  ctlServiceRemove();  0
   of "start":   ctlServiceStart();   0
   of "stop":    ctlServiceStop();    0

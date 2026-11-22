@@ -1154,7 +1154,7 @@ proc startHttpGateway*(port: int;
     modelName: modelName,
     agentTimeoutMs:
       if agentTimeoutMs > 0: agentTimeoutMs
-      else: resolveAgentTimeoutMs(getEnv("DONKEY_HTTP_AGENT_TIMEOUT_SEC")),
+      else: resolveAgentTimeoutMs(""),
     authToken: authToken,
     log: log)
 

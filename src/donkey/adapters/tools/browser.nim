@@ -15,6 +15,7 @@
 ##   - CDP commands sent over WebSocket via ws_client.nim
 ##   - JSON-RPC 2.0 protocol for command/response correlation
 
+import ../../config/environment
 import std/[json, net, options, os, osproc, sequtils, strtabs, strutils, tables, times]
 when defined(posix):
   import std/posix
@@ -812,22 +813,22 @@ proc browserProcessEnv*(profileDir: string): StringTableRef =
     if profileDir.len > 0: profileDir
     else: getTempDir()
   result = newStringTable(mode = modeCaseSensitive)
-  result["PATH"] = getEnv("PATH")
+  result["PATH"] = inheritedByChild("PATH")
   result["HOME"] = homeDir
-  result["TMPDIR"] = getEnv("TMPDIR", getTempDir())
-  result["TMP"] = getEnv("TMP", getEnv("TMPDIR", getTempDir()))
-  result["TEMP"] = getEnv("TEMP", getEnv("TMPDIR", getTempDir()))
-  result["LANG"] = getEnv("LANG", "C.UTF-8")
-  result["LC_ALL"] = getEnv("LC_ALL", getEnv("LANG", "C.UTF-8"))
-  result["USER"] = getEnv("USER", "donkey")
-  result["LOGNAME"] = getEnv("LOGNAME", getEnv("USER", "donkey"))
+  result["TMPDIR"] = inheritedByChild("TMPDIR", getTempDir())
+  result["TMP"] = inheritedByChild("TMP", inheritedByChild("TMPDIR", getTempDir()))
+  result["TEMP"] = inheritedByChild("TEMP", inheritedByChild("TMPDIR", getTempDir()))
+  result["LANG"] = inheritedByChild("LANG", "C.UTF-8")
+  result["LC_ALL"] = inheritedByChild("LC_ALL", inheritedByChild("LANG", "C.UTF-8"))
+  result["USER"] = inheritedByChild("USER", "donkey")
+  result["LOGNAME"] = inheritedByChild("LOGNAME", inheritedByChild("USER", "donkey"))
   for name in ["LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"]:
-    let value = getEnv(name)
+    let value = inheritedByChild(name)
     if value.len > 0:
       result[name] = value
   when defined(windows):
     for name in ["SystemRoot", "WINDIR", "COMSPEC", "PATHEXT"]:
-      let value = getEnv(name)
+      let value = inheritedByChild(name)
       if value.len > 0:
         result[name] = value
 

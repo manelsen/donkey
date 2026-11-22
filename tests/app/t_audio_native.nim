@@ -2,6 +2,7 @@
 
 import std/[json, os, sequtils, strutils, unittest]
 import chronos
+import donkey/config/environment
 import donkey/adapters/filesystem/fs_adapter
 import donkey/adapters/memory/md_file
 import donkey/app/native_tools
@@ -33,6 +34,8 @@ proc stubComplete(req: CompletionRequest): Result[CompletionResponse, string] =
 
 proc baseCtx(paddock: string; http: HttpRuntimePort): NativeCtx =
   NativeCtx(
+    env:        environmentOf({"DONKEY_STT_API_KEY": "test-key",
+                               "DONKEY_TTS_API_KEY": "test-key"}),
     uid:        UserId("audio-user"),
     channel:    ckTelegram,
     memory:     MdFileAdapter(paddocksDir: paddock).toRuntimePort(),
@@ -63,14 +66,6 @@ proc runTests*() =
       check "text_to_speech" in names
 
   suite "audio tool dispatch":
-
-    setup:
-      putEnv("DONKEY_STT_API_KEY", "test-key")
-      putEnv("DONKEY_TTS_API_KEY", "test-key")
-
-    teardown:
-      delEnv("DONKEY_STT_API_KEY")
-      delEnv("DONKEY_TTS_API_KEY")
 
     test "transcribe_audio resolves the path and returns the text":
       let dir = freshDir("stt")

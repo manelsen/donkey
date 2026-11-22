@@ -1,6 +1,7 @@
 import std/[options, os, strutils, unittest]
 import chronos
 import chronos/asyncsync
+import donkey/config/environment
 import donkey/app/native_tools
 import donkey/adapters/filesystem/fs_adapter
 import donkey/app/approval_runtime
@@ -188,8 +189,6 @@ proc runTests*() =
       check not fileExists(marker)
 
     test "execute_code approval summary shows language and code":
-      putEnv("DONKEY_CODE_TIMEOUT_SEC", "30")
-      defer: delEnv("DONKEY_CODE_TIMEOUT_SEC")
       var captured = ""
       let approveStore = ApprovalStorePort(
         create: proc(userId: string; channel: string; toolName, summary: string;
@@ -213,6 +212,7 @@ proc runTests*() =
 
       let outbox = newAsyncQueue[OutboundMessage](4)
       var ctx = NativeCtx(
+        env: environmentOf({"DONKEY_CODE_TIMEOUT_SEC": "30"}),
         uid: UserId("u1"),
         channel: ckTelegram,
         outbox: outbox,
@@ -318,8 +318,6 @@ proc runTests*() =
   suite "large file write approval summary":
 
     test "summary mode approves a large fs_write with path, bytes and sha1":
-      putEnv("DONKEY_APPROVAL_LARGE_WRITES", "summary")
-      defer: delEnv("DONKEY_APPROVAL_LARGE_WRITES")
       let root = "/tmp/donkey_large_write_approval"
       removeDir(root)
       createDir(root)
@@ -350,6 +348,7 @@ proc runTests*() =
 
       let outbox = newAsyncQueue[OutboundMessage](4)
       var ctx = NativeCtx(
+        env: environmentOf({"DONKEY_APPROVAL_LARGE_WRITES": "summary"}),
         uid: UserId("u1"),
         channel: ckTelegram,
         outbox: outbox,
@@ -374,7 +373,6 @@ proc runTests*() =
       check fileExists(root / "big.md")
 
     test "reject mode still blocks a large fs_write":
-      delEnv("DONKEY_APPROVAL_LARGE_WRITES")
       var created = 0
       let store = ApprovalStorePort(
         create: proc(userId: string; channel: string; toolName, summary: string;
@@ -415,8 +413,6 @@ proc runTests*() =
       check created == 0
 
     test "summary uses the serialized lines content, not getStr":
-      putEnv("DONKEY_APPROVAL_LARGE_WRITES", "summary")
-      defer: delEnv("DONKEY_APPROVAL_LARGE_WRITES")
       let root = "/tmp/donkey_large_write_lines"
       removeDir(root)
       createDir(root)
@@ -445,6 +441,7 @@ proc runTests*() =
 
       let outbox = newAsyncQueue[OutboundMessage](4)
       var ctx = NativeCtx(
+        env: environmentOf({"DONKEY_APPROVAL_LARGE_WRITES": "summary"}),
         uid: UserId("u1"),
         channel: ckTelegram,
         outbox: outbox,

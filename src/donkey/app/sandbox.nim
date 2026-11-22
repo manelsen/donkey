@@ -18,6 +18,7 @@
 ##
 ## Call sandboxLogLevel once at daemon startup to surface the active mode.
 
+import ../config/environment
 import std/[osproc, os, streams, strtabs, strutils]
 when defined(posix):
   import std/posix
@@ -132,19 +133,19 @@ proc buildHostSandboxEnv*(paddock: string): StringTableRef {.gcsafe, raises: [].
   let homeDir =
     if paddock.len > 0: paddock
     else: getHomeDir()
-  let tmpDir = getEnv("TMPDIR", "/tmp")
-  let lang = getEnv("LANG", "C.UTF-8")
-  let user = getEnv("USER", "donkey")
-  result["PATH"] = getEnv("PATH")
+  let tmpDir = inheritedByChild("TMPDIR", "/tmp")
+  let lang = inheritedByChild("LANG", "C.UTF-8")
+  let user = inheritedByChild("USER", "donkey")
+  result["PATH"] = inheritedByChild("PATH")
   result["HOME"] = homeDir
   result["TMPDIR"] = tmpDir
-  result["TMP"] = getEnv("TMP", tmpDir)
-  result["TEMP"] = getEnv("TEMP", tmpDir)
+  result["TMP"] = inheritedByChild("TMP", tmpDir)
+  result["TEMP"] = inheritedByChild("TEMP", tmpDir)
   result["LANG"] = lang
-  result["LC_ALL"] = getEnv("LC_ALL", lang)
-  result["TERM"] = getEnv("TERM", "dumb")
+  result["LC_ALL"] = inheritedByChild("LC_ALL", lang)
+  result["TERM"] = inheritedByChild("TERM", "dumb")
   result["USER"] = user
-  result["LOGNAME"] = getEnv("LOGNAME", user)
+  result["LOGNAME"] = inheritedByChild("LOGNAME", user)
 
 # ── Shell.wasm path resolution ────────────────────────────────────────────────
 

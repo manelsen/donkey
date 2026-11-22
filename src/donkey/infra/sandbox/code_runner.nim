@@ -4,6 +4,7 @@
 ## `domain/tools/code_pure`; this module only enforces the wall-clock timeout,
 ## caps the output and cleans up the container.
 
+import ../../config/environment
 import std/[atomics, os, strtabs, strutils, times]
 when defined(posix):
   import std/posix
@@ -115,12 +116,12 @@ proc codeProcessEnv(): StringTableRef =
                "USER", "LOGNAME", "DOCKER_HOST", "DOCKER_CONFIG",
                "DOCKER_CERT_PATH", "DOCKER_TLS_VERIFY", "DOCKER_CONTEXT",
                "XDG_RUNTIME_DIR", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"]:
-    let value = getEnv(name)
+    let value = inheritedByChild(name)
     if value.len > 0:
       result[name] = value
   when defined(windows):
     for name in ["SystemRoot", "WINDIR", "COMSPEC", "PATHEXT"]:
-      let value = getEnv(name)
+      let value = inheritedByChild(name)
       if value.len > 0:
         result[name] = value
 

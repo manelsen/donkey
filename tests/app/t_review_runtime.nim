@@ -6,6 +6,7 @@
 import std/[os, strutils, tables, unittest]
 import chronos
 
+import donkey/config/environment
 import donkey/adapters/http/std_http
 import donkey/adapters/memory/md_file
 import donkey/app/orchestrator
@@ -143,31 +144,23 @@ proc runTests*() =
   suite "review config":
 
     test "defaults mirror the reference cadence":
-      delEnv("DONKEY_REVIEW_ENABLED")
-      delEnv("DONKEY_REVIEW_MEMORY_INTERVAL")
-      delEnv("DONKEY_REVIEW_SKILL_INTERVAL")
-      let cfg = reviewConfigFromEnv()
+      let cfg = reviewConfigFromEnv(Environment())
       check cfg.enabled
       check cfg.memoryInterval == 10
       check cfg.skillInterval == 10
 
     test "env overrides and invalid values fall back":
-      putEnv("DONKEY_REVIEW_ENABLED", "false")
-      putEnv("DONKEY_REVIEW_MEMORY_INTERVAL", "3")
-      putEnv("DONKEY_REVIEW_SKILL_INTERVAL", "nope")
-      defer:
-        delEnv("DONKEY_REVIEW_ENABLED")
-        delEnv("DONKEY_REVIEW_MEMORY_INTERVAL")
-        delEnv("DONKEY_REVIEW_SKILL_INTERVAL")
-      let cfg = reviewConfigFromEnv()
+      let cfg = reviewConfigFromEnv(environmentOf({
+        "DONKEY_REVIEW_ENABLED": "false",
+        "DONKEY_REVIEW_MEMORY_INTERVAL": "3",
+        "DONKEY_REVIEW_SKILL_INTERVAL": "nope"}))
       check not cfg.enabled
       check cfg.memoryInterval == 3
       check cfg.skillInterval == 10
 
     test "zero disables that half of the review":
-      putEnv("DONKEY_REVIEW_MEMORY_INTERVAL", "0")
-      defer: delEnv("DONKEY_REVIEW_MEMORY_INTERVAL")
-      check reviewConfigFromEnv().memoryInterval == 0
+      check reviewConfigFromEnv(environmentOf(
+        {"DONKEY_REVIEW_MEMORY_INTERVAL": "0"})).memoryInterval == 0
 
   suite "review runtime — what gets written":
 

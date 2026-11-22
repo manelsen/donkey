@@ -8,6 +8,7 @@ import chronos
 
 import ../../core/log
 import ../../core/pipeops
+import ../../config/environment
 import ../../core/types
 import ../../domain/tools/code_pure
 import ../../infra/sandbox/code_runner
@@ -46,26 +47,26 @@ func codeSandboxFromMode*(mode: SandboxMode): Result[CodeSandboxKind, string] =
   of smNone:
     err("execute_code requires sandbox.mode='oci' or 'wasm'; host fallback is not allowed")
 
-proc codeConfigFromEnv*(mode: SandboxMode; runtimeCmd: string):
+proc codeConfigFromEnv*(env: Environment; mode: SandboxMode; runtimeCmd: string):
                         Result[CodeRuntimeConfig, string] =
-  ## Environment overrides are read once per call so tests and operators can
-  ## change limits without reconstructing the daemon.
+  ## `DONKEY_CODE_*` overrides from the environment snapshot over the sandbox
+  ## mode and runtime.
   let sandbox = codeSandboxFromMode(mode).valueOr:
     return err(error)
   var cfg = CodeRuntimeConfig()
   cfg.sandbox = sandbox
-  cfg.runtimeCmd = getEnv("DONKEY_CODE_RUNTIME").strip()
+  cfg.runtimeCmd = env.stripped("DONKEY_CODE_RUNTIME")
   if cfg.runtimeCmd.len == 0:
     cfg.runtimeCmd =
       if runtimeCmd.len > 0: runtimeCmd
       else: "docker"
-  cfg.image = getEnv("DONKEY_CODE_IMAGE").strip()
+  cfg.image = env.stripped("DONKEY_CODE_IMAGE")
   cfg.timeoutSec =
-    parseCodeTimeoutSec(getEnv("DONKEY_CODE_TIMEOUT_SEC"))
+    parseCodeTimeoutSec(env.get("DONKEY_CODE_TIMEOUT_SEC"))
   cfg.maxOutputBytes =
-    parseCodeMaxOutputBytes(getEnv("DONKEY_CODE_MAX_OUTPUT_BYTES"))
+    parseCodeMaxOutputBytes(env.get("DONKEY_CODE_MAX_OUTPUT_BYTES"))
   cfg.maxSourceBytes =
-    parseCodeMaxSourceBytes(getEnv("DONKEY_CODE_MAX_SOURCE_BYTES"))
+    parseCodeMaxSourceBytes(env.get("DONKEY_CODE_MAX_SOURCE_BYTES"))
   ok(cfg)
 
 proc resolveWasmPath(workspace, rawPath: string;

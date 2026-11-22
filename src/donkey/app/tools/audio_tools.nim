@@ -11,6 +11,7 @@
 import std/[os, strutils]
 import results
 import ../../core/pipeops
+import ../../config/environment
 import ../../domain/media/audio_pure
 import ../../domain/message
 import ../../ports/channel_capability
@@ -26,33 +27,23 @@ const
 
 var gSpeechSeq = 0
 
-proc sttApiKey*(): string =
-  let direct = getEnv("DONKEY_STT_API_KEY").strip
-  if direct.len > 0: direct else: getEnv("OPENAI_API_KEY").strip
+type SpeechSettings* = object
+  ## Speech endpoints and keys, read once from the environment snapshot.
+  sttApiKey*, sttEndpoint*, sttModel*: string
+  ttsApiKey*, ttsEndpoint*, ttsModel*, ttsVoice*: string
 
-proc sttEndpoint*(): string =
-  let value = getEnv("DONKEY_STT_URL").strip
-  if value.len > 0: value else: SttDefaultEndpoint
-
-proc sttModel*(): string =
-  let value = getEnv("DONKEY_STT_MODEL").strip
-  if value.len > 0: value else: SttDefaultModel
-
-proc ttsApiKey*(): string =
-  let direct = getEnv("DONKEY_TTS_API_KEY").strip
-  if direct.len > 0: direct else: getEnv("OPENAI_API_KEY").strip
-
-proc ttsEndpoint*(): string =
-  let value = getEnv("DONKEY_TTS_URL").strip
-  if value.len > 0: value else: TtsDefaultEndpoint
-
-proc ttsModel*(): string =
-  let value = getEnv("DONKEY_TTS_MODEL").strip
-  if value.len > 0: value else: TtsDefaultModel
-
-proc ttsVoice*(): string =
-  let value = getEnv("DONKEY_TTS_VOICE").strip
-  if value.len > 0: value else: TtsDefaultVoice
+func speechSettings*(env: Environment): SpeechSettings =
+  ## `DONKEY_STT_*` / `DONKEY_TTS_*`, with `OPENAI_API_KEY` as the key
+  ## fallback and the OpenAI endpoints, models and voice as defaults.
+  let openAiKey = env.stripped("OPENAI_API_KEY")
+  SpeechSettings(
+    sttApiKey: env.stripped("DONKEY_STT_API_KEY", openAiKey),
+    sttEndpoint: env.stripped("DONKEY_STT_URL", SttDefaultEndpoint),
+    sttModel: env.stripped("DONKEY_STT_MODEL", SttDefaultModel),
+    ttsApiKey: env.stripped("DONKEY_TTS_API_KEY", openAiKey),
+    ttsEndpoint: env.stripped("DONKEY_TTS_URL", TtsDefaultEndpoint),
+    ttsModel: env.stripped("DONKEY_TTS_MODEL", TtsDefaultModel),
+    ttsVoice: env.stripped("DONKEY_TTS_VOICE", TtsDefaultVoice))
 
 func clipBody(body: string): string =
   let trimmed = body.strip
@@ -64,8 +55,8 @@ func errorText(prefix, detail: string): string =
 
 proc performTranscribe*(path: string; http: HttpRuntimePort;
                         language = ""; prompt = "";
-                        apiKey = sttApiKey(); endpoint = sttEndpoint();
-                        model = sttModel();
+                        apiKey = ""; endpoint = SttDefaultEndpoint;
+                        model = SttDefaultModel;
                         maxBytes = MaxTranscriptionBytes): string {.gcsafe, raises: [].} =
   ## Reads `path` (inside the paddock, resolved by the caller) and returns the
   ## transcript, or a string starting with "Error: ".
@@ -111,9 +102,9 @@ proc performTranscribe*(path: string; http: HttpRuntimePort;
   parsed.get()
 
 proc performSpeech*(text: string; paddockDir: string; http: HttpRuntimePort;
-                    voice = ttsVoice(); format = "mp3";
-                    apiKey = ttsApiKey(); endpoint = ttsEndpoint();
-                    model = ttsModel()): Result[string, string]
+                    voice = TtsDefaultVoice; format = "mp3";
+                    apiKey = ""; endpoint = TtsDefaultEndpoint;
+                    model = TtsDefaultModel): Result[string, string]
                     {.gcsafe, raises: [].} =
   ## Sends `text` to the speech endpoint and stores the audio under the
   ## paddock's attachments. Returns the path relative to the paddock.
@@ -124,7 +115,7 @@ proc performSpeech*(text: string; paddockDir: string; http: HttpRuntimePort;
   if paddockDir.len == 0:
     return err("text_to_speech: no paddock directory")
   let chosenFormat = if format.strip.len == 0: "mp3" else: format
-  let chosenVoice = if voice.strip.len == 0: ttsVoice() else: voice.strip
+  let chosenVoice = if voice.strip.len == 0: TtsDefaultVoice else: voice.strip
   let extension = speechExtension(chosenFormat).valueOr:
     return err("text_to_speech: " & error)
   let payload = buildSpeechPayload(model, text, chosenVoice, extension)
@@ -156,7 +147,8 @@ proc performSpeech*(text: string; paddockDir: string; http: HttpRuntimePort;
 
 proc prepareVoiceReply*(text, caption, paddockDir: string;
                         channel: ChannelKind; uid: UserId;
-                        http: HttpRuntimePort; replyTo = ""): Result[OutboundMessage, string]
+                        http: HttpRuntimePort; speech: SpeechSettings;
+                        replyTo = ""): Result[OutboundMessage, string]
                         {.gcsafe, raises: [].} =
   ## Synthesizes `text` as an opus voice note and describes the outbound
   ## message; the caller enqueues it. The capability check comes first, so a
@@ -165,7 +157,9 @@ proc prepareVoiceReply*(text, caption, paddockDir: string;
   if not supports(channel, cfSendVoice):
     return err("text_to_speech: channel " & $channel &
                " cannot deliver voice notes")
-  let saved = performSpeech(text, paddockDir, http, format = "opus")
+  let saved = performSpeech(text, paddockDir, http, voice = speech.ttsVoice,
+                            format = "opus", apiKey = speech.ttsApiKey,
+                            endpoint = speech.ttsEndpoint, model = speech.ttsModel)
   if saved.isErr:
     return err(saved.error)
   ok(OutboundMessage(
