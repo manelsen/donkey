@@ -1,13 +1,17 @@
-## StdHttpAdapter — HttpPort backed by std/httpclient + system OpenSSL.
-## For IoT targets swap for ChronosHttpAdapter (chronos + bearssl, no system deps).
+## StdHttpAdapter — the HttpPort every adapter uses: allowlist, per-host
+## circuit breaker, retries with backoff, 429 and 409 handling. Each attempt
+## runs on `deadline_transport` (Chronos + bearssl), which bounds the whole
+## request by the adapter timeout: connecting, headers and every body read.
+## std/httpclient bounded each read only, so a server that dripped bytes held
+## the caller forever.
 
-import std/[httpclient, strutils, os, json]
+import std/[httpcore, strutils, os, json]
 import ../../ports/http
 import ../../core/pipeops
 import ./circuit_breakers
 import ../../core/security/net_boundary
 import ../network/dns_resolver
-import ./helpers
+import ./deadline_transport
 
 type StdHttpAdapter* = object
   timeout*: int ## Timeout in seconds.
@@ -80,19 +84,13 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
   ## use the same budget.
   let attemptLimit = a.maxAttempts(retryKind(meth))
   for attempt in 1 .. attemptLimit:
-    let res = block:
-      let effectiveTimeout = if timeoutSec > 0: timeoutSec else: a.timeout
-      withHttpClientTimeout(effectiveTimeout, redirectLimit, a.proxy):
-        if headers.len > 0:
-          var h = newHttpHeaders()
-          for (k, v) in headers: h[k] = v
-          client.headers = h
-        let resp = client.request(url, httpMethod = meth, body = body)
-        var responseHeaders: seq[HttpHeader]
-        for key, value in resp.headers:
-          responseHeaders.add((key, value))
-        ok(HttpResponse(status: resp.code.int, body: resp.body,
-                        headers: responseHeaders))
+    let effectiveTimeout = if timeoutSec > 0: timeoutSec else: a.timeout
+    let res = transportRequest(TransportRequest(
+      meth: $meth, url: url, body: body, headers: headers,
+      redirectLimit: redirectLimit, proxy: a.proxy,
+      deadlineMs: effectiveTimeout * 1000,
+    )).map(proc(r: TransportResponse): HttpResponse =
+      HttpResponse(status: r.status, body: r.body, headers: r.headers))
 
     if res.isOk:
       let val = res.get()

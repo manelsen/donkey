@@ -3,7 +3,8 @@
 ## Covers search, metadata lookup, zip download, deterministic bundle hashing,
 ## local lock/origin files, and install/update validation.
 
-import std/[algorithm, httpclient, json, os, osproc, strutils, tables, times, uri]
+import std/[algorithm, json, os, osproc, strutils, tables, times, uri]
+import ../adapters/http/std_http
 import wrappers/openssl
 import ../core/pipeops
 
@@ -152,22 +153,19 @@ proc parseRemoteSkillVersion*(j: JsonNode): RemoteSkillVersion =
     )
 
 const ClawhubHttpTimeoutSec* = 60
-  ## A stalled registry must not hang `/skill search` or `/skill install`.
+  ## A stalled registry must not hang `/skill search` or `/skill install`:
+  ## the whole request is bounded (deadline transport), not each read.
 
-proc newRegistryClient*(registry: string): HttpClient =
-  result = newHttpClient(timeout = ClawhubHttpTimeoutSec * 1000)
-  result.headers = newHttpHeaders({
-    "Accept": "application/json",
-  })
-  discard normalizeRegistryUrl(registry)
+proc registryHttp(): StdHttpAdapter =
+  newStdHttpAdapter(timeout = ClawhubHttpTimeoutSec, maxRetries = 1,
+                    circuitBreaker = false)
 
 proc fetchJson*(registry, path: string): Result[JsonNode, string] =
+  let resp = ? registryHttp().get(registryUrl(registry, path),
+                                  @[("Accept", "application/json")])
+  if resp.status < 200 or resp.status >= 300:
+    return err("ClawHub API error " & $resp.status & ": " & resp.body)
   try:
-    let client = newRegistryClient(registry)
-    defer: client.close()
-    let resp = client.get(registryUrl(registry, path))
-    if resp.status[0] != '2':
-      return err("ClawHub API error " & resp.status & ": " & resp.body)
     ok(parseJson(resp.body))
   except CatchableError as e:
     err(e.msg)
@@ -191,17 +189,21 @@ proc dumpSkillArtifact*(slug, reason: string; data: string = "") {.gcsafe, raise
 
 proc downloadZipBytes*(registry, slug, version: string): Result[seq[byte], string] =
   try:
-    let client = newHttpClient(timeout = ClawhubHttpTimeoutSec * 1000)
-    defer: client.close()
     var url = registryUrl(registry, ClawhubApiDownload)
     url.add(if '?' in url: "&" else: "?")
     url.add("slug=" & encodeUrl(slug))
     if version.len > 0:
       url.add("&version=" & encodeUrl(version))
-    let resp = client.get(url)
-    if resp.status[0] != '2':
-      return err("ClawHub download error " & resp.status & ": " & resp.body)
-    let ct = resp.headers.getOrDefault("Content-Type")
+    let fetched = registryHttp().get(url)
+    if fetched.isErr:
+      dumpSkillArtifact(slug, "download failed: " & fetched.error)
+      return err(fetched.error)
+    let resp = fetched.get
+    if resp.status < 200 or resp.status >= 300:
+      return err("ClawHub download error " & $resp.status & ": " & resp.body)
+    var ct = ""
+    for (name, value) in resp.headers:
+      if name.toLowerAscii == "content-type": ct = value
     if not ct.startsWith("application/"):
       dumpSkillArtifact(slug, "Content-Type mismatch: " & ct, resp.body)
       return err("ClawHub download returned Content-Type \"" & ct & "\" — esperado application/zip. Registry pode estar bloqueando ou retornando página de erro.")

@@ -1,0 +1,164 @@
+## The HTTP transport keeps a wall-clock deadline for the whole request: a
+## server that answers a byte now and then, or never answers, fails the
+## request at the deadline instead of holding the caller (a provider worker,
+## a channel loop) forever. A local server plays each case.
+
+import std/[nativesockets, net, os, strutils, times, unittest]
+import donkey/core/pipeops
+import donkey/infra/thread_handle
+import donkey/adapters/http/deadline_transport
+import donkey/adapters/http/std_http
+
+type ServerArg = object
+  port: int
+
+proc readRequest(client: Socket): string =
+  ## The request line and headers, then a body announced by Content-Length.
+  var line = ""
+  var length = 0
+  client.readLine(line, timeout = 2000)
+  result = line
+  while true:
+    client.readLine(line, timeout = 2000)
+    if line == "\r\n" or line.len == 0: break
+    if line.toLowerAscii.startsWith("content-length:"):
+      length = parseInt(line.split(':')[1].strip)
+  if length > 0:
+    result.add "\n" & client.recv(length, timeout = 2000)
+
+type ConnArg = object
+  fd: SocketHandle  ## plain data: the connection is rebuilt in its thread
+
+proc handle(arg: ConnArg) {.thread.} =
+  let client = newSocket(arg.fd)
+  block:
+    try:
+      let request = readRequest(client)
+      let path = request.split(' ')[1]
+      case path
+      of "/ok":
+        client.send("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n" &
+                    "X-Probe: yes\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello")
+      of "/echo":
+        let body = if '\n' in request: request.split('\n', 1)[1] else: ""
+        client.send("HTTP/1.1 200 OK\r\nContent-Length: " & $body.len &
+                    "\r\nConnection: close\r\n\r\n" & body)
+      of "/redirect":
+        client.send("HTTP/1.1 302 Found\r\nLocation: /ok\r\n" &
+                    "Content-Length: 0\r\nConnection: close\r\n\r\n")
+      of "/drip":
+        ## Headers at once, then a one-byte chunk every 300 ms. Each read
+        ## (a chunk-size line, a chunk) succeeds within any read timeout, so
+        ## only a deadline for the whole request ends it: this is the case
+        ## std/httpclient's per-read timeout never catches.
+        client.send("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n")
+        for _ in 0 ..< 1000:
+          client.send("1\r\nx\r\n")
+          sleep(300)
+      of "/silent":
+        ## Never answers; stops as soon as the client hangs up, so the next
+        ## test is served (the server handles one connection at a time).
+        for _ in 0 ..< 200:
+          try:
+            if client.recv(1, timeout = 100).len == 0: break
+          except TimeoutError:
+            discard
+      else:
+        client.send("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
+    except CatchableError:
+      discard  ## the client gave up: expected for /drip and /silent
+    client.close()
+
+proc serve(arg: ServerArg) {.thread.} =
+  ## One thread per connection, so a dripping or silent reply never holds
+  ## up the next test.
+  let server = newSocket()
+  server.setSockOpt(OptReuseAddr, true)
+  server.bindAddr(Port(arg.port), "127.0.0.1")
+  server.listen()
+  while true:
+    var client: Socket
+    server.accept(client)
+    discard spawnThread(handle, ConnArg(fd: client.getFd()))
+
+proc freePort(): int =
+  ## A port the OS reports free right now, so parallel test runs do not clash.
+  let probe = newSocket()
+  probe.bindAddr(Port(0), "127.0.0.1")
+  result = probe.getLocalAddr()[1].int
+  probe.close()
+
+let gPort = freePort()
+var gServer: ThreadHandle[ServerArg]
+
+proc url(path: string): string = "http://127.0.0.1:" & $gPort & path
+
+proc timed(body: proc(): Result[TransportResponse, string]): (Result[TransportResponse, string], float) =
+  let started = epochTime()
+  let res = body()
+  (res, epochTime() - started)
+
+proc runTests*() =
+  gServer = spawnThread(serve, ServerArg(port: gPort))
+  sleep(200)
+
+  suite "deadline transport":
+    test "a normal response comes back with status, headers and body":
+      let res = transportRequest(TransportRequest(
+        meth: "GET", url: url("/ok"), deadlineMs: 5_000))
+      check res.isOk
+      check res.get.status == 200
+      check res.get.body == "hello"
+      check ("x-probe", "yes") in res.get.headers
+
+    test "a POST body reaches the server":
+      let res = transportRequest(TransportRequest(
+        meth: "POST", url: url("/echo"), body: "{\"a\":1}",
+        headers: @[("Content-Type", "application/json")], deadlineMs: 5_000))
+      check res.get.body == "{\"a\":1}"
+
+    test "a server that drips bytes fails at the deadline":
+      let (res, elapsed) = timed(proc(): Result[TransportResponse, string] =
+        transportRequest(TransportRequest(meth: "GET", url: url("/drip"),
+                                          deadlineMs: 1_000)))
+      check res.isErr
+      check "deadline" in res.error
+      check elapsed < 3.0
+
+    test "a server that never answers fails at the deadline":
+      let (res, elapsed) = timed(proc(): Result[TransportResponse, string] =
+        transportRequest(TransportRequest(meth: "GET", url: url("/silent"),
+                                          deadlineMs: 1_000)))
+      check res.isErr
+      check elapsed < 3.0
+
+    test "redirects follow the limit; zero returns the redirect itself":
+      let held = transportRequest(TransportRequest(
+        meth: "GET", url: url("/redirect"), redirectLimit: 0, deadlineMs: 5_000))
+      check held.get.status == 302
+      let followed = transportRequest(TransportRequest(
+        meth: "GET", url: url("/redirect"), redirectLimit: 5, deadlineMs: 5_000))
+      check followed.get.status == 200
+      check followed.get.body == "hello"
+
+    test "the requests carry no ref or closure into the workers":
+      check sharesNothing(TransportRequest)
+
+  suite "StdHttpAdapter over the deadline transport":
+    test "a dripping server fails the call at the adapter timeout":
+      let adapter = newStdHttpAdapter(timeout = 1, maxRetries = 1,
+                                      circuitBreaker = false)
+      let started = epochTime()
+      let res = adapter.get(url("/drip"))
+      check res.isErr
+      check epochTime() - started < 3.0
+
+    test "a normal call still works through the adapter":
+      let adapter = newStdHttpAdapter(timeout = 5, maxRetries = 1,
+                                      circuitBreaker = false)
+      let res = adapter.postNoRedirect(url("/echo"), "ping")
+      check res.get.status == 200
+      check res.get.body == "ping"
+
+when isMainModule:
+  runTests()

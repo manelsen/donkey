@@ -236,6 +236,7 @@ g3	tests/domain/tools/t_code_pure.nim
 g3	tests/domain/tools/t_path_guard.nim
 g3	tests/embedding/t_openrouter_embed.nim
 g3	tests/http/t_std_http.nim
+g3	tests/http/t_deadline_transport.nim
 g3	tests/ipc/t_ipc_types.nim
 g3	tests/memory/t_contract.nim
 g3	tests/memory/t_dm_allowlist.nim

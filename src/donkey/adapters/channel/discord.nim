@@ -15,7 +15,7 @@
 ##   Provider LLM calls (max ~10 s) block the event loop but not this thread.
 ##   Discord heartbeat interval is ~41 s; occasional missed beats are tolerated.
 
-import std/[json, locks, net, os, random, strutils, tables, times, uri]
+import std/[json, net, os, random, strutils, tables, times, uri]
 import ../../core/log
 import ../../core/app_meta
 import ../../core/commands/command_catalog
