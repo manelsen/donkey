@@ -25,7 +25,7 @@ import ../../ports/http
 import ../../ports/channel
 import ../http/std_http
 import ../identity/identity_resolver
-import ./event_queue
+import ../../infra/event_queue
 
 export identity_resolver
 export FileDownload

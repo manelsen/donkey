@@ -12,6 +12,7 @@ import std/[os, strutils]
 import parsetoml
 import ../domain/builtin_tools
 import ../core/pipeops
+import ./toml_parse
 
 type
   SkillManifest* = object
@@ -108,7 +109,7 @@ proc loadSkillRegistry*(path: string): seq[SkillManifest] {.gcsafe.} =
   if not fileExists(path):
     return @[]
   var t: parsetoml.TomlValueRef
-  {.cast(gcsafe).}: t = parsetoml.parseFile(path)
+  t = parseTomlFile(path)
   if not t.hasKey("skill"):
     return @[]
   for node in t["skill"].getElems():

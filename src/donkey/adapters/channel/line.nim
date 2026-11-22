@@ -38,7 +38,7 @@ import ../../ports/http
 import ../../ports/link_codes
 import ../http/std_http
 import ../identity/identity_resolver
-import ./event_queue
+import ../../infra/event_queue
 
 export line_pure
 export identity_resolver
@@ -95,9 +95,8 @@ proc pushEvent*(payload: JsonNode): bool {.discardable.} =
   ## redelivers, instead of blocking the worker or silently dropping events.
   result = true
   for ev in parseWebhook(payload):
-    {.cast(gcsafe).}:
-      if not gLineEvents.push(ev):
-        result = false
+    if not gLineEvents.push(ev):
+      result = false
 
 proc openQueue*() =
   ## Opens the module-level event queue. Call once at daemon startup, before
@@ -536,8 +535,7 @@ proc tryRecvEvent*(a: var LineAdapter): (bool, LineParseResult) =
   ## sender's remembered target. The runtime records it after acceptance.
   var has = false
   var ev: LineParseResult
-  {.cast(gcsafe).}:
-    (has, ev) = gLineEvents.tryTake()
+  (has, ev) = gLineEvents.tryTake()
   (has, ev)
 
 proc receive*(a: var LineAdapter): Result[seq[InboundMessage], string] =

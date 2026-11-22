@@ -34,7 +34,7 @@ import donkey/adapters/channel/telegram_runtime
 import donkey/core/commands/command_routing
 import donkey/app/command_dispatch
 import donkey/app/session_manager
-import donkey/adapters/channel/event_queue
+import donkey/infra/event_queue
 
 # ── Recording HTTP server ─────────────────────────────────────────────────────
 
@@ -381,6 +381,28 @@ proc runTests*() =
           "sendMessage" in r.target and RequesterOnlyNotice in r.body)
         check not anyRequest(carriesLinkCode)
         check not anyRequest(proc(r: Recorded): bool = "Doctor" in r.body)
+
+    test "Telegram: a group message not addressed to the bot is ignored":
+      ## Goes through the album-mention gate, which lives on the daemon loop
+      ## and is created on first use.
+      reset()
+      putEnv("DONKEY_TELEGRAM_BOT_USERNAME", "donkeybot")
+      putEnv("DONKEY_TELEGRAM_REQUIRE_MENTION", "1")
+      defer:
+        delEnv("DONKEY_TELEGRAM_BOT_USERNAME")
+        delEnv("DONKEY_TELEGRAM_REQUIRE_MENTION")
+      var sm = openSessions()
+      var msgSeq = 0
+      var state = initPresentationState()
+      var tg = newTelegramAdapter("TOK", Tmp / "tg-mention" / "ids.tsv", apiBase = base())
+      let e = env("tg-mention")
+      let msg = InboundMessage(userId: tg.resolver.resolve(ckTelegram, "9"),
+                               channel: ckTelegram,
+                               channelId: "13", chatId: "-200", rawChannelId: "9",
+                               isGroup: true, text: "just chatting")
+      check handleTelegramMessage(msg, sm, tg, state, e.memory, e.completeBuilder,
+                                  e.modelCatalogLoader, 0, 0, msgSeq, 0, logger)
+      check not anyRequest(proc(r: Recorded): bool = "sendMessage" in r.target)
 
     test "Telegram: a private chat gets the link code":
       reset()

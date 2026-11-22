@@ -24,7 +24,8 @@ import ../http/std_http
 import ../identity/identity_resolver
 import ../webhook/http_request_reader
 import ../../app/metrics
-import ./event_queue
+import ../../infra/event_queue
+import ../../infra/thread_handle
 
 const
   OneBotDefaultBase* = "http://127.0.0.1:5700"
@@ -53,7 +54,7 @@ type
 var gQQOneBotEvents = initEventQueue[QQEvent]("qq_onebot")
 var gQQOneBotEventsOpen    = false
 var gQQOneBotWebhookStarted = false
-var gQQOneBotWebhookThread: Thread[QQOneBotWebhookArgs]
+var gQQOneBotWebhookThread: ThreadHandle[QQOneBotWebhookArgs]  ## shared memory: a global pointer is gcsafe
 
 func base(a: QQAdapter): string =
   if a.apiBase.len > 0: a.apiBase else: OneBotDefaultBase
@@ -178,10 +179,9 @@ proc startWebhook*(a: QQAdapter; host: string; port: Port; secret: string;
   let domain = listenDomain(host)
   gQQOneBotEventsOpen = true
   try:
-    {.cast(gcsafe).}:
-      createThread(gQQOneBotWebhookThread, qqOneBotWebhookThread,
-                   QQOneBotWebhookArgs(listenFd: server.getFd, domain: domain,
-                                       secret: secret, logger: logger))
+    gQQOneBotWebhookThread = spawnThread(qqOneBotWebhookThread,
+                 QQOneBotWebhookArgs(listenFd: server.getFd, domain: domain,
+                                     secret: secret, logger: logger))
   except CatchableError as e:
     ## Undo so a later call can retry instead of seeing "already started".
     gQQOneBotEventsOpen = false

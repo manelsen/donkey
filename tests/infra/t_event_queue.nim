@@ -3,8 +3,8 @@
 ## global queue with no `{.cast(gcsafe).}`: this file only compiles while the
 ## queue is gcsafe to share.
 
-import std/[monotimes, times, unittest]
-import donkey/adapters/channel/event_queue
+import std/[atomics, monotimes, os, times, unittest]
+import donkey/infra/event_queue
 
 type Ev = object
   id: int
@@ -68,6 +68,46 @@ proc runTests*() =
       check q.push(Ev(id: 8, text: "next"))
       check q.tryPop(ev)
       check ev == Ev(id: 8, text: "next")
+
+    test "waitPush waits for room instead of dropping":
+      ## The pusher must really block on the full queue: it is still
+      ## pending until the consumer takes an event.
+      var q = initEventQueue[Ev]("full", capacity = 1)
+      check q.push(Ev(id: 1))
+      var pushed: Atomic[bool]
+      type PushArgs = tuple[q: ptr EventQueue[Ev], done: ptr Atomic[bool]]
+      var t: Thread[PushArgs]
+      proc pusher(a: PushArgs) {.thread.} =
+        a.q[].waitPush(Ev(id: 2))
+        a.done[].store(true)
+      createThread(t, pusher, (addr q, addr pushed))
+      sleep(100)
+      check not pushed.load()          ## still waiting for room
+      var ev: Ev
+      check q.tryPop(ev) and ev.id == 1  ## make room
+      joinThread(t)
+      check pushed.load()
+      check q.takeDropped() == 0
+      check q.tryPop(ev) and ev.id == 2
+
+    test "waitPop blocks until an event arrives from another thread":
+      ## A queue of its own, so no producer from another test competes; the
+      ## popper is still pending until the event is pushed.
+      var q = initEventQueue[Ev]("late", capacity = 1)
+      var popped: Atomic[bool]
+      var got: Ev
+      type PopArgs = tuple[q: ptr EventQueue[Ev], done: ptr Atomic[bool], ev: ptr Ev]
+      var t: Thread[PopArgs]
+      proc popper(a: PopArgs) {.thread.} =
+        a.q[].waitPop(a.ev[])
+        a.done[].store(true)
+      createThread(t, popper, (addr q, addr popped, addr got))
+      sleep(100)
+      check not popped.load()          ## nothing to take yet
+      check q.push(Ev(id: 42, text: "late"))
+      joinThread(t)
+      check popped.load()
+      check got == Ev(id: 42, text: "late")
 
 when isMainModule:
   runTests()

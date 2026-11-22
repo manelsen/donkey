@@ -15,6 +15,8 @@ import ../../core/log
 import ../../core/pipeops
 import ../../core/types
 import ../../ports/runtime_state
+import ../../infra/event_queue
+import ../../infra/thread_handle
 
 const
   SessionsFileName*     = "sessions.json"
@@ -43,7 +45,7 @@ type
     sessions: seq[SessionRegistryRecord]
     sessionsLoaded: bool
     sessionsDirty: bool
-    compactErrorChan: Channel[string]
+    compactErrorChan: EventQueue[string]  ## worker -> daemon loop, gcsafe
     lastSessionsWriteMs: int64
     ledgerDirSynced: bool
     ledgerRetentionMs: int64
@@ -670,30 +672,35 @@ proc ledgerCompactStarts*(store: RuntimeStateStore): int =
   store.compactStarts.load()
 
 type
-  LedgerCompactionWorker* = ref object
+  LedgerWorkerShared = object
+    ## What the worker thread needs, in shared memory and passed as the thread
+    ## argument: the thread touches no global, so it needs no cast.
     store:      ptr RuntimeStateStore
     intervalMs: int64
     stop:       Atomic[bool]
+
+  LedgerCompactionWorker* = ref object
+    shared:     ptr LedgerWorkerShared
     stopping*:  Atomic[bool]
     stopped:    bool
-    thread:     Thread[int]
+    thread:     ThreadHandle[ptr LedgerWorkerShared]
 
-var gLedgerWorker: LedgerCompactionWorker
+var gLedgerWorkerRunning: bool
+  ## One worker per process. A plain bool holds no GC memory (gcsafe).
 
-proc ledgerCompactionLoop(_: int) {.thread.} =
-  {.cast(gcsafe).}:
-    while not gLedgerWorker.stop.load():
-      ## Sleep in bounded slices so shutdown does not wait for the whole
-      ## interval (default is one hour).
-      var waited = 0'i64
-      while waited < gLedgerWorker.intervalMs and not gLedgerWorker.stop.load():
-        sleep(1000)
-        waited += 1000
-      if gLedgerWorker.stop.load():
-        break
-      let res = gLedgerWorker.store[].compactLedger()
-      if res.isErr:
-        discard gLedgerWorker.store[].compactErrorChan.trySend(res.error)
+proc ledgerCompactionLoop(shared: ptr LedgerWorkerShared) {.thread.} =
+  while not shared.stop.load():
+    ## Sleep in bounded slices so shutdown does not wait for the whole
+    ## interval (default is one hour).
+    var waited = 0'i64
+    while waited < shared.intervalMs and not shared.stop.load():
+      sleep(1000)
+      waited += 1000
+    if shared.stop.load():
+      break
+    let res = shared.store[].compactLedger()
+    if res.isErr:
+      discard shared.store[].compactErrorChan.push(res.error)
 
 proc startLedgerCompactionWorker*(store: ptr RuntimeStateStore;
                                   intervalSec: float):
@@ -703,21 +710,20 @@ proc startLedgerCompactionWorker*(store: ptr RuntimeStateStore;
   ## `stopLedgerCompactionWorker` returns.
   if store == nil or intervalSec <= 0.0:
     return ok(nil)
-  {.cast(gcsafe).}:
-    if gLedgerWorker != nil:
-      return err("ledger compaction worker is already running")
-  let intervalMs = max(1000'i64, int64(max(1.0, intervalSec) * 1000.0))
-  let worker = LedgerCompactionWorker(store: store, intervalMs: intervalMs)
-  worker.stop.store(false)
+  if gLedgerWorkerRunning:
+    return err("ledger compaction worker is already running")
+  let shared = cast[ptr LedgerWorkerShared](allocShared0(sizeof(LedgerWorkerShared)))
+  shared.store = store
+  shared.intervalMs = max(1000'i64, int64(max(1.0, intervalSec) * 1000.0))
+  shared.stop.store(false)
+  let worker = LedgerCompactionWorker(shared: shared)
   worker.stopping.store(false)
-  {.cast(gcsafe).}:
-    gLedgerWorker = worker
   try:
-    createThread(worker.thread, ledgerCompactionLoop, 0)
+    worker.thread = spawnThread(ledgerCompactionLoop, shared)
   except CatchableError as e:
-    {.cast(gcsafe).}:
-      gLedgerWorker = nil
+    deallocShared(shared)
     return err("cannot start ledger compaction worker: " & e.msg)
+  gLedgerWorkerRunning = true
   ok(worker)
 
 proc stopLedgerCompactionWorker*(worker: LedgerCompactionWorker) =
@@ -725,10 +731,11 @@ proc stopLedgerCompactionWorker*(worker: LedgerCompactionWorker) =
     return
   worker.stopped = true
   worker.stopping.store(true)
-  worker.stop.store(true)
-  {.cast(gcsafe).}:
-    joinThread(worker.thread)
-    gLedgerWorker = nil
+  worker.shared.stop.store(true)
+  joinAndFree(worker.thread)
+  deallocShared(worker.shared)
+  worker.shared = nil
+  gLedgerWorkerRunning = false
 
 proc ledgerLastCompactError*(store: RuntimeStateStore): string =
   ## Last compaction failure, for startup diagnostics and tests.
@@ -738,7 +745,7 @@ proc ledgerLastCompactError*(store: RuntimeStateStore): string =
 
 proc tryCompactError*(store: RuntimeStateStore): Option[string] =
   ## Lock-free, non-blocking publication for the daemon loop.
-  let (hasError, message) = store.compactErrorChan.tryRecv()
+  let (hasError, message) = store.compactErrorChan.tryTake()
   if hasError: some(message) else: none(string)
 
 proc appendLedger(store: RuntimeStateStore;
@@ -868,7 +875,7 @@ proc newRuntimeStateStore*(stateDir: string;
     tmpCounter: 0,
   )
   initLock(result.lock)
-  result.compactErrorChan.open(4)
+  result.compactErrorChan = initEventQueue[string]("ledger-compaction", capacity = 4)
   result.ledgerDirSynced = fileExists(result.ledgerPath())
   ## Load the ledger once: the hot path only touches the pending table.
   try:

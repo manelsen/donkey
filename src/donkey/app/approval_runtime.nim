@@ -23,7 +23,9 @@ type
     tools:     seq[string]
     timeoutMs: int64
 
-var gApprovalService*: ApprovalService
+var gApprovalService* {.threadvar.}: ApprovalService
+  ## Configured at startup on the main thread, which then runs the daemon loop
+  ## where turns read it: thread-local to that loop, gcsafe without a cast.
 
 func defaultApprovalTools*(): seq[string] =
   ## High-risk tools that ask for confirmation by default. Set
@@ -67,8 +69,7 @@ proc resetApprovalService*() =
   gApprovalService = nil
 
 proc currentApprovalService*(): ApprovalService {.gcsafe.} =
-  {.cast(gcsafe).}:
-    gApprovalService
+  gApprovalService
 
 proc requiresApproval*(toolName: string): bool =
   gApprovalService != nil and

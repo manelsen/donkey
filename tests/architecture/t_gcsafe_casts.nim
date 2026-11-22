@@ -14,7 +14,7 @@ import ./t_nim_source
 const
   CastPragma = "{.cast(gcsafe).}"
   ReasonMarker = "## gcsafe:"
-  UnexplainedBudget = 40
+  UnexplainedBudget = 0
     ## Casts in src/ without a reason. Lower it as casts are removed or
     ## explained; it must never go up.
 

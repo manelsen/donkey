@@ -24,7 +24,8 @@ import ../http/std_http
 import ../identity/identity_resolver
 import ../webhook/http_request_reader
 import ../../app/metrics
-import ./event_queue
+import ../../infra/event_queue
+import ../../infra/thread_handle
 
 const
   WeChatApiBase* = "https://api.weixin.qq.com"
@@ -65,7 +66,7 @@ type
 var gWeChatEvents = initEventQueue[WeChatEvent]("wechat")
 var gWeChatEventsOpen  = false
 var gWeChatWebhookStarted = false
-var gWeChatWebhookThread: Thread[WeChatWebhookArgs]
+var gWeChatWebhookThread: ThreadHandle[WeChatWebhookArgs]  ## shared memory: a global pointer is gcsafe
 
 func base(a: WeChatAdapter): string =
   if a.apiBase.len > 0: a.apiBase else: WeChatApiBase
@@ -316,13 +317,12 @@ proc wechatWebhookThread(args: WeChatWebhookArgs) {.thread.} =
 proc startWebhook*(a: WeChatAdapter; port: Port; logger: Logger) {.gcsafe.} =
   ## Starts the embedded WeChat webhook HTTP server on the given port.
   ## Safe to call multiple times — only the first call has effect.
-  {.cast(gcsafe).}:
-    if gWeChatWebhookStarted:
-      return
-    gWeChatEventsOpen    = true
-    gWeChatWebhookStarted = true
-    createThread(gWeChatWebhookThread, wechatWebhookThread,
-                 WeChatWebhookArgs(port: port.int, token: a.callbackToken, logger: logger))
+  if gWeChatWebhookStarted:
+    return
+  gWeChatEventsOpen    = true
+  gWeChatWebhookStarted = true
+  gWeChatWebhookThread = spawnThread(wechatWebhookThread,
+               WeChatWebhookArgs(port: port.int, token: a.callbackToken, logger: logger))
 
 proc tryRecvEvent*(a: var WeChatAdapter): (bool, WeChatEvent) =
   if gWeChatEventsOpen:

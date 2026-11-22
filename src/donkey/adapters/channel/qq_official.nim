@@ -17,7 +17,8 @@ import ../../domain/message
 import ../../ports/http
 import ../http/std_http
 import ./ws_client
-import ./event_queue
+import ../../infra/event_queue
+import ../../infra/thread_handle
 
 const
   QQOfficialDefaultApiBase* = "https://api.sgroup.qq.com"
@@ -73,7 +74,7 @@ var gQQOfficialEvents* = initEventQueue[QQOfficialEvent]("qq_official")
 
 ## Thread handle for the QQ official gateway OS thread.
 ## Safe: only assigned once via createThread in startGateway.
-var gQQOfficialGatewayThread {.global.}: Thread[QQOfficialGatewayArgs]
+var gQQOfficialGatewayThread: ThreadHandle[QQOfficialGatewayArgs]  ## shared memory: a global pointer is gcsafe
 
 ## Startup guard — set to true once in startGateway.
 ## Safe: only written from main thread before any gateway activity begins.
@@ -538,14 +539,13 @@ proc qqOfficialGatewayThread(arg: QQOfficialGatewayArgs) {.thread.} =
       backoffMs = min(backoffMs * 2, 60_000)
 
 proc startGateway*(a: QQOfficialAdapter; intents = QQOfficialDefaultIntents) {.gcsafe.} =
-  {.cast(gcsafe).}:
-    if gQQOfficialGatewayStarted:
-      return
-    gQQOfficialGatewayStarted = true
-    createThread(gQQOfficialGatewayThread, qqOfficialGatewayThread, QQOfficialGatewayArgs(
-      appId: a.appId,
-      clientSecret: a.clientSecret,
-      apiBase: a.apiBase(),
-      tokenBase: a.tokenBase(),
-      intents: intents,
-    ))
+  if gQQOfficialGatewayStarted:
+    return
+  gQQOfficialGatewayStarted = true
+  gQQOfficialGatewayThread = spawnThread(qqOfficialGatewayThread, QQOfficialGatewayArgs(
+    appId: a.appId,
+    clientSecret: a.clientSecret,
+    apiBase: a.apiBase(),
+    tokenBase: a.tokenBase(),
+    intents: intents,
+  ))

@@ -27,7 +27,15 @@ proc logSendFailure(operation, error: string) {.gcsafe.} =
   newLogger("tg.runtime").warn(operation & ": send failed: " & error)
 
 
-var gAlbumMentions = newAlbumMentionGate()
+var gAlbumMentionsGate {.threadvar.}: AlbumMentionGate
+  ## Telegram messages are handled on the daemon loop only: thread-local to it,
+  ## so reading and updating the gate is gcsafe without a cast.
+
+proc gAlbumMentions(): AlbumMentionGate =
+  ## The loop's gate, created on first use (a threadvar starts nil).
+  if gAlbumMentionsGate == nil:
+    gAlbumMentionsGate = newAlbumMentionGate()
+  gAlbumMentionsGate
 
 func replyTarget*(msg: InboundMessage): string =
   ## Carries the forum thread along with the message id, so command replies
@@ -700,20 +708,19 @@ proc handleTelegramMessage*(msg: InboundMessage;
   if msg.isGroup and msg.callbackId.len == 0 and
      telegramRequireMention() and botUsername.len > 0 and
      not isApprovalCommandText(msg.text):
-    {.cast(gcsafe).}:
-      let nowMs = epochMs()
-      let key = albumKey($msg.userId, msg.mediaGroupId)
-      if isAddressedToBot(msg.text, botUsername):
-        rememberAddressedAlbum(gAlbumMentions, key, nowMs)
-      elif not albumAddressed(gAlbumMentions, key, nowMs):
-        logger.debug("telegram: group message not addressed to the bot, ignored")
-        ## A dropped button tap still needs its acknowledgement, or the client
-        ## keeps the spinner for half a minute.
-        if msg.callbackId.len > 0:
-          discard tgAdapter.answerCallback(msg.callbackId)
-        return true
-      if gAlbumMentions.untilMs.len > 64:
-        clearExpiredAlbums(gAlbumMentions, nowMs)
+    let nowMs = epochMs()
+    let key = albumKey($msg.userId, msg.mediaGroupId)
+    if isAddressedToBot(msg.text, botUsername):
+      rememberAddressedAlbum(gAlbumMentions(), key, nowMs)
+    elif not albumAddressed(gAlbumMentions(), key, nowMs):
+      logger.debug("telegram: group message not addressed to the bot, ignored")
+      ## A dropped button tap still needs its acknowledgement, or the client
+      ## keeps the spinner for half a minute.
+      if msg.callbackId.len > 0:
+        discard tgAdapter.answerCallback(msg.callbackId)
+      return true
+    if gAlbumMentions().untilMs.len > 64:
+      clearExpiredAlbums(gAlbumMentions(), nowMs)
   let pairingRawId =
     if msg.rawChannelId.len > 0: msg.rawChannelId else: msg.channelId
   let auth = authorizeResolvedInbound(

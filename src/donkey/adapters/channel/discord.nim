@@ -28,7 +28,8 @@ import ../../core/media_download
 import ../http/std_http
 import ../identity/identity_resolver
 import ./ws_client
-import ./event_queue
+import ../../infra/event_queue
+import ../../infra/thread_handle
 
 const DiscordMaxChars* = 2000
 
@@ -57,25 +58,19 @@ type
 ## created with the module; the receiving thread pushes, the daemon loop polls.
 var gDiscordEvents* = initEventQueue[DiscordRawEvent]("discord")
 
-## Buffer for messages received before gateway is ready (READY dispatch).
-## Protected by gDiscordBufLock — written from gateway OS thread in
-## handleDispatch/runGatewaySession, read in the same thread AND flushed
-## to gDiscordEvents when READY arrives. The lock prevents corruption if
-## handleDispatch is called concurrently with the flush loop.
-var gDiscordPending* {.global.}: seq[DiscordRawEvent] = @[]
+## Messages received before the gateway is ready (READY dispatch) wait here
+## and are flushed to gDiscordEvents when READY arrives. All of it runs on
+## the gateway thread (handleDispatch and the READY flush), so the buffer
+## and the flag are thread-local to it: no lock, no cast.
+var gDiscordPending {.threadvar.}: seq[DiscordRawEvent]
+var gDiscordReady {.threadvar.}: bool
 
-## Set to true once the gateway receives the READY dispatch.
-## Protected by gDiscordBufLock — written from gateway thread, read in
-## handleDispatch to decide whether to buffer or send directly.
-var gDiscordReady* {.global.}: bool = false
-
-## Lock protecting gDiscordPending and gDiscordReady.
-## Initialized by initDiscordGlobals() called at daemon startup.
-var gDiscordBufLock {.global.}: Lock
-
-proc initDiscordGlobals*() =
-  ## Call once at daemon startup before any Discord gateway activity.
-  initLock(gDiscordBufLock)
+proc bufferOrPush(event: DiscordRawEvent) =
+  ## Before READY the event waits; afterwards it goes to the daemon loop.
+  if gDiscordReady:
+    gDiscordEvents.push(event)
+  else:
+    gDiscordPending.add(event)
 
 const
   DiscordApiBase*   = "https://discord.com/api/v10"
@@ -111,7 +106,6 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
   ##   dekSlashCommand with needsModal → deModalRequest
   ##   dekSlashCommand with "/" content → deMessage  (regular slash cmd)
   ##   dekSlashCommand without "/" → deInteraction  (/continue code)
-  ## All gDiscordReady/gDiscordPending accesses protected by gDiscordBufLock.
   let r = parseDispatch(t, d)
   case r.kind
   of dekUnknown: return
@@ -124,16 +118,7 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
       channelId:     r.channelId,
       messageId:     r.messageId,
     )
-    acquire(gDiscordBufLock)
-    let ready = gDiscordReady
-    release(gDiscordBufLock)
-    if ready:
-      gDiscordEvents.push(event)
-    else:
-      {.cast(gcsafe).}:
-        acquire(gDiscordBufLock)
-        gDiscordPending.add(event)
-        release(gDiscordBufLock)
+    bufferOrPush(event)
   of dekSlashCommand:
     logger.debug("discord: slash command from " & r.rawId)
     let event =
@@ -160,16 +145,7 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
           interactionId:    r.interactionId,
           interactionToken: r.interactionToken,
         )
-    acquire(gDiscordBufLock)
-    let ready = gDiscordReady
-    release(gDiscordBufLock)
-    if ready:
-      gDiscordEvents.push(event)
-    else:
-      {.cast(gcsafe).}:
-        acquire(gDiscordBufLock)
-        gDiscordPending.add(event)
-        release(gDiscordBufLock)
+    bufferOrPush(event)
   of dekButtonClick:
     logger.debug("discord: button click from " & r.rawId)
     let event = DiscordRawEvent(
@@ -180,16 +156,7 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
       interactionId:    r.interactionId,
       interactionToken: r.interactionToken,
     )
-    acquire(gDiscordBufLock)
-    let ready = gDiscordReady
-    release(gDiscordBufLock)
-    if ready:
-      gDiscordEvents.push(event)
-    else:
-      {.cast(gcsafe).}:
-        acquire(gDiscordBufLock)
-        gDiscordPending.add(event)
-        release(gDiscordBufLock)
+    bufferOrPush(event)
   of dekModalSubmit:
     ## Modal submit always carries a code from the link_code text input.
     logger.debug("discord: modal submit from " & r.rawId)
@@ -200,134 +167,121 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
       interactionId:    r.interactionId,
       interactionToken: r.interactionToken,
     )
-    acquire(gDiscordBufLock)
-    let ready = gDiscordReady
-    release(gDiscordBufLock)
-    if ready:
-      gDiscordEvents.push(event)
-    else:
-      {.cast(gcsafe).}:
-        acquire(gDiscordBufLock)
-        gDiscordPending.add(event)
-        release(gDiscordBufLock)
+    bufferOrPush(event)
 
 proc runGatewaySession(token: string; state: var GatewayState; logger: Logger) =
   ## Single gateway session: connect, identify/resume, loop until error.
-  {.cast(gcsafe).}:
-    let host =
-      if state.resumeUrl.startsWith("wss://"):
-        let noScheme = state.resumeUrl[6 .. ^1]
-        if '/' in noScheme: noScheme[0 ..< noScheme.find('/')] else: noScheme
-      else: DiscordGatewayUrl[6 .. ^1]  ## strip "wss://" from the constant
+  let host =
+    if state.resumeUrl.startsWith("wss://"):
+      let noScheme = state.resumeUrl[6 .. ^1]
+      if '/' in noScheme: noScheme[0 ..< noScheme.find('/')] else: noScheme
+    else: DiscordGatewayUrl[6 .. ^1]  ## strip "wss://" from the constant
 
-    logger.info("discord: connecting to " & host)
-    state.ws = wsConnect(host, Port(443), "/?v=10&encoding=json", useTls = true)
+  logger.info("discord: connecting to " & host)
+  state.ws = wsConnect(host, Port(443), "/?v=10&encoding=json", useTls = true)
 
-    ## 1. Hello → get heartbeat interval.
-    let helloRes = state.ws.recvFrame()
-    if helloRes.isErr:
-      raise newException(IOError, "Discord hello failed: " & helloRes.error)
-    let hello = parseJson(helloRes.get().data)
-    state.heartbeatMs = hello["d"]["heartbeat_interval"].getInt(41250)
-    logger.debug("discord: hello, heartbeat=" & $state.heartbeatMs)
+  ## 1. Hello → get heartbeat interval.
+  let helloRes = state.ws.recvFrame()
+  if helloRes.isErr:
+    raise newException(IOError, "Discord hello failed: " & helloRes.error)
+  let hello = parseJson(helloRes.get().data)
+  state.heartbeatMs = hello["d"]["heartbeat_interval"].getInt(41250)
+  logger.debug("discord: hello, heartbeat=" & $state.heartbeatMs)
 
-    ## 2. Send first heartbeat with random jitter (Discord requirement).
-    ## Use smaller jitter at startup (max 5s) for faster initial response.
-    randomize()
-    let jitter = rand(min(state.heartbeatMs, 5000))  # 0-5s instead of 0-41s
-    let startMs = epochMs()
-    while epochMs() - startMs < jitter:
-      sleep(100)
-    state.sendHeartbeat()
+  ## 2. Send first heartbeat with random jitter (Discord requirement).
+  ## Use smaller jitter at startup (max 5s) for faster initial response.
+  randomize()
+  let jitter = rand(min(state.heartbeatMs, 5000))  # 0-5s instead of 0-41s
+  let startMs = epochMs()
+  while epochMs() - startMs < jitter:
+    sleep(100)
+  state.sendHeartbeat()
 
-    ## 3. Identify or Resume.
-    if state.sessionId.len > 0:
-      logger.info("discord: resuming session " & state.sessionId)
-      state.ws.sendFrame($ %* {
-        "op": 6,
-        "d": {"token": token, "session_id": state.sessionId, "seq": state.lastSeq},
-      })
-    else:
-      logger.info("discord: identifying")
-      state.ws.sendFrame($ %* {
-        "op": 2,
-        "d": {
-          "token":      token,
-          "intents":    DiscordIntents,
-          "properties": {"os": "linux", "browser": AppSlug, "device": AppSlug},
-        },
-      })
+  ## 3. Identify or Resume.
+  if state.sessionId.len > 0:
+    logger.info("discord: resuming session " & state.sessionId)
+    state.ws.sendFrame($ %* {
+      "op": 6,
+      "d": {"token": token, "session_id": state.sessionId, "seq": state.lastSeq},
+    })
+  else:
+    logger.info("discord: identifying")
+    state.ws.sendFrame($ %* {
+      "op": 2,
+      "d": {
+        "token":      token,
+        "intents":    DiscordIntents,
+        "properties": {"os": "linux", "browser": AppSlug, "device": AppSlug},
+      },
+    })
 
-    ## 4. Main receive loop.
-    while true:
-      if epochMs() - state.lastBeatMs >= state.heartbeatMs:
-        state.sendHeartbeat()
+  ## 4. Main receive loop.
+  while true:
+    if epochMs() - state.lastBeatMs >= state.heartbeatMs:
+      state.sendHeartbeat()
 
-      try:
-        let frameRes = state.ws.recvFrame()
-        if frameRes.isErr:
-          if frameRes.error == "timeout":
-            continue
-          logger.warn("discord: receive failed: " & frameRes.error)
-          break
-        let frame = frameRes.get()
-        case frame.opcode
+    try:
+      let frameRes = state.ws.recvFrame()
+      if frameRes.isErr:
+        if frameRes.error == "timeout":
+          continue
+        logger.warn("discord: receive failed: " & frameRes.error)
+        break
+      let frame = frameRes.get()
+      case frame.opcode
 
-        of WsOpcodeText:
-          let j = parseJson(frame.data)
-          let op = j["op"].getInt()
+      of WsOpcodeText:
+        let j = parseJson(frame.data)
+        let op = j["op"].getInt()
 
-          case op
-          of 0:  ## Dispatch
-            let s = j["s"].getInt(0)
-            if s > 0: state.lastSeq = s
-            let t = j["t"].getStr("")
-            let d = j["d"]
-            if t == "READY":
-              state.sessionId = d["session_id"].getStr()
-              let rgu = d.getOrDefault("resume_gateway_url")
-              if rgu != nil: state.resumeUrl = rgu.getStr()
-              logger.info("discord: ready, session=" & state.sessionId)
-              ## Gateway is now ready — flush buffered messages.
-              ## Protected by gDiscordBufLock.
-              acquire(gDiscordBufLock)
-              gDiscordReady = true
-              let pendingCount = gDiscordPending.len
-              if pendingCount > 0:
-                logger.info("discord: flushing " & $pendingCount & " buffered message(s)")
-                for event in gDiscordPending:
-                  gDiscordEvents.push(event)
-                gDiscordPending = @[]
-              release(gDiscordBufLock)
-            else:
-              handleDispatch(t, d, logger)
+        case op
+        of 0:  ## Dispatch
+          let s = j["s"].getInt(0)
+          if s > 0: state.lastSeq = s
+          let t = j["t"].getStr("")
+          let d = j["d"]
+          if t == "READY":
+            state.sessionId = d["session_id"].getStr()
+            let rgu = d.getOrDefault("resume_gateway_url")
+            if rgu != nil: state.resumeUrl = rgu.getStr()
+            logger.info("discord: ready, session=" & state.sessionId)
+            ## Gateway is now ready — flush buffered messages.
+            gDiscordReady = true
+            let pendingCount = gDiscordPending.len
+            if pendingCount > 0:
+              logger.info("discord: flushing " & $pendingCount & " buffered message(s)")
+              for event in gDiscordPending:
+                gDiscordEvents.push(event)
+              gDiscordPending = @[]
+          else:
+            handleDispatch(t, d, logger)
 
-          of 7:  ## Reconnect
-            logger.info("discord: reconnect requested (op=7)")
-            break
-
-          of 9:  ## Invalid Session
-            logger.warn("discord: invalid session (op=9)")
-            if not j["d"].getBool(false):
-              state.sessionId = ""; state.resumeUrl = ""
-            ## Discord requires a 1-5s wait before a new IDENTIFY.
-            sleep(1000 + rand(4000))
-            break
-
-          of 11: discard  ## Heartbeat ACK
-          else:  discard
-
-        of WsOpcodePing:
-          state.ws.sendFrame(frame.data, WsOpcodePong)
-
-        of WsOpcodeClose:
-          logger.warn("discord: websocket closed")
+        of 7:  ## Reconnect
+          logger.info("discord: reconnect requested (op=7)")
           break
 
-        else: discard
+        of 9:  ## Invalid Session
+          logger.warn("discord: invalid session (op=9)")
+          if not j["d"].getBool(false):
+            state.sessionId = ""; state.resumeUrl = ""
+          ## Discord requires a 1-5s wait before a new IDENTIFY.
+          sleep(1000 + rand(4000))
+          break
 
-      except TimeoutError:
-        discard  ## no data — loop back to heartbeat check
+        of 11: discard  ## Heartbeat ACK
+        else:  discard
+
+      of WsOpcodePing:
+        state.ws.sendFrame(frame.data, WsOpcodePong)
+
+      of WsOpcodeClose:
+        logger.warn("discord: websocket closed")
+        break
+
+      else: discard
+
+    except TimeoutError:
+      discard  ## no data — loop back to heartbeat check
 
 type GatewayArgs = object
   token:  string
@@ -353,7 +307,7 @@ proc discordGatewayThread(arg: GatewayArgs) {.thread.} =
 
 ## Thread handle for the Discord gateway OS thread.
 ## Safe: only assigned once via createThread, never mutated concurrently.
-var gGatewayThread {.global.}: Thread[GatewayArgs]
+var gGatewayThread: ThreadHandle[GatewayArgs]  ## shared memory: a global pointer is gcsafe
 
 # ── DiscordAdapter ─────────────────────────────────────────────────────────────
 
@@ -754,8 +708,7 @@ proc ack*(a: DiscordAdapter; channelId: string) =
 
 proc startGateway*(a: DiscordAdapter; logger: Logger) {.gcsafe.} =
   ## Starts the Discord gateway thread. Call once at daemon startup.
-  {.cast(gcsafe).}:
-    createThread(gGatewayThread, discordGatewayThread, GatewayArgs(token: a.token, logger: logger))
+  gGatewayThread = spawnThread(discordGatewayThread, GatewayArgs(token: a.token, logger: logger))
 
 proc tryRecvEvent*(a: DiscordAdapter): (bool, DiscordRawEvent) =
   ## Non-blocking poll for gateway events. Returns (false, default) when empty.

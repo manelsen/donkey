@@ -78,8 +78,7 @@ proc chatIdFor(a: TelegramAdapter; userId: UserId): string =
   ##
   ## In a group the chat id is not the sender id. The adapter remembers the
   ## chat each user last wrote from and uses it as the send target.
-  {.cast(gcsafe).}:
-    let remembered = a.chatIds.getOrDefault($userId, "")
+  let remembered = a.chatIds.getOrDefault($userId, "")
   if remembered.len > 0:
     return remembered
   a.resolver.reverseChannel(userId, ckTelegram)
@@ -949,8 +948,7 @@ proc receive*(a: var TelegramAdapter): Result[seq[InboundMessage], string] =
       ## Remember where the update came from: in a group the chat id is not the
       ## sender id, and replies must go to the chat.
       if parsed.chatId.len > 0:
-        {.cast(gcsafe).}:
-          a.chatIds[$uid] = parsed.chatId
+        a.chatIds[$uid] = parsed.chatId
       if parsed.hasMedia and parsed.mediaFileId.len > 0:
         msg.mediaUrl = parsed.mediaFileId
       msgs.add(msg)
