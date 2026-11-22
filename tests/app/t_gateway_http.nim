@@ -11,7 +11,7 @@ import std/[json, locks, nativesockets, net, os, strutils, times, unittest]
 import chronos
 import chronos/transports/stream
 import donkey/app/chat_bridge
-import donkey/app/http_gateway
+import donkey/adapters/http/gateway_server
 import donkey/core/agent_events
 import donkey/core/types
 import donkey/domain/gateway/identity_pure

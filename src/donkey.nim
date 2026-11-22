@@ -86,7 +86,7 @@ import donkey/ports/runtime_state
 import donkey/app/orchestrator
 import donkey/app/sandbox
 import donkey/app/ipc_server
-import donkey/app/http_gateway
+import donkey/adapters/http/gateway_server
 import donkey/app/chat_bridge
 import donkey/domain/gateway/dashboard_pure
 import donkey/domain/gateway/identity_pure
