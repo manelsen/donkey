@@ -15,7 +15,7 @@ import donkey/config/skills_registry
 import donkey/adapters/tool/runtime_builder
 import donkey/core/log
 import donkey/core/pipeops
-import donkey/core/reliability
+import donkey/adapters/http/circuit_breakers
 import donkey/core/agent_events
 import donkey/core/app_meta
 import donkey/core/command_registry

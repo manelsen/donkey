@@ -33,42 +33,42 @@ proc runTests*() =
 
     test "initMetrics initializes empty counters":
       initMetrics()
-      check gMetrics.outboundFailures.len == 0
-      check gMetrics.webhookFailures.len == 0
-      check gMetrics.reminderFailures.len == 0
+      check metricsSnapshot().outboundFailures.len == 0
+      check metricsSnapshot().webhookFailures.len == 0
+      check metricsSnapshot().reminderFailures.len == 0
 
     test "recordOutboundFailure increments counter per channel":
       initMetrics()
       recordOutboundFailure("qq", "network unreachable")
-      check gMetrics.outboundFailures.hasKey("qq")
-      check gMetrics.outboundFailures["qq"] == 1
+      check metricsSnapshot().outboundFailures.hasKey("qq")
+      check metricsSnapshot().outboundFailures["qq"] == 1
 
       recordOutboundFailure("qq", "timeout")
-      check gMetrics.outboundFailures["qq"] == 2
+      check metricsSnapshot().outboundFailures["qq"] == 2
 
       recordOutboundFailure("tg", "network unreachable")
-      check gMetrics.outboundFailures.hasKey("tg")
-      check gMetrics.outboundFailures["tg"] == 1
+      check metricsSnapshot().outboundFailures.hasKey("tg")
+      check metricsSnapshot().outboundFailures["tg"] == 1
 
     test "recordWebhookFailure increments counter per server type":
       initMetrics()
       recordWebhookFailure("wechat", "parse error")
-      check gMetrics.webhookFailures.hasKey("wechat")
-      check gMetrics.webhookFailures["wechat"] == 1
+      check metricsSnapshot().webhookFailures.hasKey("wechat")
+      check metricsSnapshot().webhookFailures["wechat"] == 1
 
       recordWebhookFailure("qq", "connection reset")
-      check gMetrics.webhookFailures.hasKey("qq")
-      check gMetrics.webhookFailures["qq"] == 1
+      check metricsSnapshot().webhookFailures.hasKey("qq")
+      check metricsSnapshot().webhookFailures["qq"] == 1
 
     test "recordReminderFailure increments counter":
       initMetrics()
       recordReminderFailure("delivery timeout")
-      check gMetrics.reminderFailures.len == 1
-      check gMetrics.reminderFailures.hasKey("delivery timeout")
-      check gMetrics.reminderFailures["delivery timeout"] == 1
+      check metricsSnapshot().reminderFailures.len == 1
+      check metricsSnapshot().reminderFailures.hasKey("delivery timeout")
+      check metricsSnapshot().reminderFailures["delivery timeout"] == 1
 
       recordReminderFailure("delivery timeout")
-      check gMetrics.reminderFailures["delivery timeout"] == 2
+      check metricsSnapshot().reminderFailures["delivery timeout"] == 2
 
     test "provider latency and errors are rendered per provider":
       initMetrics()
@@ -115,9 +115,9 @@ proc runTests*() =
       recordOutboundFailure("fs", "rate limited")
       recordWebhookFailure("wecom", "token expired")
       recordReminderFailure("corrupted state")
-      check gMetrics.outboundFailures["fs"] == 1
-      check gMetrics.webhookFailures["wecom"] == 1
-      check gMetrics.reminderFailures["corrupted state"] == 1
+      check metricsSnapshot().outboundFailures["fs"] == 1
+      check metricsSnapshot().webhookFailures["wecom"] == 1
+      check metricsSnapshot().reminderFailures["corrupted state"] == 1
 
     test "metrics do not pollute user-facing output":
       # Operational failure counters are only exposed on /metrics endpoint,

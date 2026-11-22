@@ -97,9 +97,13 @@ proc sharedLinkCodeService*(path: string): LinkCodeService {.gcsafe.} =
   ## Every resolver built from the same identity file shares this table, so a
   ## code minted on one channel is redeemable on another.
   ##
-  ## The registry is global by design (one table per identity file); the cast
-  ## mirrors `app/metrics.nim`: every access happens under `gRegistryLock`.
+  ## The registry is global by design (one table per identity file). Every
+  ## access happens under `gRegistryLock`; each service guards its table with
+  ## its own lock. The service itself is a `ref` shared by the resolvers: its
+  ## reference count is not atomic under ORC, so resolvers must be copied and
+  ## dropped on one thread (the daemon loop). See the ORC/YRC note in the audit.
   let key = serviceKey(path)
+  ## gcsafe: gServices only under gRegistryLock; the shared service ref relies on resolvers living on the daemon loop (ORC refcounts are not atomic)
   {.cast(gcsafe).}:
     withLock gRegistryLock:
       if key notin gServices:

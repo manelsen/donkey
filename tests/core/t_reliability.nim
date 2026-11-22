@@ -2,7 +2,7 @@
 
 import std/[unittest, times, os, tables]
 import donkey/core/pipeops
-import donkey/core/reliability
+import donkey/adapters/http/circuit_breakers
 
 proc runTests*() =
   suite "Reliability - Backoff":
@@ -40,7 +40,7 @@ proc runTests*() =
       # We can't wait 60s in a unit test easily,
       # but we can mock the lastFailure if we had access or use a small timeout.
       # For now, let's just check the state logic.
-      check gBreakers[name].state == csOpen
+      check breakerState(name) == csOpen
 
 when isMainModule:
   runTests()
