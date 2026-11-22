@@ -115,6 +115,25 @@ const CredentialHeaders = ["authorization", "cookie", "proxy-authorization"]
 func sameHost(a, b: HttpAddress): bool =
   a.hostname == b.hostname and a.port == b.port
 
+func authority(address: HttpAddress): string =
+  ## host:port as a URL writes it: an IPv6 host keeps its brackets.
+  let host = if ':' in address.hostname: "[" & address.hostname & "]"
+             else: address.hostname
+  host & ":" & $address.port
+
+proc hopAllowed*(address: HttpAddress; allowlist: seq[string]): bool =
+  ## Whether a hop may connect: an allowlist entry names the host alone or
+  ## with its port (a test server, a self-hosted API), as StdHttpAdapter
+  ## matches the URL's authority. An empty allowlist allows any host.
+  allowlist.len == 0 or isHostAllowed(address.hostname, allowlist) or
+    isHostAllowed(authority(address), allowlist)
+
+func isDowngrade*(current, target: HttpAddress): bool =
+  ## A redirect from https to http would send the next request, its headers
+  ## and (for 307/308) its body in cleartext.
+  current.scheme == HttpClientScheme.Secure and
+    target.scheme == HttpClientScheme.NonSecure
+
 func requestHeaders(headers: seq[(string, string)]): seq[(string, string)] =
   ## The caller's headers without the ones Chronos derives per request.
   for (name, value) in headers:
@@ -179,12 +198,7 @@ proc perform(request: TransportRequest; expiresAt: int64): Future[TransportReply
   try:
     var hops = 0
     while true:
-      ## An entry may name the host alone or with its port (a test server,
-      ## a self-hosted API), as StdHttpAdapter matches the URL's authority.
-      if request.allowlist.len > 0 and
-         not isHostAllowed(hop.address.hostname, request.allowlist) and
-         not isHostAllowed(hop.address.hostname & ":" & $hop.address.port,
-                           request.allowlist):
+      if not hopAllowed(hop.address, request.allowlist):
         return err("Network egress BLOCKED: host '" & hop.address.hostname &
                    "' not in allowlist" & (if hops > 0: " (redirect)" else: ""))
       ? readyToConnect(hop.address, expiresAt, proxied, request)
@@ -199,6 +213,8 @@ proc perform(request: TransportRequest; expiresAt: int64): Future[TransportReply
         break
       let target = session.redirect(hop.address, parseUri(location)).valueOr:
         return err("redirect: " & error)
+      if isDowngrade(hop.address, target):
+        return err("redirect from https to http refused: " & location)
       hop = nextHop(hop, response.status, target)
       await response.closeWait()
       response = nil

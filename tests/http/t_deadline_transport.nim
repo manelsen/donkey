@@ -7,6 +7,7 @@ import std/[atomics, nativesockets, net, os, strutils, times, unittest]
 import donkey/core/pipeops
 import donkey/infra/thread_handle
 import donkey/adapters/http/deadline_transport
+import chronos/apps/http/httpclient
 import donkey/adapters/http/std_http
 
 type ServerArg = object
@@ -228,6 +229,19 @@ proc runTests*() =
         meth: "GET", url: url("/redirect"), redirectLimit: 5,
         allowlist: @["127.0.0.1"], deadlineMs: 5_000))
       check allowed.get.status == 200
+
+    test "an IPv6 authority on the allowlist keeps its brackets":
+      let address = getHttpAddress("http://[::1]:8080/x").get
+      check hopAllowed(address, @["[::1]:8080"])
+      check hopAllowed(address, @["::1"])
+      check not hopAllowed(address, @["[::1]:9090"])
+
+    test "a redirect from https to http is refused":
+      let secure = getHttpAddress("https://api.example.com/v1").get
+      check isDowngrade(secure, getHttpAddress("http://api.example.com/v1").get)
+      check not isDowngrade(secure, getHttpAddress("https://other.example.com/").get)
+      check not isDowngrade(getHttpAddress("http://a/").get,
+                            getHttpAddress("http://b/").get)
 
     test "a HEAD stays a HEAD across a 303":
       let res = transportRequest(TransportRequest(
