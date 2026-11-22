@@ -376,6 +376,8 @@ func setPath(p: Parser; table: TomlValueRef; path: seq[string];
     target = p.childTable(target, part, toDotted)
     if known and target.origin == toHeader:
       p.fail("table '" & path[0 .. i].join(".") & "' is already defined")
+    if target.origin == toImplicit:
+      target.origin = toDotted  ## a dotted key defines what it passes through
   let last = path[^1]
   if target.tableVal.hasKey(last):
     p.fail("duplicate key '" & path.join(".") & "'")

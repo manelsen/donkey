@@ -152,6 +152,9 @@ meta = { version = "1.0", enabled = true }
         discard parseToml("[security]\na = 1\n[security]\nb = 2")
       expect TomlError:
         discard parseToml("[fruit]\napple.color = \"red\"\n[fruit.apple]\nx = 1")
+      ## A dotted key defines an implicit table it passes through.
+      expect TomlError:
+        discard parseToml("[a.b.c]\n[a]\nb.d = 1\n[a.b]\ne = 2")
       ## Implicit parents may be defined later, and [[x]] elements are distinct.
       check parseToml("[a.b]\nc = 1\n[a]\nd = 2")["a"]["d"].getInt == 2
       check parseToml("[[s]]\n[s.meta]\nk = 1\n[[s]]\n[s.meta]\nk = 2")["s"].getElems.len == 2
