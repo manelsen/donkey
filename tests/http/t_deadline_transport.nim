@@ -3,7 +3,7 @@
 ## request at the deadline instead of holding the caller (a provider worker,
 ## a channel loop) forever. A local server plays each case.
 
-import std/[nativesockets, net, os, strutils, times, unittest]
+import std/[atomics, nativesockets, net, os, strutils, times, unittest]
 import donkey/core/pipeops
 import donkey/infra/thread_handle
 import donkey/adapters/http/deadline_transport
@@ -26,6 +26,8 @@ proc readRequest(client: Socket): string =
   if length > 0:
     result.add "\n" & client.recv(length, timeout = 2000)
 
+var gCounted: Atomic[int]  ## requests that reached /count
+
 type ConnArg = object
   fd: SocketHandle  ## plain data: the connection is rebuilt in its thread
 
@@ -43,6 +45,19 @@ proc handle(arg: ConnArg) {.thread.} =
         let body = if '\n' in request: request.split('\n', 1)[1] else: ""
         client.send("HTTP/1.1 200 OK\r\nContent-Length: " & $body.len &
                     "\r\nConnection: close\r\n\r\n" & body)
+      of "/redirect307":
+        client.send("HTTP/1.1 307 Temporary Redirect\r\nLocation: /echo\r\n" &
+                    "Content-Length: 0\r\nConnection: close\r\n\r\n")
+      of "/redirect303":
+        client.send("HTTP/1.1 303 See Other\r\nLocation: /method\r\n" &
+                    "Content-Length: 0\r\nConnection: close\r\n\r\n")
+      of "/method":
+        let meth = request.split(' ')[0]
+        client.send("HTTP/1.1 200 OK\r\nContent-Length: " & $meth.len &
+                    "\r\nConnection: close\r\n\r\n" & meth)
+      of "/count":
+        discard gCounted.fetchAdd(1)
+        client.send("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
       of "/redirect":
         client.send("HTTP/1.1 302 Found\r\nLocation: /ok\r\n" &
                     "Content-Length: 0\r\nConnection: close\r\n\r\n")
@@ -93,6 +108,14 @@ var gServer: ThreadHandle[ServerArg]
 
 proc url(path: string): string = "http://127.0.0.1:" & $gPort & path
 
+type BusyArg = object
+  url: string
+
+proc occupy(arg: BusyArg) {.thread.} =
+  ## Holds one transport worker for about two seconds.
+  discard transportRequest(TransportRequest(meth: "GET", url: arg.url,
+                                            deadlineMs: 2_000))
+
 proc timed(body: proc(): Result[TransportResponse, string]): (Result[TransportResponse, string], float) =
   let started = epochTime()
   let res = body()
@@ -140,6 +163,31 @@ proc runTests*() =
         meth: "GET", url: url("/redirect"), redirectLimit: 5, deadlineMs: 5_000))
       check followed.get.status == 200
       check followed.get.body == "hello"
+
+    test "a 307 keeps the method and body; a 303 becomes a GET":
+      let kept = transportRequest(TransportRequest(
+        meth: "POST", url: url("/redirect307"), body: "payload",
+        redirectLimit: 5, deadlineMs: 5_000))
+      check kept.get.body == "payload"
+      let switched = transportRequest(TransportRequest(
+        meth: "POST", url: url("/redirect303"), body: "payload",
+        redirectLimit: 5, deadlineMs: 5_000))
+      check switched.get.body == "GET"
+
+    test "a request that waited past its deadline in the queue never runs":
+      ## Every worker busy on a silent server: the short request fails at its
+      ## deadline and must not be sent later, after its caller was told.
+      var busy: array[TransportWorkers, ThreadHandle[BusyArg]]
+      for i in 0 ..< TransportWorkers:
+        busy[i] = spawnThread(occupy, BusyArg(url: url("/silent")))
+      sleep(300)
+      gCounted.store(0)
+      let res = transportRequest(TransportRequest(
+        meth: "POST", url: url("/count"), deadlineMs: 500))
+      check res.isErr
+      for i in 0 ..< TransportWorkers: joinAndFree(busy[i])
+      sleep(500)
+      check gCounted.load() == 0
 
     test "the requests carry no ref or closure into the workers":
       check sharesNothing(TransportRequest)

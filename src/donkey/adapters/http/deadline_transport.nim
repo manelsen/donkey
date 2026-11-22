@@ -19,7 +19,7 @@
 ## blocking getaddrinfo in the worker). The caller still returns at the
 ## deadline; the worker is held until the resolver answers.
 
-import std/[locks, os, times, uri]
+import std/[locks, monotimes, os, strutils, uri]
 import chronos
 import chronos/apps/http/httpclient
 import threading/channels
@@ -52,8 +52,9 @@ type
   TransportReply = Result[TransportResponse, string]
 
   TransportJob = object
-    request: TransportRequest
-    reply:   Chan[TransportReply]  ## capacity 1, counted atomically
+    request:   TransportRequest
+    expiresAt: int64  ## monotonic nanoseconds; a job dequeued after it is dropped
+    reply:     Chan[TransportReply]  ## capacity 1, counted atomically
 
   WorkerArg = object
     id: int
@@ -95,7 +96,32 @@ func methodOf(name: string): Result[HttpMethod, string] =
   of "HEAD": ok(MethodHead)
   else: err("unsupported HTTP method: " & name)
 
-proc perform(request: TransportRequest): Future[TransportReply] {.
+func sameHost(a, b: HttpAddress): bool =
+  a.hostname == b.hostname and a.port == b.port
+
+proc followed(session: HttpSessionRef; previous: HttpClientRequestRef;
+              status: int; location: string; meth: HttpMethod;
+              request: TransportRequest): HttpResult[HttpClientRequestRef] =
+  ## The request a redirect asks for. 307 and 308 repeat the method with the
+  ## original body (send() consumed the previous request's buffer, so it is
+  ## rebuilt from `request`); 301, 302 and 303 become a GET without a body,
+  ## as browsers and std/httpclient do. Credentials do not follow to another
+  ## host.
+  let address = ? session.redirect(previous.address, parseUri(location))
+  let keepBody = status in [307, 308]
+  var headers: seq[(string, string)]
+  for (name, value) in request.headers:
+    let lower = name.toLowerAscii
+    if not keepBody and lower in ["content-type", "content-length"]: continue
+    if not sameHost(address, previous.address) and
+       lower in ["authorization", "cookie", "proxy-authorization"]: continue
+    headers.add((name, value))
+  ok(HttpClientRequestRef.new(
+    session, address, if keepBody: meth else: MethodGet, headers = headers,
+    body = if keepBody: request.body.toOpenArrayByte(0, request.body.high)
+           else: "".toOpenArrayByte(0, -1)))
+
+proc perform(request: TransportRequest; deadlineMs: int): Future[TransportReply] {.
     async: (raises: [CancelledError]).} =
   let meth = methodOf(request.meth).valueOr:
     return err(error)
@@ -107,7 +133,7 @@ proc perform(request: TransportRequest): Future[TransportReply] {.
     let proxy = getHttpAddress(request.proxy).valueOr:
       return err("invalid proxy URL: " & $error)
     provider = httpConnectProvider(proxy)
-  let phase = chronos.milliseconds(request.deadlineOf)
+  let phase = chronos.milliseconds(deadlineMs)
   let session = HttpSessionRef.new(
     flags = flags, maxRedirections = max(request.redirectLimit, 0),
     connectTimeout = phase, headersTimeout = phase, provider = provider)
@@ -125,7 +151,8 @@ proc perform(request: TransportRequest): Future[TransportReply] {.
     while response.status in 300 .. 399 and hops < request.redirectLimit:
       let location = response.headers.getString("location")
       if location.len == 0: break
-      let next = exchange.redirect(parseUri(location)).valueOr:
+      let next = followed(session, exchange, response.status, location,
+                          meth, request).valueOr:
         return err("redirect: " & error)
       await response.closeWait()
       response = nil
@@ -147,10 +174,19 @@ proc perform(request: TransportRequest): Future[TransportReply] {.
     if exchange != nil: await exchange.closeWait()
     await session.closeWait()
 
+proc nowNs(): int64 = getMonoTime().ticks
+
 proc runJob(job: TransportJob) =
+  ## Runs only within what is left of the deadline. A job that waited in the
+  ## queue past it is dropped: its caller was already told it failed, and
+  ## sending it now (a POST, say) would act after that.
+  let leftMs = int((job.expiresAt - nowNs()) div 1_000_000)
+  if leftMs <= 0:
+    job.reply.send(TransportReply.err(deadlineError(job.request)))
+    return
   var reply: TransportReply
   try:
-    reply = waitFor perform(job.request).wait(chronos.milliseconds(job.request.deadlineOf))
+    reply = waitFor perform(job.request, leftMs).wait(chronos.milliseconds(leftMs))
   except AsyncTimeoutError:
     reply = TransportReply.err(deadlineError(job.request))
   except CancelledError as e:
@@ -188,18 +224,21 @@ proc transportRequest*(request: TransportRequest): Result[TransportResponse, str
   ## its deadline (plus a short grace for the worker's reply).
   ? ensurePool()
   let reply = newChan[TransportReply](1)
+  let expiresAt = nowNs() + int64(request.deadlineOf) * 1_000_000
   ## threading's isolate/destroy of a job holding a Chan is not annotated
   ## with what it raises; nothing in the job can raise on destruction.
   {.push warning[Effect]: off.}
-  let queued = gJobs[].push(TransportJob(request: request, reply: reply))
+  let queued = gJobs[].push(TransportJob(request: request, expiresAt: expiresAt,
+                                         reply: reply))
   {.pop.}
   if not queued:
     return err("HTTP transport saturated: " & $TransportQueueDepth & " requests queued")
-  let giveUpAt = epochTime() + float(request.deadlineOf + ReplyGraceMs) / 1000
+  ## Monotonic: a wall-clock step back must not stretch the wait.
+  let giveUpAt = expiresAt + int64(ReplyGraceMs) * 1_000_000
   while true:
     var received: TransportReply  ## fresh each time: see EventQueue.tryPop
     if reply.tryRecv(received):
       return received
-    if epochTime() >= giveUpAt:
+    if nowNs() >= giveUpAt:
       return err(deadlineError(request))
     sleep(5)
