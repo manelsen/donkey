@@ -51,7 +51,7 @@ type
     cfg*:                        DonkeyConfig
     memory*:                     MemoryRuntimePort
     completeFn*:                 CompleteFn
-    streamFn*:                   StreamFn
+    streamFactory*:                   StreamFactory
     toolClients*:                seq[ToolRuntimePort]
     tools*:                      seq[ToolDescription]
     globalOutbox*:               AsyncQueue[OutboundMessage]
@@ -166,7 +166,7 @@ proc buildSessionIngressContext*(sm: var SessionManager;
 func buildSessionIngressServices*(memory: MemoryRuntimePort;
                                   cfg: DonkeyConfig;
                                   completeFn: CompleteFn;
-                                  streamFn: StreamFn;
+                                  streamFactory: StreamFactory;
                                   toolClients: seq[ToolRuntimePort];
                                   tools: seq[ToolDescription];
                                   globalOutbox: AsyncQueue[OutboundMessage];
@@ -195,7 +195,7 @@ func buildSessionIngressServices*(memory: MemoryRuntimePort;
     cfg: cfg,
     memory: memory,
     completeFn: completeFn,
-    streamFn: streamFn,
+    streamFactory: streamFactory,
     toolClients: toolClients,
     tools: tools,
     globalOutbox: globalOutbox,
@@ -230,7 +230,7 @@ func withTypingFn*(typingFn: TypingFn;
 proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                                cfg: DonkeyConfig;
                                memory: MemoryRuntimePort;
-                               streamFn: StreamFn;
+                               streamFactory: StreamFactory;
                                bootstrap: SessionBootstrap;
                                globalOutbox: AsyncQueue[OutboundMessage];
                                log: Logger;
@@ -251,7 +251,7 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
     plan.oldInbox.addLastNoWait(newCancelMsg())
   asyncSpawn runOrchestrator(plan.entry[].inbox, plan.entry, globalOutbox, memory,
                              bootstrap.completeFn,
-                             http, streamFn,
+                             http, streamFactory,
                              bootstrap.clients, bootstrap.tools,
                              bootstrap.paddockDir, state,
                              typingFn, searchFn, log.child("orch"), bootstrap.providerLabel,
@@ -370,7 +370,7 @@ proc startSessionIngress*(sm: var SessionManager;
         msg.channel, sessionReplyTo(msg)))
   startSessionOrchestrator(result.plan, services.cfg,
                            services.memory,
-                           services.streamFn, bootstrap,
+                           services.streamFactory, bootstrap,
                            services.globalOutbox, services.log,
                            services.sandboxMode, services.sandboxRuntimeCmd, services.sandboxImage,
                            services.typingFn, services.searchFn,

@@ -17,9 +17,11 @@
 ##   withTimeout. Merged text is dispatched to the LLM as a single turn.
 ##
 ## Streaming:
-##   When a StreamFn is provided, the LLM call runs in a dedicated OS thread
-##   so SSE reading does not block the Chronos event loop. Tokens flow via a
-##   Nim Channel[string] polled with sleepAsync(30ms). Every StreamFlushMs the
+##   When a StreamFactory is provided, the LLM call runs in a dedicated OS
+##   thread that builds its own provider closure, so SSE reading does not
+##   block the Chronos event loop and no closure is shared between threads.
+##   Tokens flow via a `threading` channel polled with sleepAsync(30ms).
+##   Every StreamFlushMs the
 ##   orchestrator flushes accumulated tokens to the global outbox as an
 ##   OutboundMessage with isPartial=true. The final flush has isPartial=false.
 
@@ -388,7 +390,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
                     errorExplainFn: CompleteFn;
                     http: HttpRuntimePort;
                     fs: FsRuntimePort;
-                    streamFn: StreamFn;
+                    streamFactory: StreamFactory;
                     tools: seq[ToolDescription];
                     webAllowlist: seq[string];
                     toolWebPolicy: seq[cfgTypes.ToolWebPolicy];
@@ -502,7 +504,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   let suppressQuietHeartbeatFinal = msg.taskKind in {tkHeartbeat, tkSchedule}
   let suppressProgress = suppressHeartbeatProgress or suppressToolProgressFromEnv()
   let loopResult = await runToolLoop(
-    globalOutbox, toolInbox, toolOut, memory, completeFn, errorExplainFn, streamFn, turnSetup.nativeCtx,
+    globalOutbox, toolInbox, toolOut, memory, completeFn, errorExplainFn, streamFactory, turnSetup.nativeCtx,
     state, history, turnSetup.uid, msg.channel, msg.replyTo, msg.id, turnSetup.streamId,
     systemBase, context, tools, providerLabel,
     suppressProgress, result.debugMode, result.showReasoning, log,
@@ -518,7 +520,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
 
   stopTypingLoop(turnSetup.typingLoop)
   await finalizeNormalTurn(
-    globalOutbox, turnSetup.uid, msg.channel, msg.replyTo, turnSetup.streamId, streamFn,
+    globalOutbox, turnSetup.uid, msg.channel, msg.replyTo, turnSetup.streamId, streamFactory,
     suppressProgress, suppressQuietHeartbeatFinal, result.showReasoning, loopResult,
     bridgeToken = msg.bridgeToken)
 
@@ -582,7 +584,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
                      errorExplainFn: CompleteFn;
                      http: HttpRuntimePort;
                      fs: FsRuntimePort;
-                     streamFn: StreamFn;
+                     streamFactory: StreamFactory;
                      tools: seq[ToolDescription];
                      webAllowlist: seq[string];
                      toolWebPolicy: seq[cfgTypes.ToolWebPolicy];
@@ -644,7 +646,7 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
 
   result = await handleUserTurn(
     globalOutbox, memInbox, toolInbox, memOut, toolOut, session, memory,
-    completeFn, errorExplainFn, http, fs, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
+    completeFn, errorExplainFn, http, fs, streamFactory, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
     providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, toolsSuffix,
     state, msg, result, asyncCompleteFn, reviewRt = reviewRt)
   if result.onboarding.phase == opDone:
@@ -665,7 +667,7 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
                         errorExplainFn: CompleteFn;
                         http: HttpRuntimePort;
                         fs: FsRuntimePort;
-                        streamFn: StreamFn;
+                        streamFactory: StreamFactory;
                         tools: seq[ToolDescription];
                         webAllowlist: seq[string];
                         toolWebPolicy: seq[cfgTypes.ToolWebPolicy];
@@ -694,7 +696,7 @@ proc handleActorMessage(inbox: AsyncQueue[AgentMessage];
   of amkTask:
     result.stateRuntime = await handleActorTask(
       globalOutbox, session, memInbox, toolInbox, memOut, toolOut, memory,
-      completeFn, errorExplainFn, http, fs, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
+      completeFn, errorExplainFn, http, fs, streamFactory, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
       providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, sessionId,
       toolsSuffix, state, msg, stateRuntime, asyncCompleteFn, reviewRt = reviewRt)
 
@@ -781,7 +783,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
                       memory:         MemoryRuntimePort;
                       completeFn:     CompleteFn;
                       http:           HttpRuntimePort;
-                      streamFn:       StreamFn;
+                      streamFactory:       StreamFactory;
                       clients:        seq[ToolRuntimePort];
                       tools:          seq[ToolDescription];
                       paddockDir:     string;
@@ -845,7 +847,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
       let msg = await collectWithDebounce(inbox)
       let actorResult = await handleActorMessage(
         inbox, session, globalOutbox, memInbox, toolInbox, memOut, toolOut, memory,
-        completeFn, errorExplainFn, http, fs, streamFn, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
+        completeFn, errorExplainFn, http, fs, streamFactory, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
         providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, sessionId,
         toolsSuffix, state, msg, stateRuntime, asyncCompleteFn, reviewRt = review)
       stateRuntime = actorResult.stateRuntime

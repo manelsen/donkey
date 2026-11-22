@@ -1,8 +1,8 @@
 ## OrchestratorAgent async integration tests.
 ## Updated for the new API:
-##   runOrchestrator(inbox, globalOutbox, mem, completeFn, streamFn, clients, tools, paddockDir)
+##   runOrchestrator(inbox, globalOutbox, mem, completeFn, streamFactory, clients, tools, paddockDir)
 ##   globalOutbox: AsyncQueue[OutboundMessage]  (was AsyncQueue[AgentMessage])
-##   streamFn:     StreamFn = nil for all non-streaming tests
+##   streamFactory:     StreamFactory = nil for all non-streaming tests
 
 import std/[json, os, strutils, unittest]
 import chronos

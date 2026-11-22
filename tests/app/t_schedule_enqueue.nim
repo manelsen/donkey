@@ -71,7 +71,7 @@ proc makeServices(
     memory = memory.toRuntimePort(),
     cfg = DonkeyConfig(defaultProvider: "openai", defaultModel: "gpt-4o"),
     completeFn = stubComplete,
-    streamFn = nil,
+    streamFactory = nil,
     toolClients = @[],
     tools = @[],
     globalOutbox = outbox,

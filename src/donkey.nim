@@ -210,8 +210,8 @@ type DaemonToolBundle = object
   browserRuntime: BrowserExecutor
 
 type GlobalProviderBundle = object
-  completeFn: CompleteFn
-  streamFn:   StreamFn
+  completeFn:    CompleteFn
+  streamFactory: StreamFactory
 
 type DaemonEnv = object
   telegramToken: string
@@ -289,7 +289,7 @@ type DaemonServices = object
   tools:            seq[ToolDescription]
   browserRuntime:   BrowserExecutor
   globalCompleteFn: CompleteFn
-  globalStreamFn:   StreamFn
+  globalStreamFactory: StreamFactory
   tgTypingFn:       TypingFn
   globalSearchFn:   SearchFn
 
@@ -438,14 +438,19 @@ proc makeProviderFn[A](a: A): CompleteFn =
   result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
     a.complete(req)
 
-proc buildGlobalProviderBundle(): GlobalProviderBundle =
+proc openRouterKey(): string {.gcsafe.} =
   let openRouter = descriptorOr("openrouter")
-  let orKey =
-    if openRouter.envNames.len > 0: getEnv(openRouter.envNames[0])
-    else: ""
+  if openRouter.envNames.len > 0: getEnv(openRouter.envNames[0]) else: ""
+
+proc openRouterStream(): StreamFn {.nimcall, gcsafe.} =
+  ## Runs on the stream thread: the adapter and its closure are built there.
+  newOpenRouterAdapter(openRouterKey()).makeStreamFn()
+
+proc buildGlobalProviderBundle(): GlobalProviderBundle =
+  let orKey = openRouterKey()
   let orAdapter = newOpenRouterAdapter(orKey)
   result.completeFn = if orKey.len > 0: makeProviderFn(orAdapter) else: nil
-  result.streamFn = if orKey.len > 0: orAdapter.makeStreamFn() else: nil
+  result.streamFactory = if orKey.len > 0: openRouterStream else: nil
 
 func routeCostProviderIds(): seq[string] =
   ## Cost hints cover every provider that has a descriptor.
@@ -474,7 +479,7 @@ proc initDaemonServices(cfg: DonkeyConfig;
 
   let providerBundle = buildGlobalProviderBundle()
   result.globalCompleteFn = providerBundle.completeFn
-  result.globalStreamFn = providerBundle.streamFn
+  result.globalStreamFactory = providerBundle.streamFactory
   result.tgTypingFn = makeTgTypingFn(env.telegramToken, env.identityPath, log)
   result.globalSearchFn = buildGlobalSearchFn(env.memory)
   when defined(withPostgres) or defined(withSqlite):
@@ -1385,7 +1390,7 @@ func buildDaemonSessionServices(ctx: DaemonContext;
     memory.toRuntimePort(),
     cfg,
     ctx.services.globalCompleteFn,
-    ctx.services.globalStreamFn,
+    ctx.services.globalStreamFactory,
     ctx.services.toolClients,
     ctx.services.tools,
     ctx.runtime.globalOutbox,

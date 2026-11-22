@@ -65,6 +65,14 @@ type
                   ): Result[CompletionResponse, string]
                      {.gcsafe.}
 
+  StreamFactory* = proc(): StreamFn {.gcsafe, nimcall.}
+    ## Builds a fresh StreamFn. Streaming runs on its own thread and calls
+    ## the factory there, so the provider closure is built, used and freed
+    ## on that thread alone: ORC counts references without atomics, and a
+    ## closure shared with the event loop could be freed twice. `nimcall`
+    ## forbids the factory itself from capturing loop state. nil means
+    ## streaming is not available.
+
   ProviderBundle* = object
     completeFn*: CompleteFn
     streamFn*:   StreamFn
