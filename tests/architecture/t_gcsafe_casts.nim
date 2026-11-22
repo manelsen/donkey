@@ -39,7 +39,11 @@ func castCount(code: string): int =
   ## others (`{.cast(gcsafe), cast(noSideEffect).}`), however it is spaced.
   ## In code it can only be a pragma; a type cast is `cast[T](x)`.
   let squeezed = code.multiReplace((" ", ""), ("\t", ""))
-  squeezed.count("cast(gcsafe)")
+  var at = squeezed.find("cast(gcsafe)")
+  while at >= 0:
+    if at == 0 or not isIdentChar(squeezed[at - 1]):  ## not `broadcast(...)`
+      inc result
+    at = squeezed.find("cast(gcsafe)", at + 1)
 
 func castSites(path, src: string): seq[CastSite] =
   ## Casts in code (not in comments or strings), each with whether a reason
@@ -68,6 +72,8 @@ proc runTests*() =
       check castSites("x", "{.cast(gcsafe), cast(noSideEffect).}: discard").len == 1
       check castSites("x", "{.cast(noSideEffect), cast( gcsafe ).}: discard").len == 1
       check castSites("x", "let p = cast[pointer](x)").len == 0
+      check castSites("x", "broadcast(gcsafe)").len == 0
+      check castSites("x", "{.raises: [], cast(gcsafe).}: discard").len == 1
       check not castSites("x", "let l = \"## gcsafe: not a comment\"\n{.cast(gcsafe).}:")[0].explained
       check castSites("x", "let l = 1  ## gcsafe: a real comment\n{.cast(gcsafe).}:")[0].explained
 
