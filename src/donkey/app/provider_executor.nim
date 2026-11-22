@@ -1,24 +1,26 @@
 ## Provider executor — runs blocking provider calls on a fixed worker pool.
 ##
 ## A fixed set of worker threads consumes `ProviderJob` messages from a shared
-## `Channel`. Each job carries only plain data (`ProviderBundle` built on the
-## event loop + `CompletionRequest`) plus a pointer to a shared, reference
-## counted control block owned jointly by the awaiting coroutine and the
-## worker. The session closure and routing state never cross the thread
-## boundary; selection and routing hooks stay on the Chronos event loop.
+## `Channel`. Each job carries only plain data (the `nimcall` builder, the
+## `ProviderSpec` and the `CompletionRequest`) plus a pointer to a shared,
+## reference counted control block owned jointly by the awaiting coroutine
+## and the worker. The session closure and routing state never cross the
+## thread boundary; selection and routing hooks stay on the Chronos event
+## loop.
 ##
-## Builder ownership rule
-## ----------------------
-## `ProviderRuntimeBuilder` is declared `{.nimcall.}`, so it cannot capture an
-## environment. `asyncProviderComplete` still runs it on the event loop thread
-## before enqueuing and sends only the resulting `ProviderBundle`. The bundle's
-## `completeFn`/`streamFn` closures are freshly constructed by the builder and
-## are owned exclusively by the job after the channel transfer, so no builder
-## environment is shared with workers or with other in-flight calls.
+## Builder rule
+## ------------
+## The worker runs the builder. The bundle's closures are built, called and
+## freed on that one thread. Building them on the loop and moving them over
+## is not enough: ORC's cycle collector keeps its roots per thread, and a
+## closure registered there by the loop and freed by a worker crashed the
+## executor under Nim 2.4 (`unregisterCycle`). `ProviderRuntimeBuilder` is
+## `{.nimcall.}`, so it captures nothing from the loop, and `ProviderJob` is
+## checked at compile time to hold no ref and no closure (`sharesNothing`).
 ##
 ## GC-managed values only cross the thread boundary through a Nim `Channel`:
 ##
-## 1. Job input (`ProviderBundle`, `CompletionRequest`) travels through
+## 1. Job input (`ProviderSpec`, `CompletionRequest`) travels through
 ##    `Channel[ProviderJob]`.
 ## 2. The result (`Result[CompletionResponse, string]`, which owns strings and
 ##    sequences) travels through a per-job `Channel[Result[...]]`.
@@ -64,6 +66,7 @@ import chronos
 import ../core/pipeops
 import ../ports/provider
 import ../domain/message
+import ../infra/thread_handle
 
 const
   ProviderWorkerCount* = 4
@@ -84,9 +87,10 @@ type
     results:   Channel[Result[CompletionResponse, string]]
 
   ProviderJob = object
-    bundle: ProviderBundle
-    req:    CompletionRequest
-    state:  ptr ProviderJobState
+    builder: ProviderRuntimeBuilder  ## nimcall: run on the worker
+    spec:    ProviderSpec
+    req:     CompletionRequest
+    state:   ptr ProviderJobState
 
 proc safeAsyncComplete*(fn: AsyncCompleteFn;
                         req: CompletionRequest
@@ -126,11 +130,23 @@ proc releaseJobState(state: ptr ProviderJobState) {.gcsafe.} =
   deinitLock(state[].lock)
   deallocShared(state)
 
-proc callProvider(bundle: sink ProviderBundle; req: sink CompletionRequest
+static:
+  doAssert sharesNothing(ProviderJob),
+    "ProviderJob must hold plain data only: it crosses to a worker thread"
+
+proc callProvider(builder: ProviderRuntimeBuilder; spec: ProviderSpec;
+                  req: sink CompletionRequest
                  ): Result[CompletionResponse, string] {.gcsafe, raises: [].} =
+  ## Builds the bundle and calls it, both on this worker: its closures never
+  ## leave the thread.
+  var bundle: ProviderBundle
   try:
-    if bundle.completeFn == nil:
-      return err("provider unavailable")
+    bundle = builder(spec)
+  except Exception as e:  ## effect boundary: callee raises are unannotated
+    return err("provider executor: builder failed: " & e.msg)
+  if bundle.completeFn == nil:
+    return err("provider unavailable: " & spec.providerName)
+  try:
     bundle.completeFn(req)
   except Exception as e:  ## effect boundary: callee raises are unannotated
     err(e.msg)
@@ -146,7 +162,7 @@ proc completeJob(job: sink ProviderJob) {.gcsafe.} =
     releaseJobState(state)
     return
 
-  var value = callProvider(move(job.bundle), move(job.req))
+  var value = callProvider(job.builder, job.spec, move(job.req))
 
   acquire(state[].lock)
   let cancelledAfter = state[].cancelled
@@ -219,27 +235,16 @@ proc asyncProviderComplete*(builder: ProviderRuntimeBuilder;
                             spec: ProviderSpec;
                             req: sink CompletionRequest
                            ): Future[Result[CompletionResponse, string]] {.async.} =
-  ## Runs `builder` on the event loop, then enqueues the resulting bundle for
-  ## a worker thread and awaits its result. Cancellation marks the job
-  ## cancelled without waiting for the worker; see the module header.
+  ## Enqueues the call for a worker thread, which builds the provider bundle
+  ## from `builder` and `spec` and calls it, and awaits its result.
+  ## Cancellation marks the job cancelled without waiting for the worker; see
+  ## the module header.
+  if builder == nil:
+    return err(Result[CompletionResponse, string],
+               "provider unavailable: " & spec.providerName)
   let pool = ensureProviderPool()
   if pool.isErr:
     return err(Result[CompletionResponse, string], pool.error)
-
-  # The builder may capture event-loop state, so it must not run on a worker.
-  var bundle: ProviderBundle
-  try:
-    bundle = builder(spec)
-  except CatchableError as e:
-    return err(Result[CompletionResponse, string],
-               "provider executor: builder failed: " & e.msg)
-  except Exception as e:  ## effect boundary: callee raises are unannotated
-    return err(Result[CompletionResponse, string],
-               "provider executor: builder failed: " & e.msg)
-
-  if bundle.completeFn == nil:
-    return err(Result[CompletionResponse, string],
-               "provider unavailable: " & spec.providerName)
 
   let state = cast[ptr ProviderJobState](allocShared0(sizeof(ProviderJobState)))
   if state == nil:
@@ -258,7 +263,8 @@ proc asyncProviderComplete*(builder: ProviderRuntimeBuilder;
   # Caller + (future) worker. Set before the send so a worker that dequeues
   # immediately already has its reference accounted for.
   state[].refs = 2
-  var job = ProviderJob(bundle: move(bundle), req: move(req), state: state)
+  var job = ProviderJob(builder: builder, spec: spec, req: move(req),
+                        state: state)
   if not gProviderQueue.trySend(job):
     state[].refs = 1
     releaseJobState(state)

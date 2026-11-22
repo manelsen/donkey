@@ -2,7 +2,7 @@
 ## provider/model menu, compact callback tokens for long model ids, catalog
 ## paging and buttons, and the /models argument parser.
 
-import std/[algorithm, locks, sequtils, strutils, tables, times]
+import std/[algorithm, sequtils, strutils, tables, times]
 import checksums/sha1
 import ../../core/pipeops
 import ../../core/utf8

@@ -12,10 +12,11 @@ permissions:
   contents: read
 
 env:
-  # 2.2.14/2.4.x SIGSEGV under ORC when a built-in Channel carries GC-managed
-  # values (provider executor). The cache key includes this version so artifacts
-  # from another compiler are never restored.
-  NIM_VERSION: '2.2.12'
+  # Nim 2.4.2, also pinned by the Docker build and by nimble.lock. The cache key
+  # includes this version so artifacts from another compiler are never
+  # restored; the Linux tarball is checked against the official checksum.
+  NIM_VERSION: '2.4.2'
+  NIM_LINUX_SHA256: '0ee5b16e81852a956d4fddb4aa44b5958c645c992132fa43be45f489573ee325'
 
 jobs:
   build:
@@ -247,6 +248,7 @@ jobs:
       - name: Set up Nim
         run: |
           curl -fsSL "https://nim-lang.org/download/nim-${NIM_VERSION}-linux_x64.tar.xz" -o /tmp/nim.tar.xz
+          echo "${NIM_LINUX_SHA256}  /tmp/nim.tar.xz" | sha256sum -c -
           mkdir -p /opt/nim
           tar -xJf /tmp/nim.tar.xz -C /opt/nim --strip-components=1
           echo "/opt/nim/bin" >> "$GITHUB_PATH"
