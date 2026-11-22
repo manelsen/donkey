@@ -190,21 +190,27 @@ proc runTests*() =
       check Model in models.body
 
     test "a chat completion runs one agent turn and returns its answer":
+      var before: int
+      withLock gLock: before = gDispatched.len
       let reply = request("POST", "/v1/chat/completions", token = Token,
                           body = chatBody())
       check reply.status == 200
       let j = parseJson(reply.body)
       check j["choices"][0]["message"]["content"].getStr == "pong"
       withLock gLock:
-        check gDispatched.len >= 1
+        check gDispatched.len == before + 1
 
     test "a streamed chat completion ends with [DONE]":
+      var before: int
+      withLock gLock: before = gDispatched.len
       let reply = request("POST", "/v1/chat/completions", token = Token,
                           body = chatBody(stream = true), stopAt = "[DONE]")
       check reply.status == 200
       check "text/event-stream" in reply.head.toLowerAscii
       check "pong" in reply.body
       check "[DONE]" in reply.body
+      withLock gLock:
+        check gDispatched.len == before + 1
 
     test "the event stream opens for an authorised client":
       let reply = request("GET", "/api/events", token = Token, stopAt = ": connected")
@@ -214,16 +220,28 @@ proc runTests*() =
 
     test "an open event stream does not hold up other requests":
       ## Long-lived connections must not block the rest: with one stream
-      ## open, a probe still answers promptly.
-      let raw = "GET /api/events HTTP/1.1\r\nHost: x\r\nConnection: close\r\n" &
-                "Authorization: Bearer " & Token & "\r\n\r\n"
-      let stream = exchange(raw, readLimitMs = 3_000)
-      waitFor sleepAsync(chronos.milliseconds(100))
+      ## open (handshake read, connection still up), a probe still answers
+      ## promptly, and the stream is still open afterwards.
+      proc openStream(): Future[StreamTransport] {.async.} =
+        let transport = await connect(initTAddress("127.0.0.1", gPort))
+        discard await transport.write(
+          "GET /api/events HTTP/1.1\r\nHost: x\r\nConnection: close\r\n" &
+          "Authorization: Bearer " & Token & "\r\n\r\n")
+        var seen = ""
+        while ": connected" notin seen:
+          var buf = newSeq[byte](1024)
+          let n = await transport.readOnce(addr buf[0], buf.len)
+          if n <= 0: break
+          seen.add cast[string](buf[0 ..< n])
+        doAssert ": connected" in seen, "the stream never confirmed"
+        return transport
+      let stream = waitFor openStream()
+      defer: waitFor stream.closeWait()
       let started = epochTime()
       let health = request("GET", "/health")
       check health.status == 200
       check epochTime() - started < 1.0
-      check "connected" in waitFor(stream)
+      check not stream.atEof()
 
 when isMainModule:
   runTests()
