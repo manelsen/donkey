@@ -216,6 +216,27 @@ proc runTests*() =
         deadlineMs: 5_000))
       check res.get.body == "none"
 
+    test "every redirect hop is checked against the allowlist":
+      ## 127.0.0.1 is allowed; its redirect to localhost is not, and the hop
+      ## must fail instead of connecting.
+      let res = transportRequest(TransportRequest(
+        meth: "GET", url: url("/cross"), redirectLimit: 5,
+        allowlist: @["127.0.0.1"], deadlineMs: 5_000))
+      check res.isErr
+      check "allowlist" in res.error
+      let allowed = transportRequest(TransportRequest(
+        meth: "GET", url: url("/redirect"), redirectLimit: 5,
+        allowlist: @["127.0.0.1"], deadlineMs: 5_000))
+      check allowed.get.status == 200
+
+    test "a HEAD stays a HEAD across a 303":
+      let res = transportRequest(TransportRequest(
+        meth: "HEAD", url: url("/redirect303"), redirectLimit: 5,
+        deadlineMs: 5_000))
+      check res.isOk
+      check res.get.status == 200
+      check res.get.body == ""  ## a GET would read "GET" back from /method
+
     test "a request that waited past its deadline in the queue never runs":
       ## Every worker busy on a silent server: the short request fails at its
       ## deadline and must not be sent later, after its caller was told.

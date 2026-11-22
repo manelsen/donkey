@@ -24,6 +24,7 @@ import chronos
 import chronos/apps/http/httpclient
 import threading/channels
 import ../../core/pipeops
+import ../../core/security/net_boundary
 import ../../infra/[event_queue, fixed, thread_handle]
 
 const
@@ -42,6 +43,9 @@ type
     headers*:       seq[(string, string)]
     redirectLimit*: int      ## 0: a 3xx comes back as the response
     proxy*:         string   ## egress proxy URL, tunnelled with CONNECT
+    allowlist*:     seq[string]
+      ## hosts every hop may reach (empty: any). Checked before each
+      ## connection, so a redirect cannot lead outside it.
     deadlineMs*:    int      ## the whole request; <= 0 uses the default
 
   TransportResponse* = object
@@ -120,12 +124,13 @@ func requestHeaders(headers: seq[(string, string)]): seq[(string, string)] =
 func nextHop*(current: Hop; status: int; target: HttpAddress): Hop =
   ## 307 and 308 repeat the current method and body; 301, 302 and 303 become
   ## a GET without a body (and without its Content-Type), as browsers and
-  ## std/httpclient do. Credentials do not follow to another host, and once
+  ## std/httpclient do, except a HEAD, which stays a HEAD. Credentials do not follow to another host, and once
   ## dropped they stay dropped.
   let keepBody = status in [307, 308]
   let crossHost = not sameHost(target, current.address)
   result = Hop(address: target,
-               meth: if keepBody: current.meth else: MethodGet,
+               meth: if keepBody or current.meth == MethodHead: current.meth
+                     else: MethodGet,
                body: if keepBody: current.body else: "")
   for (name, value) in requestHeaders(current.headers):
     let lower = name.toLowerAscii
@@ -174,6 +179,14 @@ proc perform(request: TransportRequest; expiresAt: int64): Future[TransportReply
   try:
     var hops = 0
     while true:
+      ## An entry may name the host alone or with its port (a test server,
+      ## a self-hosted API), as StdHttpAdapter matches the URL's authority.
+      if request.allowlist.len > 0 and
+         not isHostAllowed(hop.address.hostname, request.allowlist) and
+         not isHostAllowed(hop.address.hostname & ":" & $hop.address.port,
+                           request.allowlist):
+        return err("Network egress BLOCKED: host '" & hop.address.hostname &
+                   "' not in allowlist" & (if hops > 0: " (redirect)" else: ""))
       ? readyToConnect(hop.address, expiresAt, proxied, request)
       exchange = HttpClientRequestRef.new(
         session, hop.address, hop.meth, headers = hop.headers,

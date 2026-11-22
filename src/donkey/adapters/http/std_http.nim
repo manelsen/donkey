@@ -87,7 +87,7 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
     let effectiveTimeout = if timeoutSec > 0: timeoutSec else: a.timeout
     let res = transportRequest(TransportRequest(
       meth: $meth, url: url, body: body, headers: headers,
-      redirectLimit: redirectLimit, proxy: a.proxy,
+      redirectLimit: redirectLimit, proxy: a.proxy, allowlist: a.allowlist,
       deadlineMs: effectiveTimeout * 1000,
     )).map(proc(r: TransportResponse): HttpResponse =
       HttpResponse(status: r.status, body: r.body, headers: r.headers))
