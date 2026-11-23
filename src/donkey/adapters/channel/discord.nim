@@ -25,6 +25,7 @@ import ../../domain/message
 import ../../domain/channels/discord_pure
 import ../../domain/channels/telegram_policy  # mentionRequiredFromEnv
 import ../../config/environment
+import ../../core/security/dm_policy  # parseChatIdList
 import ../../ports/http
 import ../../core/media_download
 import ../http/std_http
@@ -55,7 +56,8 @@ type
     messageId*:        string
     interactionId*:    string
     interactionToken*: string
-    guildId*:          string   ## server id; empty for a DM or an interaction
+    guildId*:          string   ## server id; empty for a DM
+    originChannelId*:  string   ## channel the event came from (allowlist only)
     attachmentUrl*:    string   ## first attachment (the turn downloads one)
     attachmentName*:   string
     attachmentMime*:   string
@@ -127,6 +129,7 @@ func messageEventOf*(r: DsParseResult): DiscordRawEvent =
     channelId:     r.channelId,
     messageId:     r.messageId,
     guildId:       r.guildId,
+    originChannelId: r.originChannelId,
     referencedAuthorId: r.referencedAuthorId,
     attachmentUrl:  (if r.attachmentUrls.len > 0: r.attachmentUrls[0] else: ""),
     attachmentName: (if r.attachmentNames.len > 0: r.attachmentNames[0] else: ""),
@@ -160,6 +163,8 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
           discordUserId:    r.rawId,
           interactionId:    r.interactionId,
           interactionToken: r.interactionToken,
+          guildId:          r.guildId,
+          originChannelId:  r.originChannelId,
         )
       elif r.content.len > 0 and not r.content.startsWith("/"):
         DiscordRawEvent(
@@ -168,6 +173,8 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
           content:          r.content,
           interactionId:    r.interactionId,
           interactionToken: r.interactionToken,
+          guildId:          r.guildId,
+          originChannelId:  r.originChannelId,
         )
       else:
         DiscordRawEvent(
@@ -176,6 +183,8 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
           content:          r.content,
           interactionId:    r.interactionId,
           interactionToken: r.interactionToken,
+          guildId:          r.guildId,
+          originChannelId:  r.originChannelId,
         )
     bufferOrPush(event)
   of dekButtonClick:
@@ -187,6 +196,8 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
       messageId:        r.messageId,
       interactionId:    r.interactionId,
       interactionToken: r.interactionToken,
+      guildId:          r.guildId,
+      originChannelId:  r.originChannelId,
     )
     bufferOrPush(event)
   of dekModalSubmit:
@@ -198,6 +209,8 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
       content:          r.content,
       interactionId:    r.interactionId,
       interactionToken: r.interactionToken,
+      guildId:          r.guildId,
+      originChannelId:  r.originChannelId,
     )
     bufferOrPush(event)
 
@@ -392,6 +405,7 @@ type
     statusReactions: ref Table[string, string] ## channel_id:message_id -> emoji
     seenMessages: ref RecentIds  ## message ids already handled (RESUME replay, backfill overlap)
     requireMention*: bool  ## in a server, answer only when mentioned or replied to
+    allowedChannels*: seq[string]  ## servers/channels served; empty = all
     http*:      StdHttpAdapter
 
 func authHeader(a: DiscordAdapter): (string, string) =
@@ -876,6 +890,10 @@ proc isDuplicateMessage*(a: DiscordAdapter; messageId: string;
   if a.seenMessages == nil: return false
   a.seenMessages[].seenBefore(messageId, now)
 
+func discordAllowedChannels*(env: Environment): seq[string] =
+  ## `DONKEY_DISCORD_ALLOWED_CHANNELS`: comma-separated server or channel ids.
+  parseChatIdList(env.get("DONKEY_DISCORD_ALLOWED_CHANNELS"))
+
 func discordRequireMention*(env: Environment): bool =
   ## `DONKEY_DISCORD_REQUIRE_MENTION`: opt-in, like the Telegram switch.
   mentionRequiredFromEnv(env.get("DONKEY_DISCORD_REQUIRE_MENTION"))
@@ -883,7 +901,8 @@ func discordRequireMention*(env: Environment): bool =
 proc newDiscordAdapter*(token:        string;
                         identityPath: string;
                         apiBase       = "";
-                        requireMention = false): DiscordAdapter =
+                        requireMention = false;
+                        allowedChannels: seq[string] = @[]): DiscordAdapter =
   var t = new(Table[string, string])
   t[] = initTable[string, string]()
   var sr = new(Table[string, string])
@@ -901,5 +920,6 @@ proc newDiscordAdapter*(token:        string;
     statusReactions: sr,
     seenMessages: seen,
     requireMention: requireMention,
+    allowedChannels: allowedChannels,
     http:       newStdHttpAdapter(),
   )

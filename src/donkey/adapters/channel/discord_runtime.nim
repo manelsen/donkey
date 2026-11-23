@@ -492,7 +492,8 @@ proc handleDiscordEvent*(sm: var SessionManager;
       logger.debug("discord: message " & event.messageId & " already handled")
       return
     var event = event
-    if event.guildId.len > 0:
+    if event.guildId.len > 0 and event.interactionId.len == 0:
+      ## (A slash command is already explicit: no mention to look for.)
       ## In a server: the bot's mention is not part of what was said, and with
       ## DONKEY_DISCORD_REQUIRE_MENTION only messages for the bot are answered.
       let botId = dcAdapter.botUserId()
@@ -706,6 +707,12 @@ proc drainDiscordEvents*(sm: var SessionManager;
       checkDiscordOfflineMessages(sm, dcAdapter, discordToken, presentationState,
                                   env, msgSeq, logger, handleInboundStatus,
                                   completeInboundStatus, handleSessionFallback)
+      (hasEvent, event) = dcAdapter.tryRecvEvent()
+      continue
+    if not discordChannelAllowed(dcAdapter.allowedChannels, event.guildId,
+                                 event.originChannelId):
+      ## Before the identity gate, like TG-016: no turn, identity or pairing.
+      logger.debug("discord: server " & event.guildId & " is not in the allowlist")
       (hasEvent, event) = dcAdapter.tryRecvEvent()
       continue
     let rawId = event.discordUserId

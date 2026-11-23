@@ -116,6 +116,12 @@ sobre o gateway:
   quem chamou. Toda criação de mensagem leva `nonce` + `enforce_nonce`, então
   o POST que a camada HTTP repete depois de um timeout não duplica a mensagem.
 
+- **Allowlist de servidor** (`DONKEY_DISCORD_ALLOWED_CHANNELS`, ids de
+  servidor ou canal, `*` = todos): fora da lista, mensagem, slash command e
+  botão são descartados antes do gate de identidade, como no TG-016. Vazio
+  mantém o comportamento anterior; DM segue a política de DM
+  (`8598746e86`, `f6d4b6a319`).
+
 Ainda **não há**: ledger de entrega e cursor que só avança depois da entrega
 final (hoje avança antes do despacho: at-most-once).
 

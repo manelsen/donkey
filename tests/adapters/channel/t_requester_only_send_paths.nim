@@ -5,7 +5,7 @@
 ## from a group or server channel, and the test asserts where the code went:
 ## to the requester's private path, or nowhere, but never to the shared space.
 
-import std/[json, locks, nativesockets, net, os, strutils, unittest]
+import std/[json, locks, nativesockets, net, options, os, strutils, unittest]
 import chronos/asyncsync
 import donkey/config/environment
 import donkey/core/log
@@ -413,6 +413,44 @@ proc runTests*() =
       for r in requests():
         if "/channels/guild-chan/messages" in r.target: inc replies
       check replies == 1
+
+    test "Discord: only listed servers are served (DONKEY_DISCORD_ALLOWED_CHANNELS)":
+      ## Checked before the identity gate, like TG-016: an unlisted server
+      ## gets no turn, no identity and no pairing.
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var state = initPresentationState()
+      let dc = newDiscordAdapter("TOK", Tmp / "dc-ac" / "ids.tsv", apiBase = base(),
+                                 allowedChannels = @["g-ok", "chan-listed"])
+      dc.appId[] = "BOT"
+      for (id, guild, chan) in [("1", "g-ok", "chan-a"), ("2", "g-bad", "chan-b"),
+                                ("3", "g-bad", "chan-listed"), ("4", "", "dm-c")]:
+        gDiscordEvents.push(DiscordRawEvent(kind: deMessage,
+          discordUserId: "6" & id, content: "/start", channelId: chan,
+          originChannelId: chan, messageId: "ac" & id, guildId: guild))
+      drainDiscordEvents(sm, dc, "TOK", state, env("dc-ac"), msgSeq, logger,
+                         noop, noop, noop)
+      proc answered(chan: string): bool =
+        anyRequest(proc(r: Recorded): bool = ("/channels/" & chan & "/messages") in r.target)
+      check answered("chan-a")
+      check not answered("chan-b")
+      check answered("chan-listed")
+      check dc.resolver.lookup(ckDiscord, "62").isNone
+
+    test "Discord: a slash command in a server is not dropped by the mention requirement":
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var state = initPresentationState()
+      let dc = newDiscordAdapter("TOK", Tmp / "dc-sl" / "ids.tsv", apiBase = base(),
+                                 requireMention = true)
+      dc.appId[] = "BOT"
+      handleDiscordEvent(sm, DiscordRawEvent(kind: deMessage, discordUserId: "57",
+        content: "/start", guildId: "g1", originChannelId: "c1",
+        interactionId: "i9", interactionToken: "tk9"),
+        dc, state, env("dc-sl"), msgSeq, logger, noop, noop, noop)
+      check anyRequest(proc(r: Recorded): bool = "/interactions/i9/tk9/callback" in r.target)
 
     test "Discord: a new gateway session recovers the gap by REST":
       ## A READY after a lost session means the gateway did not replay the

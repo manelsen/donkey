@@ -45,6 +45,7 @@ type
     attachmentNames*:  seq[string]  ## file names, parallel to attachmentUrls
     attachmentMimes*:  seq[string]  ## content types ("" when Discord gave none)
     guildId*:          string   ## server id; empty for a DM
+    originChannelId*:  string   ## channel the event came from (allowlist only)
     referencedAuthorId*: string ## author of the message this one replies to
 
 # ── Internal pure helpers ─────────────────────────────────────────────────────
@@ -145,6 +146,7 @@ func parseMessageCreate(d: JsonNode): DsParseResult =
     attachmentNames: attachmentNames,
     attachmentMimes: attachmentMimes,
     guildId:   d.getOrDefault("guild_id").getStr(""),
+    originChannelId: d.getOrDefault("channel_id").getStr(""),
     referencedAuthorId:
       d.getOrDefault("referenced_message").getOrDefault("author")
         .getOrDefault("id").getStr(""),
@@ -203,8 +205,17 @@ func parseApplicationCommand(d: JsonNode;
     interactionToken: interactionToken,
   )
 
+func parseInteractionKind(d: JsonNode): DsParseResult
+
 func parseInteractionCreate(d: JsonNode): DsParseResult =
-  ## Parses an INTERACTION_CREATE dispatch payload.
+  ## Parses an INTERACTION_CREATE dispatch payload. The server and channel are
+  ## kept for the allowlist only: the reply goes through the interaction.
+  result = parseInteractionKind(d)
+  if result.kind != dekUnknown:
+    result.guildId = d.getOrDefault("guild_id").getStr("")
+    result.originChannelId = d.getOrDefault("channel_id").getStr("")
+
+func parseInteractionKind(d: JsonNode): DsParseResult =
   let interactionType  = d.getOrDefault("type").getInt(0)
   let interactionId    = d.getOrDefault("id").getStr("")
   let interactionToken = d.getOrDefault("token").getStr("")
@@ -283,6 +294,15 @@ func closeAction*(code: int): CloseAction =
   of 4004, 4010, 4011, 4012, 4013, 4014: caStop
   of 4007, 4009: caNewSession
   else: caResume
+
+func discordChannelAllowed*(allowed: seq[string]; guildId, channelId: string): bool =
+  ## `DONKEY_DISCORD_ALLOWED_CHANNELS`: server or channel ids (`*` = all).
+  ## Empty serves every server, as before. A DM has no server and is left to
+  ## the DM policy. A thread has its own channel id: list its server, or the
+  ## thread itself.
+  if allowed.len == 0 or guildId.len == 0: return true
+  "*" in allowed or guildId in allowed or
+    (channelId.len > 0 and channelId in allowed)
 
 # ── Mentions ──────────────────────────────────────────────────────────────────
 
