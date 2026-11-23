@@ -49,6 +49,12 @@ Reading the environment once moves with item 9.
 They cover memory/profile, the DM allowlist (`isDmAllowed`/`addDmAllowed`), reminders (`scheduleReminder`/`loadDueReminders`), identity (`saveIdentity`), transcript search and user revocation. The port inherits the mix, so every memory backend has to implement reminders and the allowlist.
 **Fix:** split into `ReminderPort`, `AllowlistPort` and `IdentityPort`. The MdFile store can keep implementing all of them, but each should sit behind its own port.
 
+**Status (0.3.x): done.**
+- Reminders: `ports/reminders` (`ReminderPort` over a typed `Reminder`), stored by `adapters/memory/reminder_store`. Delivery had two paths (the daemon tick and a heartbeat task, with different texts); `app/reminders` is now the only one. Fixed on the way: two reminders from the same user in the same second shared an id, and the second replaced the first.
+- Identity: not a port of its own, because it is stored as the `agent_*` keys of the preferences. The memory port gains `storedPreferences`; `saveAgentIdentity`/`loadAgentIdentity` merge and parse with pure functions in `domain/personality`, so any backend that keeps the preferences keeps the identity.
+- Allowlist and revocation: `ports/access` (`AccessPort`, failing closed), with the allowlist in `adapters/memory/dm_allowlist`. Fixed on the way: a removal left the allowlist world-readable.
+- Transcript search stays on the memory port: it searches the memory itself.
+
 ### 6. `app/http_gateway.nim` is a 1394-line monolith
 
 **Progress:** the gateway now runs on the Chronos loop (no worker threads, no global callbacks, no locks; the agent turn and its stream are `async`). The split into pure modules is still open.
