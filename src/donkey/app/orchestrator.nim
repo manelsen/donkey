@@ -48,6 +48,7 @@ import ../config/types as cfgTypes
 import ../config/environment
 import ./memory_consolidation
 import ./session_manager
+import ./metrics
 import ./sandbox
 import ../ports/provider
 import ../ports/subagent_workspace
@@ -117,6 +118,15 @@ func suppressToolProgressFromEnv*(env: Environment): bool =
   ## the final answer and approval prompts. Set DONKEY_SUPPRESS_TOOL_PROGRESS=1.
   env.stripped("DONKEY_SUPPRESS_TOOL_PROGRESS").toLowerAscii() in
     ["1", "true", "yes", "on"]
+
+func turnKindLabel(kind: TaskKind): string =
+  ## The `kind` label of a turn metric: user, schedule, heartbeat, or the
+  ## task kind's own name for the rest.
+  case kind
+  of tkUserMsg: "user"
+  of tkSchedule: "schedule"
+  of tkHeartbeat: "heartbeat"
+  else: ($kind)[2 .. ^1].toLowerAscii
 
 # ── Orchestrator state and pipe ops ────────────────────────────────────────────
 
@@ -542,6 +552,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   let suppressQuietHeartbeatFinal = msg.taskKind in {tkHeartbeat, tkSchedule}
   let suppressProgress = suppressHeartbeatProgress or
     suppressToolProgressFromEnv(turnSetup.nativeCtx.env)
+  let turnStartedMs = epochMs()
   let loopResult = await runToolLoop(
     globalOutbox, toolInbox, toolOut, memory, completeFn, errorExplainFn, turnStreamFactory, turnSetup.nativeCtx,
     state, history, turnSetup.uid, msg.channel, msg.replyTo, msg.id, turnSetup.streamId,
@@ -549,6 +560,8 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
     suppressProgress, result.debugMode, result.showReasoning, log,
     asyncCompleteFn, bridgeToken = msg.bridgeToken,
     providerOverride = routeProvider, modelOverride = routeModel)
+  recordTurn(channelLabel(msg.channel), turnKindLabel(msg.taskKind),
+             float(epochMs() - turnStartedMs), ok = not loopResult.providerFailed)
   result =
     result |>->
     withLoopResult(loopResult)

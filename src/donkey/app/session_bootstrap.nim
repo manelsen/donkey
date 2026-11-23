@@ -227,6 +227,8 @@ proc buildCompleteFn*(preferencesMd: string;
         if routingResultHook != nil:
           routingResultHook(selection, elapsedMs, response.isOk)
         if response.isOk:
+          recordTokens(selection.providerName, response.get.inputTokens,
+                       response.get.outputTokens)
           return response
         lastErr = response.error
         if not isImageRejection(response.error):
@@ -337,6 +339,8 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
                                  response.isOk,
                                  (if response.isErr: response.error else: ""))
           if response.isOk:
+            recordTokens(selection.providerName, response.get.inputTokens,
+                         response.get.outputTokens)
             return response
           lastErr = response.error
           if not isImageRejection(response.error):

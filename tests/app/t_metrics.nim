@@ -129,5 +129,95 @@ proc runTests*() =
       check rendered.startsWith("# HELP donkey_")
       check "# TYPE donkey_" in rendered
 
+  suite "metrics — turns, tools, tokens, traffic and schedules":
+
+    test "provider latency is a histogram with cumulative buckets":
+      initMetrics()
+      recordLatency("openrouter", 80.0)
+      recordLatency("openrouter", 700.0)
+      recordLatency("openrouter", 400_000.0)
+      let r = renderMetrics()
+      check "# TYPE donkey_provider_latency_ms histogram" in r
+      check "donkey_provider_latency_ms_bucket{provider=\"openrouter\",le=\"50\"} 0" in r
+      check "donkey_provider_latency_ms_bucket{provider=\"openrouter\",le=\"100\"} 1" in r
+      check "donkey_provider_latency_ms_bucket{provider=\"openrouter\",le=\"1000\"} 2" in r
+      check "donkey_provider_latency_ms_bucket{provider=\"openrouter\",le=\"300000\"} 2" in r
+      check "donkey_provider_latency_ms_bucket{provider=\"openrouter\",le=\"+Inf\"} 3" in r
+      check "donkey_provider_latency_ms_count{provider=\"openrouter\"} 3" in r
+
+    test "tokens are counted per provider and direction":
+      initMetrics()
+      recordTokens("deepseek", 1200, 300)
+      recordTokens("deepseek", 800, 0)
+      recordTokens("gemini", 0, 0)
+      let r = renderMetrics()
+      check "donkey_provider_tokens_total{provider=\"deepseek\",direction=\"input\"} 2000" in r
+      check "donkey_provider_tokens_total{provider=\"deepseek\",direction=\"output\"} 300" in r
+      check "provider=\"gemini\",direction" notin r
+
+    test "turns are counted per channel and outcome, with their duration":
+      initMetrics()
+      recordTurn("telegram", "user", 3_000.0, ok = true)
+      recordTurn("telegram", "user", 9_000.0, ok = false)
+      recordTurn("discord", "schedule", 500.0, ok = true)
+      let r = renderMetrics()
+      check "donkey_turns_total{channel=\"telegram\",kind=\"user\",outcome=\"ok\"} 1" in r
+      check "donkey_turns_total{channel=\"telegram\",kind=\"user\",outcome=\"error\"} 1" in r
+      check "donkey_turns_total{channel=\"discord\",kind=\"schedule\",outcome=\"ok\"} 1" in r
+      check "donkey_turn_duration_ms_count{channel=\"telegram\"} 2" in r
+      check "donkey_turn_duration_ms_sum{channel=\"telegram\"} 12000.0" in r
+
+    test "tool calls are counted per tool and outcome, with their duration":
+      initMetrics()
+      recordToolCall("bash", 120.0, ok = true)
+      recordToolCall("bash", 30.0, ok = false)
+      recordToolCall("web_search", 900.0, ok = true)
+      let r = renderMetrics()
+      check "donkey_tool_calls_total{tool=\"bash\",outcome=\"ok\"} 1" in r
+      check "donkey_tool_calls_total{tool=\"bash\",outcome=\"error\"} 1" in r
+      check "donkey_tool_duration_ms_count{tool=\"web_search\"} 1" in r
+
+    test "inbound and delivered messages are counted per channel":
+      initMetrics()
+      recordInbound("slack")
+      recordInbound("slack")
+      recordOutboundSent("slack")
+      let r = renderMetrics()
+      check "donkey_inbound_messages_total{channel=\"slack\"} 2" in r
+      check "donkey_outbound_messages_total{channel=\"slack\"} 1" in r
+
+    test "schedule runs and misses are counted":
+      initMetrics()
+      recordScheduleRun(sent = true)
+      recordScheduleRun(sent = false)
+      recordScheduleMissed(4)
+      recordScheduleMissed(0)
+      let r = renderMetrics()
+      check "donkey_schedule_runs_total{outcome=\"sent\"} 1" in r
+      check "donkey_schedule_runs_total{outcome=\"failed\"} 1" in r
+      check "donkey_schedule_missed_total 4" in r
+
+    test "start time, build and active sessions are gauges":
+      initMetrics(startedAtMs = 1_700_000_000_000'i64, version = "1.2.3")
+      setActiveSessions(3)
+      let r = renderMetrics()
+      check "donkey_start_time_seconds 1700000000" in r
+      check "donkey_build_info{version=\"1.2.3\"} 1" in r
+      check "# TYPE donkey_sessions_active gauge" in r
+      check "donkey_sessions_active 3" in r
+
+    test "every family has HELP and TYPE once":
+      initMetrics()
+      recordTurn("cli", "user", 1.0, ok = true)
+      recordToolCall("calc", 1.0, ok = true)
+      let r = renderMetrics()
+      for family in ["donkey_turns_total", "donkey_turn_duration_ms",
+                     "donkey_tool_calls_total", "donkey_tool_duration_ms",
+                     "donkey_provider_tokens_total", "donkey_inbound_messages_total",
+                     "donkey_outbound_messages_total", "donkey_schedule_runs_total",
+                     "donkey_schedule_missed_total"]:
+        check r.count("# TYPE " & family & " ") == 1
+        check r.count("# HELP " & family & " ") == 1
+
 when isMainModule:
   runTests()

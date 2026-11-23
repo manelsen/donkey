@@ -300,3 +300,4 @@ g0	tests/app/t_attachment_retention.nim
 g1	tests/core/t_recent_ids.nim
 g2	tests/domain/automation/t_user_schedule.nim
 g0	tests/app/t_user_schedules.nim
+g0	tests/app/t_metrics_wiring.nim
