@@ -224,6 +224,36 @@ proc runTests*() =
       check callbacks == 1
       check not anyRequest(proc(r: Recorded): bool = "guild-chan" in r.target)
 
+    test "Discord: no message the bot posts or edits can ping @everyone or a role":
+      ## hermes efa6c9f715. The model's text reaches Discord verbatim; without
+      ## `allowed_mentions`, an "@everyone" in a reply (or one a prompt
+      ## injection planted) pings the whole server.
+      reset()
+      let dc = newDiscordAdapter("TOK", Tmp / "dc-m" / "ids.tsv", apiBase = base())
+      dc.appId[] = "app"
+      let uid = dc.resolver.resolve(ckDiscord, "49")
+      let ping = "@everyone <@&1> hi"
+      let kb = @[@[("ok", "ok")]]
+      check dc.send(OutboundMessage(userId: uid, text: ping,
+                                    replyTo: "channel:guild-chan")).isOk
+      check dc.send(OutboundMessage(userId: uid, text: ping, keyboard: kb)).isOk
+      check dc.sendReturnId(OutboundMessage(userId: uid, text: ping)).isOk
+      check dc.editMessage(uid, "m1", ping).isOk
+      check dc.editKeyboard(uid, "m1", ping, kb).isOk
+      check dc.sendInteractionResponse("i1", "t1", ping).isOk
+      check dc.sendInteractionKeyboard("i1", "t1", ping, kb).isOk
+      check dc.editInteractionKeyboard("t1", ping, kb).isOk
+      check dc.sendInteractionEmbedPage("i1", "t1", ping, ping, 0, kb).isOk
+      check dc.editInteractionEmbedPage("t1", ping, ping, 0, kb).isOk
+      var carriers = 0
+      for r in requests():
+        if r.body.len == 0 or "@everyone" notin r.body: continue
+        inc carriers
+        let j = parseJson(r.body)
+        let payload = if j.hasKey("data"): j["data"] else: j
+        check payload["allowed_mentions"] == %* {"parse": ["users"]}
+      check carriers == 10
+
     test "Discord: a message delivered twice is handled once":
       ## A gateway RESUME replays events, and the startup backfill can overlap
       ## the live stream: the second copy must not answer again.

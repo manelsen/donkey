@@ -2,7 +2,7 @@
 ## Uses real fixture data from tests/fixtures/discord/ for integration testing.
 ## No I/O or HTTP; fixture data is read as static strings and parsed.
 
-import std/[json, os, unittest]
+import std/[json, os, strutils, unittest]
 import donkey/domain/channels/discord_pure
 import donkey/core/pipeops
 import donkey/core/types
@@ -297,6 +297,55 @@ proc runTests*() =
       let r = parseDispatch("MESSAGE_CREATE", d)
       check not r.hasInteraction
 
+    test "webhook-authored message is treated as a bot (hermes 68276773cf)":
+      ## A webhook post has no `bot` flag on its author; `webhook_id` is what
+      ## marks it. Answering it lets any integration in the channel drive turns.
+      var d = makeMessageCreate("wh-1", "ch1", "m1", "relayed text")
+      d["webhook_id"] = %"wh-1"
+      check parseDispatch("MESSAGE_CREATE", d).kind == dekUnknown
+      check isBotAuthored(d)
+
+    test "a null webhook_id is a normal message":
+      var d = makeMessageCreate("u1", "ch1", "m1", "hi")
+      d["webhook_id"] = newJNull()
+      check parseDispatch("MESSAGE_CREATE", d).kind == dekMessage
+      check not isBotAuthored(d)
+
+    test "an attachment within the cap is kept":
+      var d = makeMessageCreate("u1", "ch1", "m1", "see file")
+      d["attachments"] = %* [{"filename": "a.txt", "size": 1024,
+                              "url": "https://cdn.discordapp.com/a.txt"}]
+      let r = parseDispatch("MESSAGE_CREATE", d)
+      check r.kind == dekMessage
+      check r.hasMedia
+      check r.attachmentUrls == @["https://cdn.discordapp.com/a.txt"]
+      check r.content == "see file"
+
+    test "an attachment over the cap is not downloaded and the turn says so (hermes 93ea9b04af)":
+      var d = makeMessageCreate("u1", "ch1", "m1", "")
+      d["attachments"] = %* [
+        {"filename": "huge.mov", "size": DiscordMaxInboundAttachmentBytes + 1,
+         "url": "https://cdn.discordapp.com/huge.mov"},
+        {"filename": "ok.png", "size": 10,
+         "url": "https://cdn.discordapp.com/ok.png"}]
+      let r = parseDispatch("MESSAGE_CREATE", d)
+      check r.kind == dekMessage
+      check r.attachmentUrls == @["https://cdn.discordapp.com/ok.png"]
+      check "huge.mov" in r.content
+      check "ok.png" notin r.content
+
+    test "a message whose only attachment is over the cap still reaches the agent":
+      var d = makeMessageCreate("u1", "ch1", "m1", "")
+      d["attachments"] = %* [
+        {"filename": "huge.zip", "size": DiscordMaxInboundAttachmentBytes * 2,
+         "url": "https://cdn.discordapp.com/huge.zip"}]
+      let r = parseDispatch("MESSAGE_CREATE", d)
+      check r.kind == dekMessage
+      check not r.hasMedia
+      check r.attachmentUrls.len == 0
+      check "huge.zip" in r.content
+      check r.toInbound(UserId("u")).mediaUrl == ""
+
     test "DM channel message (no guild_id) is parsed":
       let d = %* {
         "author": {"id": "456", "bot": false},
@@ -500,6 +549,17 @@ proc runTests*() =
       let r = parseDispatch("INTERACTION_CREATE", d)
       check r.kind == dekUnknown
 
+
+  suite "discord_pure.withSafeMentions (hermes efa6c9f715)":
+    test "a message body can ping users but never @everyone, @here or roles":
+      let body = withSafeMentions(%* {"content": "@everyone hi <@&123>"})
+      check body["content"].getStr == "@everyone hi <@&123>"
+      check body["allowed_mentions"] == %* {"parse": ["users"]}
+
+    test "an existing allowed_mentions is replaced, not merged":
+      let body = withSafeMentions(%* {"content": "x",
+        "allowed_mentions": {"parse": ["everyone", "roles", "users"]}})
+      check body["allowed_mentions"] == %* {"parse": ["users"]}
 
   suite "discord_pure.toInbound — conversion":
 

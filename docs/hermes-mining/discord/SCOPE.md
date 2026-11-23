@@ -77,6 +77,14 @@ sobre o gateway:
   mesmo processo (RESUME recusado ou impossível) põe `deResync` na fila, e o
   drain roda a mesma recuperação do startup (cobre `2278f2cb7e`).
 
+- **Menções seguras** (`withSafeMentions`): toda mensagem que o bot envia ou
+  edita leva `allowed_mentions: {parse: ["users"]}`; um `@everyone` ou menção
+  de cargo no texto do modelo não notifica ninguém (`efa6c9f715`).
+- **Webhooks como bots** (`isBotAuthored`): post de webhook não dispara turno,
+  nem no tempo real nem no backfill (`68276773cf`).
+- **Teto de anexo recebido** (25 MiB, pelo `size` do evento): o anexo maior
+  não é baixado; o turno recebe uma nota com o nome do arquivo (`93ea9b04af`).
+
 Ainda **não há**: ledger de entrega e cursor que só avança depois da entrega
 final (hoje avança antes do despacho: at-most-once).
 
