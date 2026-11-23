@@ -19,6 +19,7 @@ type
     wasStreamed*:   bool
     imageRetryUsed*: bool       ## one image-less retry per turn, not per round
     usage*:         UsageTotals
+    providerFailed*: bool       ## the turn ended on a provider error
 
   CompletionHandlingResult* = object
     history*:    ConversationHistory

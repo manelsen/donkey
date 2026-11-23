@@ -30,6 +30,7 @@ import ../app/provider_executor
 import ../infra/event_queue
 import ../infra/thread_handle
 import ../infra/thread_owner
+import ./metrics
 
 export tool_loop
 
@@ -318,7 +319,7 @@ proc invokeToolAgent(toolInbox: AsyncQueue[AgentMessage];
     resultKind: if toolReply.kind == amkError: trkOperationalError else: trkOutput,
   )
 
-proc executeToolCall*(globalOutbox: AsyncQueue[OutboundMessage];
+proc executeToolCallUntimed(globalOutbox: AsyncQueue[OutboundMessage];
                      toolInbox: AsyncQueue[AgentMessage];
                      toolOut: AsyncQueue[AgentMessage];
                      nativeCtx: NativeCtx;
@@ -416,6 +417,32 @@ proc executeToolCall*(globalOutbox: AsyncQueue[OutboundMessage];
       text: buildToolDebugResultText(tc.name, toolResult.text),
       replyKind: rkDebug, bridgeToken: bridgeToken))
   toolResult
+
+proc executeToolCall*(globalOutbox: AsyncQueue[OutboundMessage];
+                     toolInbox: AsyncQueue[AgentMessage];
+                     toolOut: AsyncQueue[AgentMessage];
+                     nativeCtx: NativeCtx;
+                     state: SessionState;
+                     history: ConversationHistory;
+                     uid: UserId;
+                     channel: ChannelKind;
+                     msgId: string;
+                     round: int;
+                     callIndex: int;
+                     tc: ToolCallRequest;
+                     providerLabel: string;
+                     debugMode: bool;
+                     log: Logger;
+                     bridgeToken: uint64 = 0): Future[ToolCallResult] {.async.} =
+  ## Runs one tool call and records it: per tool, ok when it returned
+  ## output, with its duration (approval waits included).
+  let startedMs = nowMs()
+  let res = await executeToolCallUntimed(
+    globalOutbox, toolInbox, toolOut, nativeCtx, state, history, uid, channel,
+    msgId, round, callIndex, tc, providerLabel, debugMode, log, bridgeToken)
+  recordToolCall(tc.name, float(nowMs() - startedMs),
+                 ok = res.resultKind == trkOutput)
+  return res
 
 proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
                       toolInbox: AsyncQueue[AgentMessage];
@@ -521,6 +548,17 @@ proc processToolCalls*(globalOutbox: AsyncQueue[OutboundMessage];
 
 const MaxToolRoundsOrch* = 250  ## hard safety cap; loop ends earlier on repeated calls
 
+proc recordStreamRound(factory: StreamFactory;
+                       res: Result[CompletionResponse, string];
+                       elapsedMs: int64) =
+  ## A streamed round bypasses the provider executor, so it is measured here.
+  let provider = (if factory.provider.len > 0: factory.provider else: "stream")
+  recordLatency(provider, float(elapsedMs))
+  if res.isErr:
+    recordError(provider)
+  else:
+    recordTokens(provider, res.get.inputTokens, res.get.outputTokens)
+
 proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
                  toolInbox: AsyncQueue[AgentMessage];
                  toolOut: AsyncQueue[AgentMessage];
@@ -576,9 +614,11 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
       streamingAvailable = streamFactory.available and streamSlotAvailable(),
       streamingToolCalls = canStreamToolCalls and not suppressProgress,
     ).useStreaming:
+      let streamStartedMs = nowMs()
       var streamedRes = await streamToOutbox(
         streamFactory, req, globalOutbox, uid, channel, replyTo, streamId,
         nativeCtx.stopGeneration, bridgeToken = bridgeToken)
+      recordStreamRound(streamFactory, streamedRes, nowMs() - streamStartedMs)
       ## The streaming branch goes through the same one-shot demotion: a
       ## vision-less model can refuse the inline image before the first token.
       if streamedRes.isErr and not loopState.imageRetryUsed and
@@ -607,6 +647,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
           bridgeToken: bridgeToken,
         ))
         loopState.done = true
+        loopState.providerFailed = true
         continue
       let streamed = streamedRes.value
       loopState.usage = loopState.usage.addUsage(
@@ -664,6 +705,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
         bridgeToken: bridgeToken,
       ))
       loopState.done = true
+      loopState.providerFailed = true
       continue
 
     let r = resp.value

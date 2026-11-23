@@ -84,6 +84,7 @@ type
     ## environment snapshot. No builder means streaming is not available.
     build*:      StreamBuilder
     credential*: string
+    provider*:   string   ## the provider it streams from, for metrics
 
   ProviderBundle* = object
     completeFn*: CompleteFn

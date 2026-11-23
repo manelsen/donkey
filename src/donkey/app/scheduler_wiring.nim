@@ -36,6 +36,7 @@ import ../core/log
 import ../domain/automation/schedule_pure
 import ../domain/automation/schedule_runtime
 import ./automation_runtime
+import ./metrics
 
 const
   EnvSchedulesEnabled* = "DONKEY_SCHEDULES_ENABLED"
@@ -263,6 +264,9 @@ proc runSchedulerTick*(store: ScheduleStorePort;
     if tick.firedAtMs.isSome:
       inc result.fired
       log.info("scheduler: fired id=" & id & " at=" & $tick.firedAtMs.get())
+    recordScheduleMissed(tick.missedCount)
+    if tick.firedAtMs.isSome:
+      recordScheduleRun(sent = tick.enqueueError.len == 0)
     if tick.missedCount > 0:
       log.info("scheduler: id=" & id & " missed " & $tick.missedCount &
         " occurrence(s) that will not run")

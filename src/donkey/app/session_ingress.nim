@@ -31,6 +31,7 @@ import ../ports/http
 import ../ports/fs
 import ./automation_runtime
 import ./session_manager
+import ./metrics
 import ./session_state
 import ../ports/subagent_workspace
 import ./session_bootstrap
@@ -309,6 +310,8 @@ proc startSessionIngress*(sm: var SessionManager;
                           taskKind: TaskKind = tkUserMsg;
                           taskPayload: string = ""): SessionIngressContext {.gcsafe.} =
   ## Full session ingress flow: builds bootstrap, plan, context, enqueues message, and spawns orchestrator.
+  if taskKind == tkUserMsg:
+    recordInbound(channelLabel(msg.channel))
   if ($msg.userId).len == 0:
     ## Identity resolution failed (e.g. unreadable identities.tsv); deny.
     return

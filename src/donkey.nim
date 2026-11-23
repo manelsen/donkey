@@ -416,7 +416,8 @@ proc buildGlobalProviderBundle(env: Environment): GlobalProviderBundle =
   let orAdapter = newOpenRouterAdapter(orKey)
   result.completeFn = if orKey.len > 0: makeProviderFn(orAdapter) else: nil
   result.streamFactory =
-    if orKey.len > 0: StreamFactory(build: openRouterStream, credential: orKey)
+    if orKey.len > 0: StreamFactory(build: openRouterStream, credential: orKey,
+                                 provider: "openrouter")
     else: StreamFactory()
 
 func routeCostProviderIds(): seq[string] =
@@ -1514,6 +1515,7 @@ proc runDaemonTick(ctx: DaemonContext;
                    drainer: GatewayDrainer;
                    memory: MdFileAdapter;
                    log: Logger): DaemonTickResult =
+  setActiveSessions(ctx.runtime.sm.entries.len)
   result =
     DaemonTickResult(ok: true, remindersChecked: false) |>->
     withOutboxDrain(ctx, log) |>->
@@ -1550,7 +1552,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   when defined(posix):
     posix.signal(posix.SIGTERM, handleShutdownSignal)
     posix.signal(posix.SIGINT, handleShutdownSignal)
-  initMetrics()
+  initMetrics(startedAtMs = epochMs(), version = AppVersion)
   startOptionalMetricsServer(cfg.env, log)
 
   ## One daemon per state directory. A lease left by a dead process is taken

@@ -57,23 +57,6 @@ proc finishDeliveryFailed(ledger: DeliveryLedgerPort;
   if saved.isErr:
     log.warn("delivery ledger failed: " & saved.error)
 
-func channelTag(ch: ChannelKind): string {.gcsafe.} =
-  case ch
-  of ckTelegram:  "tg"
-  of ckDiscord:   "dc"
-  of ckWeCom:     "wc"
-  of ckWeChat:    "wechat"
-  of ckQQ:        "qq"
-  of ckFeishu:    "fs"
-  of ckSlack:     "sl"
-  of ckWhatsApp:  "wa"
-  of ckSignal:    "sig"
-  of ckDingTalk:  "dt"
-  of ckMatrix:    "mx"
-  of ckEmail:     "em"
-  of ckCli:       "cli"
-  of ckLine:      "ln"
-
 proc channelPortFor(ports: OutboundChannelPorts;
                     channel: ChannelKind): OutboundChannelPort =
   case channel
@@ -132,7 +115,7 @@ proc sendImmediateOutbound*(msg: OutboundMessage;
   let sendResult = port.send(msg)
   if sendResult.isErr:
     let error = sendResult.error
-    recordOutboundFailure(channelTag(msg.channel), error)
+    recordOutboundFailure(channelLabel(msg.channel), error)
     case msg.channel
     of ckTelegram:  log.error("tg send: " & error)
     of ckDiscord:   log.error("dc send: " & error)
@@ -151,6 +134,7 @@ proc sendImmediateOutbound*(msg: OutboundMessage;
     finishDeliveryFailed(ledger, delivery.id, error, log)
   else:
     finishDeliverySent(ledger, delivery.id, log)
+    recordOutboundSent(channelLabel(msg.channel))
 
 proc editImmediateOutbound*(msg: OutboundMessage;
                             ports: OutboundChannelPorts;
@@ -200,9 +184,10 @@ proc createStreamOutbound*(msg: OutboundMessage;
     let channelMsgId = res.value
     log.info("sent " & $msg.channel & " (new stream) -> " & $msg.userId & " (" & $msg.text.len & " chars)")
     finishDeliverySent(ledger, delivery.id, log)
+    recordOutboundSent(channelLabel(msg.channel))
     return channelMsgId
   let error = res.error
-  recordOutboundFailure(channelTag(msg.channel), error)
+  recordOutboundFailure(channelLabel(msg.channel), error)
   case msg.channel
   of ckTelegram: log.error("tg sendReturnId: " & error)
   of ckDiscord:  log.error("dc sendReturnId: " & error)
@@ -221,9 +206,10 @@ proc createReplacementOutbound*(msg: OutboundMessage;
     let channelMsgId = res.value
     log.info("sent " & $msg.channel & " (new replacement) -> " & $msg.userId & " slot=" & msg.replacementSlot)
     finishDeliverySent(ledger, delivery.id, log)
+    recordOutboundSent(channelLabel(msg.channel))
     return channelMsgId
   let error = res.error
-  recordOutboundFailure(channelTag(msg.channel), error)
+  recordOutboundFailure(channelLabel(msg.channel), error)
   case msg.channel
   of ckTelegram: log.error("tg sendReturnId replacement: " & error)
   of ckDiscord:  log.error("dc sendReturnId replacement: " & error)
