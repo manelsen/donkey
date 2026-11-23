@@ -69,9 +69,8 @@ proc payloadBuilder(payloadSize: int): ProviderRuntimeBuilder =
   payloadBuilderImpl
 
 proc raisingBuilder(spec: ProviderSpec): ProviderBundle {.gcsafe, nimcall.} =
-  let complete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
-    raise newException(ValueError, "boom")
-  ProviderBundle(completeFn: complete)
+  ## A `CompleteFn` cannot raise (its type says so); the builder still can.
+  raise newException(ValueError, "boom")
 
 proc errorBuilder(spec: ProviderSpec): ProviderBundle {.gcsafe, nimcall.} =
   let complete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =

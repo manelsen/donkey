@@ -13,7 +13,7 @@
 
 import std/[monotimes, strutils]
 import chronos
-import results
+import ../core/pipeops
 import ../core/types
 import ../domain/message
 import ../domain/gateway/chat_request

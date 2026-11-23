@@ -8,7 +8,7 @@
 import std/[os, strutils]
 import ../ports/http
 import ../ports/channel
-import results
+import ./pipeops
 
 export channel.FileDownload
 

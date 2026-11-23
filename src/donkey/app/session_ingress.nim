@@ -73,11 +73,11 @@ type
     skillRuntimePolicyResolver*: SkillRuntimePolicyResolver
     access*:                     AccessPort
     dmPolicy*:                   DmPolicy
-    routeRecordHook*:            proc(selection: ProviderSelection) {.gcsafe.}
-    routeResultHook*:            proc(selection: ProviderSelection; elapsedMs: int64; ok: bool) {.gcsafe.}
-    routeFeedbackHook*:          proc(): seq[RouteFeedback] {.gcsafe.}
-    routeCostHook*:              proc(): seq[RouteCostHint] {.gcsafe.}
-    routeProviderCooldownHook*:  proc(): seq[ProviderCooldown] {.gcsafe.}
+    routeRecordHook*:            proc(selection: ProviderSelection) {.gcsafe, raises: [].}
+    routeResultHook*:            proc(selection: ProviderSelection; elapsedMs: int64; ok: bool) {.gcsafe, raises: [].}
+    routeFeedbackHook*:          proc(): seq[RouteFeedback] {.gcsafe, raises: [].}
+    routeCostHook*:              proc(): seq[RouteCostHint] {.gcsafe, raises: [].}
+    routeProviderCooldownHook*:  proc(): seq[ProviderCooldown] {.gcsafe, raises: [].}
     subagentWorkspace*:          SubagentWorkspacePort
 
 func buildSkillRuntimePolicy*(cfg: DonkeyConfig;
@@ -186,11 +186,11 @@ func buildSessionIngressServices*(memory: MemoryRuntimePort;
                                   providerRuntimeBuilder: ProviderRuntimeBuilder = nil;
                                   skillRuntimeBuilder: SkillRuntimeBuilder = nil;
                                   skillRuntimePolicyResolver: SkillRuntimePolicyResolver = nil;
-                                  routeRecordHook: proc(selection: ProviderSelection) {.gcsafe.} = nil;
-                                  routeResultHook: proc(selection: ProviderSelection; elapsedMs: int64; ok: bool) {.gcsafe.} = nil;
-                                  routeFeedbackHook: proc(): seq[RouteFeedback] {.gcsafe.} = nil;
-                                  routeCostHook: proc(): seq[RouteCostHint] {.gcsafe.} = nil;
-                                  routeProviderCooldownHook: proc(): seq[ProviderCooldown] {.gcsafe.} = nil;
+                                  routeRecordHook: proc(selection: ProviderSelection) {.gcsafe, raises: [].} = nil;
+                                  routeResultHook: proc(selection: ProviderSelection; elapsedMs: int64; ok: bool) {.gcsafe, raises: [].} = nil;
+                                  routeFeedbackHook: proc(): seq[RouteFeedback] {.gcsafe, raises: [].} = nil;
+                                  routeCostHook: proc(): seq[RouteCostHint] {.gcsafe, raises: [].} = nil;
+                                  routeProviderCooldownHook: proc(): seq[ProviderCooldown] {.gcsafe, raises: [].} = nil;
                                   subagentWorkspace: SubagentWorkspacePort = SubagentWorkspacePort();
                                   fs: FsRuntimePort = unavailableFs();
                                   reminders: ReminderPort = ReminderPort();
@@ -317,7 +317,7 @@ proc startSessionIngress*(sm: var SessionManager;
   let routingHook: RoutingTelemetryHook =
     proc(selection: ProviderSelection;
          prefs: SmartRoutingPrefs;
-         req: CompletionRequest) {.gcsafe.} =
+         req: CompletionRequest) {.gcsafe, raises: [].} =
       if prefs.usesSmartRouting:
         if services.routeRecordHook != nil:
           services.routeRecordHook(selection)

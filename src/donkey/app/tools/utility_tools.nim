@@ -5,7 +5,7 @@
 ## performInspectImage uses the LLM as a vision assistant.
 
 import std/[os, strutils, times]
-import results
+import ../../core/pipeops
 import ../../domain/calc
 import ../../domain/message
 import ../../domain/providers/media_pure
@@ -83,5 +83,5 @@ proc performInspectImage*(fs: FsRuntimePort; path, prompt: string;
     let resp = completeFn(req)
     if resp.isErr: return "Error: " & resp.error
     resp.value.text
-  except Exception as e:  ## effect boundary: callee raises are unannotated
+  except CatchableError as e:
     "Error: " & e.msg

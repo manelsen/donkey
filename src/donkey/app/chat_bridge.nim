@@ -14,7 +14,7 @@
 ## adapter can use the real clock without leaking it into domain code.
 
 import std/[locks, tables]
-import results
+import ../core/pipeops
 import ../core/types
 import ../domain/message
 

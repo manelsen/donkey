@@ -4,7 +4,7 @@
 ## performWebSearch queries the Brave Search API.
 
 import std/[json, math, strutils, uri]
-import results
+import ../../core/pipeops
 import ../../config/types as cfgTypes
 import ../../ports/http as httpPort
 import ../../domain/builtin_tools

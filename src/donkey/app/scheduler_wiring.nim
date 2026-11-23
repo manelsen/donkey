@@ -31,7 +31,7 @@
 
 import std/[options, strutils]
 import chronos
-import results
+import ../core/pipeops
 import ../core/log
 import ../domain/automation/schedule_pure
 import ../domain/automation/schedule_runtime

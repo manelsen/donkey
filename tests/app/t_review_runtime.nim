@@ -32,14 +32,14 @@ type
 
 proc capturePort(cap: Capture): MemoryRuntimePort =
   MemoryRuntimePort(
-    loadContext: proc(userId: UserId): UserContext {.gcsafe.} = UserContext(),
+    loadContext: proc(userId: UserId): UserContext {.gcsafe, raises: [].} = UserContext(),
     appendMemory: proc(userId: UserId; text: string): Result[void, string]
                     {.gcsafe, raises: [].} = ok(),
     appendMemoryFrom: proc(userId: UserId; text: string; origin: MemoryOrigin):
                          Result[void, string] {.gcsafe, raises: [].} =
                          cap.appended.add((text, origin))
                          ok(),
-    paddockDir: proc(userId: UserId): string {.gcsafe.} = cap.paddock,
+    paddockDir: proc(userId: UserId): string {.gcsafe, raises: [].} = cap.paddock,
   )
 
 proc fakeComplete(answer: string; calls: ref int = nil;

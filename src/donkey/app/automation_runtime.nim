@@ -16,7 +16,7 @@
 ## surfaced in `missedOccurrenceMs` and consumed by advancing the watermark.
 
 import std/[options, strutils]
-import results
+import ../core/pipeops
 import ../domain/automation/schedule_pure
 import ../domain/automation/schedule_runtime
 

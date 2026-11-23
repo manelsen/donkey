@@ -6,7 +6,7 @@
 ## instead of being silently half-honoured.
 
 import std/[json, strutils]
-import results
+import ../../core/pipeops
 import ../../core/types
 import ../message
 import ./identity_pure

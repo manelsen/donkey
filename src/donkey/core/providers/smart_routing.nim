@@ -56,11 +56,11 @@ type
 
   RoutingTelemetryHook* = proc(selection: ProviderSelection;
                                prefs: SmartRoutingPrefs;
-                               req: CompletionRequest) {.gcsafe.}
+                               req: CompletionRequest) {.gcsafe, raises: [].}
 
   RoutingResultHook* = proc(selection: ProviderSelection;
                             elapsedMs: int64;
-                            ok: bool) {.gcsafe.}
+                            ok: bool) {.gcsafe, raises: [].}
 
   RouteFeedback* = object
     route*: string
@@ -80,8 +80,10 @@ type
     providerName*: string
     untilUnix*: int64
 
-  RoutingFeedbackHook* = proc(): seq[RouteFeedback] {.gcsafe.}
-  RoutingProviderCooldownHook* = proc(): seq[ProviderCooldown] {.gcsafe.}
+  ## The routing hooks never raise: a hook that cannot answer answers empty,
+  ## so the router needs no exception handling around them.
+  RoutingFeedbackHook* = proc(): seq[RouteFeedback] {.gcsafe, raises: [].}
+  RoutingProviderCooldownHook* = proc(): seq[ProviderCooldown] {.gcsafe, raises: [].}
 
   RouteCostHint* = object
     route*: string
@@ -89,7 +91,7 @@ type
     inputCostMicrosPer1k*: int
     outputCostMicrosPer1k*: int
 
-  RoutingCostHook* = proc(): seq[RouteCostHint] {.gcsafe.}
+  RoutingCostHook* = proc(): seq[RouteCostHint] {.gcsafe, raises: [].}
 
   RoutingSignals* = object
     hasTools*: bool

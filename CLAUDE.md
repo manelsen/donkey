@@ -179,7 +179,7 @@ O ambiente é lido uma vez: `config/environment.readEnvironment` tira um snapsho
 | `ChannelPort` | `send(OutboundMessage) → Result[void, string]` + `receive() → Result[seq[InboundMessage], string]` + `ack(string)` | `TelegramAdapter` |
 | `HttpPort` | `get(url, headers) → Result[HttpResponse, string]` + `post(url, body, headers) → Result[HttpResponse, string]` | `StdHttpAdapter` sobre `deadline_transport` (Chronos + bearssl, prazo por requisição) |
 
-Ports são `concept` Nim — structural typing verificado em compile-time. Adapters não declaram conformidade; o compilador verifica. O `HttpPort` é interno (adapters → HttpPort), não exposto para a camada de aplicação.
+Ports têm dois estilos. Os da tabela acima são `concept` Nim (structural typing verificado em compile-time; adapters não declaram conformidade). Os que a camada `app` recebe em runtime são objetos de closures (`*RuntimePort`, `ReminderPort`, `AccessPort`, `CommandServicesPort`, `LinkCodePort`, …): o adapter monta o objeto (`toRuntimePort`, `newFsAdapter`), e o teste passa um objeto com closures falsas. Um campo de closure não preenchido é `nil`: o port oferece um default que falha fechado (`unavailableFs`, `unavailableProcess`) ou um `orUnavailable`. O `HttpPort` é interno (adapters → HttpPort), não exposto para a camada de aplicação.
 
 ## Arquitetura hexagonal
 
@@ -212,14 +212,14 @@ OUTBOUND ADAPTERS (adapters/channel/)
   ChannelPort → TelegramAdapter / DiscordAdapter / WeComAdapter / [futuros]
 ```
 
-Ports são `concept` Nim (structural typing, verificado em compile-time). Adapters não declaram conformidade — o compilador verifica. Mocks para TDD são qualquer tipo que satisfaça o concept.
+Ports são `concept` Nim ou objetos de closures (ver "Ports implementados"). Mocks para TDD são um tipo que satisfaça o concept ou um objeto com closures falsas.
 
 **Camadas estruturais do source:**
 ```
 src/donkey/
   core/       ← infra pura, zero I/O externo (types, log, cron, actors, pipeops)
   domain/     ← lógica de negócio pura (func only), zero side effects
-  ports/      ← concepts Nim (ChannelPort, ProviderPort, MemoryPort, ToolPort, …)
+  ports/      ← concepts e objetos de closures (ChannelPort, ProviderPort, MemoryRuntimePort, FsRuntimePort, …)
   app/        ← shell de casos de uso: lifecycle, actors, queues, wiring (Chronos)
   adapters/   ← I/O boundary: channel, provider, memory, tool, http, secrets, ipc
   infra/      ← sandbox (code runner, shell composer, wasm tools), fs copy, queues

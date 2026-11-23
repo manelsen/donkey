@@ -9,7 +9,6 @@
 ## several providers; no provider-specific code lives here.
 
 import std/[os, strutils]
-import results
 import ../../core/pipeops
 import ../../config/environment
 import ../../domain/media/audio_pure

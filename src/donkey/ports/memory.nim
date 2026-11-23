@@ -69,8 +69,10 @@ type
   ## Closure form of transcript/MEMORY search. Nil = backend without support.
 
   MemoryRuntimePort* = object
-    hasProfile*:      proc(userId: UserId): bool {.gcsafe.}
-    loadContext*:     proc(userId: UserId): UserContext {.gcsafe.}
+    hasProfile*:      proc(userId: UserId): bool {.gcsafe, raises: [].}
+      ## False when the profile cannot be read.
+    loadContext*:     proc(userId: UserId): UserContext {.gcsafe, raises: [].}
+      ## An empty context for the user when nothing can be read.
     ## Writes report whether they were stored: with a graph configured but
     ## unavailable nothing is written, and the caller must be able to tell.
     saveUserMd*:      proc(userId: UserId; content: string): Result[void, string]
@@ -94,10 +96,10 @@ type
                         {.gcsafe, raises: [].}
     resetBootstrap*:  proc(userId: UserId): Result[void, string]
                         {.gcsafe, raises: [].}
-    saveSession*:     proc(userId: UserId; sessionId: string; history: ConversationHistory)
-                        {.gcsafe.}
+    saveSession*:     proc(userId: UserId; sessionId: string; history: ConversationHistory):
+                        Result[void, string] {.gcsafe, raises: [].}
     searchSessions*:  SearchSessionsFn
-    paddockDir*:      proc(userId: UserId): string {.gcsafe.}
+    paddockDir*:      proc(userId: UserId): string {.gcsafe, raises: [].}
     ## Optional consolidation hooks. Nil means the backend has no episode
     ## storage and automatic consolidation is skipped.
     appendExtractedMemory*: proc(userId: UserId; text: string): Result[void, string]
@@ -127,7 +129,7 @@ proc saveAgentIdentity*(p: MemoryRuntimePort; userId: UserId;
   p.savePreferences(userId, current.withAgentIdentity(traits, name))
 
 proc loadAgentIdentity*(p: MemoryRuntimePort; userId: UserId):
-                        (string, PersonalityTraits) {.gcsafe.} =
+                        (string, PersonalityTraits) {.gcsafe, raises: [].} =
   ## The agent's name and traits, empty when there are none. When the store
   ## cannot be read, the preferences of the loaded context answer instead.
   if p.storedPreferences != nil:

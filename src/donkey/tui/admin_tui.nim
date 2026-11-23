@@ -6,7 +6,7 @@
 ## Requires illwill. Runs in foreground (no Chronos).
 
 import std/[os, options, strutils, times]
-import results
+import ../core/pipeops
 import illwill as ill
 import terminal as term
 import ../core/types

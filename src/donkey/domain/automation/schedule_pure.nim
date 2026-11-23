@@ -9,7 +9,7 @@
 ## removed before returning the real UTC epoch.
 
 import std/[options, strutils, times]
-import results
+import ../../core/pipeops
 import ../../core/cron
 import ../../core/types
 

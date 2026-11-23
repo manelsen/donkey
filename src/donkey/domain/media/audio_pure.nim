@@ -5,7 +5,7 @@
 ## layer is only transport and file I/O.
 
 import std/[json, math, os, strutils]
-import results
+import ../../core/pipeops
 
 const
   MaxTranscriptionBytes* = 25 * 1024 * 1024

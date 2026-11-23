@@ -2,7 +2,7 @@
 
 import ../config/environment
 import std/[os, sequtils, strutils]
-import results
+import ../core/pipeops
 import ../config/skills_registry
 import ../config/clawhub_registry
 import ../core/commands/command_catalog

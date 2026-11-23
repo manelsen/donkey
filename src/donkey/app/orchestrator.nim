@@ -439,8 +439,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
     if onboardingResult.handled:
       return
 
-  let prefs = try: memory.loadContext(turnSetup.uid).preferencesMd |> parseChannelPrefs
-              except Exception: defaultChannelPrefs()  ## effect boundary: callee raises are unannotated
+  let prefs = memory.loadContext(turnSetup.uid).preferencesMd |> parseChannelPrefs
   let showReasoning = prefs.reasoning == "on"
 
   var identityLoaded = result.identity.identityLoaded

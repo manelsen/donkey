@@ -1,6 +1,5 @@
 import std/[strutils, tables]
 import chronos/asyncsync
-import results
 import ../../core/commands/command_routing
 import ../../core/log as core_log
 import ../../core/outbound/outbound

@@ -4,7 +4,7 @@
 ## preflight path checks to block traversal before extraction.
 
 import std/[json, os, strutils]
-import results
+import ../../core/pipeops
 import ../../core/tooling/structured_tool_result
 import ../../domain/tools/path_guard
 import ./fs_tools
