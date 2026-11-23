@@ -407,14 +407,14 @@ model = "gemini-2.5-flash"
         let port = memory.toRuntimePort()
         port.savePreferences(userId, "provider = \"openrouter\"")
         check port.appendMemory(userId, "memory to clear").isOk
-        port.saveIdentity(userId, PersonalityTraits(
+        check port.saveAgentIdentity(userId, PersonalityTraits(
           energy: "warm",
           tone: "direct",
           length: "short",
           initiative: "medium",
-        ), "Donkey")
+        ), "Donkey").isOk
 
-        let (name, traits) = port.loadIdentity(userId)
+        let (name, traits) = port.loadAgentIdentity(userId)
         check name == "Donkey"
         check traits.energy == "warm"
         check readFile(memory.preferencesMdPath(userId)).contains("agent_name = \"Donkey\"")

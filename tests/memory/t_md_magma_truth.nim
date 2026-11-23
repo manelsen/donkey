@@ -108,12 +108,12 @@ when defined(withSqlite):
       let a = newAdapter()
       check not a.hasProfile(uid)
       a.saveUserMd(uid, "# Ada\n\n**Preferred name:** Ada\n")
-      a.saveIdentity(uid, PersonalityTraits(tone: "seco"), "Guano")
+      check a.toRuntimePort.saveAgentIdentity(uid, PersonalityTraits(tone: "seco"), "Guano").isOk
       removeFile(a.userMdPath(uid))
       removeFile(a.preferencesMdPath(uid))
       check a.hasProfile(uid)
       check a.hasIdentity(uid)
-      let (name, traits) = a.loadIdentity(uid)
+      let (name, traits) = a.toRuntimePort.loadAgentIdentity(uid)
       check name == "Guano"
       check traits.tone == "seco"
       check a.listUsers().anyIt(it.userId == uid and it.hasProfile and
@@ -353,7 +353,7 @@ when defined(withSqlite):
         magmaSqlitePath: root / "blocker" / "magma.sqlite",
       )
       check broken.updateUserField(uid, "Access", "active").isErr
-      check broken.saveIdentity(uid, PersonalityTraits(tone: "seco"), "Guano").isErr
+      check broken.toRuntimePort.saveAgentIdentity(uid, PersonalityTraits(tone: "seco"), "Guano").isErr
       check good.isRevoked(uid)
 
     test "session search through the port ignores legacy node types":
@@ -431,7 +431,7 @@ when defined(withSqlite):
       check port.savePreferences(uid, "language = \"en\"").isErr
       check port.clearMemory(uid).isErr
       check port.resetBootstrap(uid).isErr
-      check port.saveIdentity(uid, PersonalityTraits(tone: "seco"), "Guano").isErr
+      check port.saveAgentIdentity(uid, PersonalityTraits(tone: "seco"), "Guano").isErr
       check port.searchSessions(uid, "nim", 10, true).isErr
       ## The exports were not touched, and the graph still has everything.
       check readFile(broken.userMdPath(uid)) == "# Ada"

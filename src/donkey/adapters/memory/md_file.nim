@@ -83,11 +83,9 @@ proc resetBootstrap*(a: MdFileAdapter; userId: UserId): Result[void, string]
                      {.discardable, gcsafe, raises: [].}
 proc saveSession*(a: MdFileAdapter; userId: UserId;
                   sessionId: string; history: ConversationHistory) {.gcsafe.}
-proc saveIdentity*(a: MdFileAdapter; userId: UserId;
-                   traits: PersonalityTraits; name: string): Result[void, string]
-                   {.discardable, gcsafe, raises: [].}
-proc loadIdentity*(a: MdFileAdapter; userId: UserId): (string, PersonalityTraits) {.gcsafe.}
 func paddockDir*(a: MdFileAdapter; userId: UserId): string {.gcsafe.}
+proc storedPreferences*(a: MdFileAdapter; userId: UserId): Result[string, string]
+                        {.gcsafe, raises: [].}
 proc searchSessions*(a: MdFileAdapter; userId: UserId;
                      query: string; limit: int;
                      includeMemory = true): Result[seq[SessionHit], string]
@@ -252,38 +250,6 @@ const GraphUnavailableError =
 proc readOrEmpty(path: string): string =
   if fileExists(path): readFile(path) else: ""
 
-proc mergeIdentityPrefs(content: string; traits: PersonalityTraits; name: string): string =
-  var lines = content.splitLines()
-  proc setKey(ls: var seq[string]; key, val: string) =
-    for i in 0 ..< ls.len:
-      if ls[i].startsWith(key & " ") or ls[i].startsWith(key & "="):
-        ls[i] = key & " = \"" & val & "\""
-        return
-    ls.add(key & " = \"" & val & "\"")
-  lines.setKey("agent_name",       name)
-  lines.setKey("agent_energy",     traits.energy)
-  lines.setKey("agent_tone",       traits.tone)
-  lines.setKey("agent_length",     traits.length)
-  lines.setKey("agent_initiative", traits.initiative)
-  lines.join("\n")
-
-proc parseIdentityPrefs(content: string): (string, PersonalityTraits) =
-  var name   = ""
-  var traits = PersonalityTraits()
-  for line in content.splitLines():
-    let parts = line.split('=', 1)
-    if parts.len != 2: continue
-    let k = parts[0].strip
-    let v = parts[1].strip.strip(chars = {'"'})
-    case k
-    of "agent_name":       name              = v
-    of "agent_energy":     traits.energy     = v
-    of "agent_tone":       traits.tone       = v
-    of "agent_length":     traits.length     = v
-    of "agent_initiative": traits.initiative = v
-    else: discard
-  (name, traits)
-
 when defined(withPostgres) or defined(withSqlite):
   proc searchSessionsWithMagma(a: MdFileAdapter; userId: UserId;
                                query: string; limit: int;
@@ -383,11 +349,9 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
                         {.gcsafe, raises: [].} = a.resetBootstrap(userId),
     saveSession:      proc(userId: UserId; sessionId: string; history: ConversationHistory) {.gcsafe.} =
                         a.saveSession(userId, sessionId, history),
-    saveIdentity:     proc(userId: UserId; traits: PersonalityTraits;
-                           name: string): Result[void, string]
-                        {.gcsafe, raises: [].} =
-                        a.saveIdentity(userId, traits, name),
-    loadIdentity:     proc(userId: UserId): (string, PersonalityTraits) {.gcsafe.} = a.loadIdentity(userId),
+    storedPreferences: proc(userId: UserId): Result[string, string]
+                         {.gcsafe, raises: [].} =
+                         a.storedPreferences(userId),
     searchSessions:   proc(userId: UserId; query: string; limit: int;
                            includeMemory: bool):
                            Result[seq[SessionHit], string]
@@ -486,17 +450,20 @@ proc storedUserMd(a: MdFileAdapter; userId: UserId): Result[string, string] =
 proc storedPreferences*(a: MdFileAdapter; userId: UserId): Result[string, string] =
   ## PREFERENCES.md for a caller that will write back what it read; same
   ## rule as storedUserMd.
-  let (access, magma) = a.openGraph(userId)
-  case access
-  of gaUnavailable:
-    err(GraphUnavailableError)
-  of gaReady:
-    when defined(withPostgres) or defined(withSqlite):
-      magma.readPreferences(userId)
-    else:
+  try:
+    let (access, magma) = a.openGraph(userId)
+    case access
+    of gaUnavailable:
       err(GraphUnavailableError)
-  of gaNone:
-    ok(readOrEmpty(a.preferencesMdPath(userId)))
+    of gaReady:
+      when defined(withPostgres) or defined(withSqlite):
+        magma.readPreferences(userId)
+      else:
+        err(GraphUnavailableError)
+    of gaNone:
+      ok(readOrEmpty(a.preferencesMdPath(userId)))
+  except Exception as e:  ## effect boundary: callee raises are unannotated
+    err("read preferences: " & e.msg)
 
 proc currentUserMd(a: MdFileAdapter; userId: UserId): string =
   ## USER.md as the store holds it: the graph copy with MAGMA, the file
@@ -987,21 +954,4 @@ proc listSessions*(a: MdFileAdapter; userId: UserId): seq[string] =
 
 proc hasIdentity*(a: MdFileAdapter; userId: UserId): bool =
   ## True when agent_name is present in the stored preferences.
-  for line in a.currentPreferences(userId).splitLines():
-    if line.startsWith("agent_name"): return true
-  false
-
-proc saveIdentity*(a: MdFileAdapter; userId: UserId;
-                   traits: PersonalityTraits; name: string): Result[void, string] =
-  ## Merges agent identity into the preferences (TOML key=value format).
-  ## When the preferences cannot be read nothing is saved.
-  try:
-    let current = ? a.storedPreferences(userId)
-    a.savePreferences(userId, mergeIdentityPrefs(current, traits, name))
-  except Exception as e:  ## effect boundary: callee raises are unannotated
-    err("save identity: " & e.msg)
-
-proc loadIdentity*(a: MdFileAdapter; userId: UserId): (string, PersonalityTraits) =
-  ## Returns (agent_name, PersonalityTraits) from the stored preferences.
-  ## Empty strings when not set.
-  parseIdentityPrefs(a.currentPreferences(userId))
+  agentIdentityOf(a.currentPreferences(userId))[0].len > 0

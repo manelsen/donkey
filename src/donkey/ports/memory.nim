@@ -85,16 +85,16 @@ type
                             {.gcsafe, raises: [].}
     savePreferences*: proc(userId: UserId; content: string): Result[void, string]
                         {.gcsafe, raises: [].}
+    ## PREFERENCES.md as the store holds it, for a caller that will write
+    ## back what it read: an error when the store cannot be read, never a
+    ## stale copy that would overwrite newer data.
+    storedPreferences*: proc(userId: UserId): Result[string, string]
+                          {.gcsafe, raises: [].}
     clearMemory*:     proc(userId: UserId): Result[void, string]
                         {.gcsafe, raises: [].}
     resetBootstrap*:  proc(userId: UserId): Result[void, string]
                         {.gcsafe, raises: [].}
     saveSession*:     proc(userId: UserId; sessionId: string; history: ConversationHistory)
-                        {.gcsafe.}
-    saveIdentity*:    proc(userId: UserId; traits: PersonalityTraits;
-                           name: string): Result[void, string]
-                        {.gcsafe, raises: [].}
-    loadIdentity*:    proc(userId: UserId): (string, PersonalityTraits)
                         {.gcsafe.}
     searchSessions*:  SearchSessionsFn
     paddockDir*:      proc(userId: UserId): string {.gcsafe.}
@@ -115,6 +115,28 @@ proc appendMemoryChecked*(p: MemoryRuntimePort; userId: UserId; text: string):
   if p.appendMemory == nil:
     return err("memory backend unavailable")
   p.appendMemory(userId, text)
+
+proc saveAgentIdentity*(p: MemoryRuntimePort; userId: UserId;
+                        traits: PersonalityTraits; name: string):
+                        Result[void, string] {.gcsafe, raises: [].} =
+  ## The agent's identity lives in the preferences: read them as stored,
+  ## merge, write back. Nothing is written when they cannot be read.
+  if p.storedPreferences == nil or p.savePreferences == nil:
+    return err("memory backend unavailable")
+  let current = ? p.storedPreferences(userId)
+  p.savePreferences(userId, current.withAgentIdentity(traits, name))
+
+proc loadAgentIdentity*(p: MemoryRuntimePort; userId: UserId):
+                        (string, PersonalityTraits) {.gcsafe.} =
+  ## The agent's name and traits, empty when there are none. When the store
+  ## cannot be read, the preferences of the loaded context answer instead.
+  if p.storedPreferences != nil:
+    let stored = p.storedPreferences(userId)
+    if stored.isOk:
+      return agentIdentityOf(stored.get)
+  if p.loadContext == nil:
+    return ("", PersonalityTraits())
+  agentIdentityOf(p.loadContext(userId).preferencesMd)
 
 proc bootstrapUserMd*(name, callMe, timezone, language: string): string =
   ## Generates the initial USER.md following the OpenClaw USER.md template.

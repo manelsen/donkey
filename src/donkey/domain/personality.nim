@@ -287,3 +287,42 @@ func guidedDimensionMsg*(dk: DimensionKind): (string, seq[seq[(string, string)]]
     row.add((label, "personality:" & dim & ":" & valor))
 
   (prompt, @[row])
+
+# ── Agent identity in the preferences ─────────────────────────────────────────
+# The agent's name and traits are stored as `agent_*` keys of PREFERENCES.md,
+# so any memory backend that keeps the preferences keeps the identity too.
+
+func withAgentIdentity*(prefs: string; traits: PersonalityTraits;
+                        name: string): string =
+  ## `prefs` with the identity keys set, every other line kept.
+  var lines = prefs.splitLines()
+  func setKey(ls: var seq[string]; key, val: string) =
+    for i in 0 ..< ls.len:
+      if ls[i].startsWith(key & " ") or ls[i].startsWith(key & "="):
+        ls[i] = key & " = \"" & val & "\""
+        return
+    ls.add(key & " = \"" & val & "\"")
+  lines.setKey("agent_name",       name)
+  lines.setKey("agent_energy",     traits.energy)
+  lines.setKey("agent_tone",       traits.tone)
+  lines.setKey("agent_length",     traits.length)
+  lines.setKey("agent_initiative", traits.initiative)
+  lines.join("\n")
+
+func agentIdentityOf*(prefs: string): (string, PersonalityTraits) =
+  ## The agent's name and traits; empty when the preferences have none.
+  var name   = ""
+  var traits = PersonalityTraits()
+  for line in prefs.splitLines():
+    let parts = line.split('=', 1)
+    if parts.len != 2: continue
+    let k = parts[0].strip
+    let v = parts[1].strip.strip(chars = {'"'})
+    case k
+    of "agent_name":       name              = v
+    of "agent_energy":     traits.energy     = v
+    of "agent_tone":       traits.tone       = v
+    of "agent_length":     traits.length     = v
+    of "agent_initiative": traits.initiative = v
+    else: discard
+  (name, traits)

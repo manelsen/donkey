@@ -121,5 +121,22 @@ Quer sugestões de nome?"""
           check cb.startsWith("personality:")
           check cb.count(':') == 2
 
+  suite "agent identity in the preferences":
+    test "the identity is merged into the preferences and read back":
+      let prefs = "language = \"pt-BR\"\nagent_tone = \"formal\""
+      let merged = prefs.withAgentIdentity(
+        PersonalityTraits(energy: "neutro", tone: "seco"), "Guano")
+      check "language = \"pt-BR\"" in merged
+      check merged.count("agent_tone") == 1
+      let (name, traits) = agentIdentityOf(merged)
+      check name == "Guano"
+      check traits.tone == "seco"
+      check traits.energy == "neutro"
+
+    test "preferences without an identity give an empty one":
+      let (name, traits) = agentIdentityOf("language = \"en\"")
+      check name == ""
+      check traits == PersonalityTraits()
+
 when isMainModule:
   runTests()
