@@ -503,6 +503,65 @@ proc runTests*() =
       check store.upsert(fullRecord()).isOk
       check fileExists(dir / (ScheduleFileName & ".lock"))
 
+  suite "schedule store — run status":
+    test "a failed attempt is kept with its error, counted, and cleared by a success":
+      let dir = freshDir("run-status")
+      defer: cleanup(dir)
+      let store = newScheduleStoreRef(dir)
+      check store.upsert(fullRecord()).isOk
+      var failed = watermark("daily", 1_700_000_100_000'i64, 1_600_000_000_000'i64)
+      failed.lastStatus = "failed"
+      failed.lastError = "user revoked"
+      check store.save(failed).isOk
+      check store.save(failed).isOk
+      var row = store.loadAllRecords().get()[0]
+      check row.lastStatus == "failed"
+      check row.lastError == "user revoked"
+      check row.failures == 2
+      ## A watermark-only save (a tick that fired nothing) keeps the outcome.
+      check store.save(watermark("daily", 1_700_000_200_000'i64,
+                                 1_600_000_000_000'i64)).isOk
+      check store.loadAllRecords().get()[0].lastStatus == "failed"
+      var sent = watermark("daily", 1_700_000_300_000'i64, 1_600_000_000_000'i64)
+      sent.lastStatus = "sent"
+      sent.lastFireAtMs = 1_700_000_300_000'i64
+      check store.save(sent).isOk
+      row = store.loadAllRecords().get()[0]
+      check row.lastStatus == "sent"
+      check row.lastError == ""
+      check row.failures == 2
+      check row.toViewRecord.lastStatus == "sent"
+      check row.toViewRecord.failures == 2
+
+    test "a ctl edit of the spec keeps the run history":
+      let dir = freshDir("run-status-upsert")
+      defer: cleanup(dir)
+      let store = newScheduleStoreRef(dir)
+      check store.upsert(fullRecord()).isOk
+      var failed = watermark("daily", 1_700_000_100_000'i64, 1_600_000_000_000'i64)
+      failed.lastStatus = "failed"
+      failed.lastError = "boom"
+      check store.save(failed).isOk
+      check store.upsert(fullRecord()).isOk
+      let row = store.loadAllRecords().get()[0]
+      check row.lastStatus == "failed"
+      check row.failures == 1
+
+    test "a file written before run status reads as no outcome":
+      let dir = freshDir("run-status-legacy")
+      defer: cleanup(dir)
+      let store = newScheduleStoreRef(dir)
+      check store.upsert(fullRecord()).isOk
+      let path = store.path
+      var text = readFile(path)
+      for key in ["\"last_status\":\"\",", "\"last_error\":\"\",", ",\"failures\":0"]:
+        text = text.replace(key, "")
+      writeFile(path, text)
+      check "last_status" notin readFile(path)
+      let row = store.loadAllRecords().get()[0]
+      check row.lastStatus == ""
+      check row.failures == 0
+
   suite "schedule store — atomic insertIfAbsent":
 
     test "insertIfAbsent persists a new id and reports true":

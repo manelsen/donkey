@@ -191,6 +191,11 @@ proc runTests*() =
       check first.get().firedAtMs == some(now)
       check first.get().enqueueError ==
         "scheduled task dropped: denied or revoked"
+      ## The failure is saved for `ctl schedule` and the TUI to show.
+      check store.stored("sched-1").get().lastStatus == "failed"
+      check store.stored("sched-1").get().lastError ==
+        "scheduled task dropped: denied or revoked"
+      check store.stored("sched-1").get().lastFireAtMs == 0  ## it did not run
 
       let second = tickSchedule(store.makePort, spec, now, rec.makeEnqueue)
       check second.isOk

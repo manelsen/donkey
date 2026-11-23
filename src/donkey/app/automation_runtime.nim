@@ -28,6 +28,9 @@ type
     lastRunAtMs*: int64
     createdAtMs*: int64
     lastFireAtMs*: int64   ## when the schedule last actually fired (0 = never)
+    lastStatus*: string    ## outcome of the last firing attempt: "sent",
+                           ## "failed", or "" for a save that reports none
+    lastError*: string     ## why the last attempt failed ("" when it did not)
 
   ScheduleStorePort* = object
     ## Persistence boundary. Implementations live in the state adapter (or an
@@ -166,6 +169,16 @@ proc tickSchedule*(
   let enqueued = enqueue(spec, instant)
   if enqueued.isErr:
     tick.enqueueError = enqueued.error
+    ## Visible in `ctl schedule list/show` and the TUI: the attempt is
+    ## consumed (never retried), so the operator must be able to see it failed.
+    if store.load(id).get(none(ScheduleWatermark)).isSome:
+      discard store.save(ScheduleWatermark(
+        id: id,
+        lastRunAtMs: decision.watermarkMs,
+        createdAtMs: state.createdAtMs,
+        lastStatus: "failed",
+        lastError: enqueued.error,
+      ))
     return ok(tick)
   ## Record the firing only after the task reached the inbox: `last_run` in
   ## `ctl schedule list/show` reads this, and it must not claim a run that was
@@ -180,5 +193,6 @@ proc tickSchedule*(
     lastRunAtMs: decision.watermarkMs,
     createdAtMs: state.createdAtMs,
     lastFireAtMs: instant,
+    lastStatus: "sent",
   ))
   ok(tick)

@@ -15,9 +15,9 @@
 ## `next_run` is derived from the cron expression with `nextRunAfterMs` at
 ## `nowMs`; it is never materialised on disk.
 ##
-## `last_status`, `last_error` and `failures` are optional: the current store
-## slice does not persist them, but the view renders them when the caller has
-## them (the field names are stable so a future store can fill them in).
+## `last_status`, `last_error` and `failures` come from the schedule store:
+## the outcome of the last firing attempt ("sent" or "failed"), its error, and
+## the failed attempts so far. A schedule that never tried shows `none`.
 ##
 ## Output contract (`list`):
 ##   - human: `No schedules.` when there is nothing, else one
@@ -57,7 +57,7 @@ type
     lastError*: string
       ## Optional last run error; empty means none.
     failures*: int
-      ## Retained failed runs since retention; `0` means none reported.
+      ## Failed firing attempts so far; `0` means none.
 
 # ── formatting helpers ───────────────────────────────────────────────────────
 
@@ -102,7 +102,7 @@ func statusText(record: ScheduleViewRecord): string =
 
 func failuresText(record: ScheduleViewRecord): string =
   if record.failures <= 0: ""
-  else: "failures=" & $record.failures & " (since retention)"
+  else: "failures=" & $record.failures
 
 # ── human output ─────────────────────────────────────────────────────────────
 
@@ -135,7 +135,8 @@ func scheduleListItem*(record: ScheduleViewRecord; nowMs: int64):
   (record.spec.id,
    record.spec.cronExpr & " " & formatTzOffset(record.spec.tzOffsetMinutes) &
      " · " & record.spec.channel & " · next " & nextRunText(record, nowMs),
-   "last " & lastRunText(record))
+   "last " & lastRunText(record) &
+     (if record.lastStatus == "failed": " · failed: " & record.lastError else: ""))
 
 func schedulePanelLines*(records: seq[ScheduleViewRecord];
                          nowMs: int64): seq[string] =
@@ -170,7 +171,7 @@ func scheduleDetailLines*(record: ScheduleViewRecord;
   if record.lastError.len > 0:
     result.add "last_error: " & record.lastError
   if record.failures > 0:
-    result.add "failures: " & $record.failures & " (since retention)"
+    result.add "failures: " & $record.failures
   result.add "payload: " & record.spec.payload
 
 # ── JSON output ──────────────────────────────────────────────────────────────
