@@ -70,6 +70,7 @@ import donkey/adapters/channel/cli_repl
 import donkey/adapters/webhook/webhook_receiver
 import donkey/domain/channels/line_policy
 import donkey/adapters/tool/mcp_client
+import donkey/adapters/tool/mcp_http_client
 import donkey/adapters/tools/browser_executor
 import donkey/domain/tools/browser_pure
 import donkey/adapters/state/runtime_store
@@ -314,8 +315,20 @@ type DaemonBootstrap = object
 
 proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
   for entry in loadToolRegistry(cfg.home / "tools.toml"):
-    var client = buildMcpClient(entry)
-    let schemasRes = client.listTools()
+    var port: ToolRuntimePort
+    var schemasRes: Result[seq[ToolSchema], string]
+    case entry.kind
+    of tkMcp:
+      var client = buildMcpClient(entry)
+      schemasRes = client.listTools()
+      port = client.toRuntimePort()
+    of tkMcpHttp:
+      ## The bearer comes from the variable the entry names, read from the
+      ## environment snapshot; the registry holds only the name.
+      let bearer = if entry.tokenEnv.len > 0: cfg.env.get(entry.tokenEnv) else: ""
+      var client = newMcpHttpClient(entry.url, bearer = bearer)
+      schemasRes = client.listTools()
+      port = client.toRuntimePort()
     if schemasRes.isOk:
       for s in schemasRes.value:
         result.tools.add(ToolDescription(
@@ -323,7 +336,10 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
           description: s.description,
           schemaJson:  if s.inputSchema != nil: $s.inputSchema else: "",
         ))
-    result.clients.add(client.toRuntimePort())
+    else:
+      log.warn("mcp: " & (if entry.kind == tkMcpHttp: entry.url else: entry.command) &
+               ": " & schemasRes.error)
+    result.clients.add(port)
   for manifest in loadSkillRegistry(cfg.home / "skills.toml"):
     let runtimeRes = buildDenoSkillRuntime(
       manifest.script, manifest.permissions, buildSkillRuntimePolicy(cfg, manifest.name))

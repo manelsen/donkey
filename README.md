@@ -203,6 +203,11 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
   > [!TIP]
   > Server flags like `--port=8000` are filtered out by the CLI option parser; configure MCP servers requiring flags directly in `tools.toml` under your configured home directory (`cfg.home/tools.toml`, which defaults to `~/.donkey/tools.toml`).
 
+  A remote server over Streamable HTTP (MCP 2025-06-18) is registered by URL. `https` is required off this machine; a bearer, when the server needs one, is read from the environment variable you name, and only that name is written to `tools.toml`:
+  ```bash
+  ./donkey ctl tool add-http https://mcp.example.com/mcp --token-env EXAMPLE_MCP_TOKEN
+  ```
+
 ---
 
 ## 🌐 Supported Ecosystem
