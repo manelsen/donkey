@@ -319,6 +319,7 @@ proc drawAdmin(tb: var TerminalBuffer; st: TuiState; y0: int) =
   let footerHint = case admin.section
     of asConfig: "[Enter] cycle value  [^ v] navigate"
     of asUsers: "[Enter] view detail  [Esc] back"
+    of asSchedules: "read-only  ·  change with: donkey ctl schedule  [<- ->] section"
     else: "[Enter] toggle  [^ v] navigate  [<- ->] section"
   tb.write(2, height - 2, footerHint)
 proc render(tb: var TerminalBuffer; st: TuiState) =
@@ -417,7 +418,8 @@ proc runTui*(sockPath: string; env: Environment) =
           else:
             ## Toggle access
             st.admin.items[st.admin.selectedIndex].enabled = not st.admin.items[st.admin.selectedIndex].enabled
-        elif st.admin.items.len > 0 and st.admin.selectedIndex < st.admin.items.len:
+        elif st.admin.section != asSchedules and
+             st.admin.items.len > 0 and st.admin.selectedIndex < st.admin.items.len:
           st.admin.items[st.admin.selectedIndex].enabled = not st.admin.items[st.admin.selectedIndex].enabled
     of Key.D:
       if st.panel == pAdmin:

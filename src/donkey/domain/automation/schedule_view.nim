@@ -128,6 +128,15 @@ func formatScheduleRow*(record: ScheduleViewRecord; nowMs: int64): string =
     parts.add failures
   parts.join("  ")
 
+func scheduleListItem*(record: ScheduleViewRecord; nowMs: int64):
+                      tuple[name, description, status: string] =
+  ## One schedule as a TUI list row: the id, what and when it runs next, and
+  ## when it last fired. No payload, as in `list`.
+  (record.spec.id,
+   record.spec.cronExpr & " " & formatTzOffset(record.spec.tzOffsetMinutes) &
+     " · " & record.spec.channel & " · next " & nextRunText(record, nowMs),
+   "last " & lastRunText(record))
+
 func schedulePanelLines*(records: seq[ScheduleViewRecord];
                          nowMs: int64): seq[string] =
   ## The list panel: one self-describing `key=value` line per record, or a

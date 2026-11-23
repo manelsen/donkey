@@ -74,6 +74,7 @@ import ../../core/pipeops
 import ../../app/automation_runtime
 import ../../domain/automation/schedule_pure
 import ./durable_file
+import ../../domain/automation/schedule_view
 
 const
   ScheduleFileName* = "schedules.json"
@@ -295,6 +296,16 @@ proc mergeUpsert(existing: ScheduleRecord; incoming: ScheduleRecord
 # ---------------------------------------------------------------------------
 # Public API.
 # ---------------------------------------------------------------------------
+
+func toViewRecord*(record: ScheduleRecord): ScheduleViewRecord =
+  ## Adapter row → pure view projection, for `ctl schedule` and the TUI.
+  ## `last_status`/`last_error`/`failures` stay empty: this store does not
+  ## persist them, and the view never invents a status.
+  ScheduleViewRecord(
+    spec: record.spec,
+    lastRunAtMs: record.lastRunAtMs,
+    lastFireAtMs: record.lastFireAtMs,
+  )
 
 proc newScheduleStoreRef*(stateDir: string): ScheduleStore =
   ## Concrete store handle. The daemon uses `newScheduleStore` (the port);
