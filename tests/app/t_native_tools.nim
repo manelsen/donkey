@@ -22,6 +22,8 @@ import donkey/config/clawhub_registry
 import donkey/config/skills_registry
 import donkey/app/session_state
 import donkey/adapters/filesystem/fs_adapter
+
+let testFs = newFsAdapter()
 import donkey/app/native_tools
 import donkey/ports/http
 
@@ -241,29 +243,29 @@ proc runTests*() =
       if dirExists(tmpDir): removeDir(tmpDir)
 
     test "wildcard finds all files":
-      let r = performFind(tmpDir, "*", "file", 50)
+      let r = performFind(testFs, tmpDir, "*", "file", 50)
       check r.contains("alpha.nim")
       check r.contains("beta.nim")
       check r.contains("gamma.txt")
 
     test "extension filter finds only nim files":
-      let r = performFind(tmpDir, "*.nim", "file", 50)
+      let r = performFind(testFs, tmpDir, "*.nim", "file", 50)
       check r.contains("alpha.nim")
       check r.contains("beta.nim")
       check not r.contains("gamma.txt")
 
     test "max limits results":
-      let r = performFind(tmpDir, "*", "file", 1)
+      let r = performFind(testFs, tmpDir, "*", "file", 1)
       let lines = r.splitLines()
       check lines.len == 1
 
     test "no matches returns sentinel":
-      let r = performFind(tmpDir, "*.xyz", "file", 50)
+      let r = performFind(testFs, tmpDir, "*.xyz", "file", 50)
       check r == "(no matches)"
 
     test "dir type finds subdirectory":
       createDir(tmpDir / "subdir")
-      let r = performFind(tmpDir, "*", "dir", 50)
+      let r = performFind(testFs, tmpDir, "*", "dir", 50)
       check r.contains("subdir")
 
   # ── performGrep ───────────────────────────────────────────────────────────────
@@ -280,32 +282,32 @@ proc runTests*() =
       if fileExists(tmpFile): removeFile(tmpFile)
 
     test "finds pattern in file":
-      let r = performGrep("foo", tmpFile, false, 50)
+      let r = performGrep(testFs, "foo", tmpFile, false, 50)
       check r.contains("line one has foo")
       check r.contains("line three has foo again")
 
     test "does not return non-matching lines":
-      let r = performGrep("foo", tmpFile, false, 50)
+      let r = performGrep(testFs, "foo", tmpFile, false, 50)
       check not r.contains("bar")
 
     test "format is file:linenum:content":
-      let r = performGrep("bar", tmpFile, false, 50)
+      let r = performGrep(testFs, "bar", tmpFile, false, 50)
       check r.contains(":2:")
 
     test "no matches returns sentinel":
-      let r = performGrep("ZZZZ", tmpFile, false, 50)
+      let r = performGrep(testFs, "ZZZZ", tmpFile, false, 50)
       check r == "(no matches)"
 
     test "empty pattern returns error":
-      let r = performGrep("", tmpFile, false, 50)
+      let r = performGrep(testFs, "", tmpFile, false, 50)
       check r.startsWith("Error:")
 
     test "missing path returns error":
-      let r = performGrep("foo", "/nonexistent/path.txt", false, 50)
+      let r = performGrep(testFs, "foo", "/nonexistent/path.txt", false, 50)
       check r.startsWith("Error:")
 
     test "max caps results":
-      let r = performGrep("foo", tmpFile, false, 1)
+      let r = performGrep(testFs, "foo", tmpFile, false, 1)
       check r.splitLines().len == 1
 
   suite "performGrep — directory":
@@ -322,11 +324,11 @@ proc runTests*() =
       if dirExists(tmpDir): removeDir(tmpDir)
 
     test "recursive finds pattern in dir":
-      let r = performGrep("needle", tmpDir, true, 50)
+      let r = performGrep(testFs, "needle", tmpDir, true, 50)
       check r.contains("needle in a")
 
     test "returns only matching files":
-      let r = performGrep("needle", tmpDir, true, 50)
+      let r = performGrep(testFs, "needle", tmpDir, true, 50)
       check not r.contains("nothing here")
 
   # ── applyTodoOps ──────────────────────────────────────────────────────────────

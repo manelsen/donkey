@@ -82,7 +82,7 @@ proc resolveWasmPath(workspace, rawPath: string;
     return err(error)
   if not inPaddock(canonical, canonicalWorkspace):
     return err("wasm_path resolves outside paddock: " & rawPath)
-  if not fileExists(canonical):
+  if fs.entryKind(canonical) != fekFile:
     return err("wasm module not found: " & rawPath)
   let size = regularFileSize(canonical).valueOr:
     return err(error)

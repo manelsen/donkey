@@ -1606,7 +1606,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
       taskPayload,
     )
   hbReg.registerTask("heartbeat", proc() {.gcsafe.} =
-    deliverHeartbeats(cfg.paddocks, heartbeatOutboxFn))
+    deliverHeartbeats(newFsAdapter(), cfg.paddocks, heartbeatOutboxFn))
   let hbCronExpr = cfg.env.get("DONKEY_HEARTBEAT_CRON").strip()
   if hbCronExpr.len > 0:
     let hbCronStart = startHeartbeatCron(hbReg, hbCronExpr)

@@ -346,7 +346,7 @@ proc startSessionIngress*(sm: var SessionManager;
     answerableAsk = answersAsk)
   let recentContext =
     if result.plan.injectRecentContext:
-      loadRecentContext(services.memory, msg.userId)
+      loadRecentContext(services.memory, services.fs, msg.userId)
     else:
       ""
   ## Enqueue task message BEFORE starting the new orchestrator.

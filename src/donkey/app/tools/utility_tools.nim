@@ -10,6 +10,7 @@ import ../../domain/calc
 import ../../domain/message
 import ../../domain/providers/media_pure
 import ../../ports/provider
+import ../../ports/fs
 
 # ── calc ──────────────────────────────────────────────────────────────────────
 
@@ -54,30 +55,24 @@ proc mimeFromExt(path: string): string =
   of ".webp":         "image/webp"
   else:               ""
 
-proc performInspectImage*(path, prompt: string;
+proc performInspectImage*(fs: FsRuntimePort; path, prompt: string;
                           completeFn: CompleteFn): string {.gcsafe, raises: [].} =
   try:
-    if not fileExists(path):
+    if fs.entryKind(path) != fekFile:
       return "Error: file not found: " & path
     let mime = mimeFromExt(path)
     if mime.len == 0 or mime notin SupportedImageMimes:
       return "Error: unsupported image type " & splitFile(path).ext
     # Check the encoded budget before reading: base64 grows by ~4/3.
-    let rawSize = getFileSize(path)
+    let rawSize = fs.fileSize(path).valueOr:
+      return "Error: " & error
     let maxRaw = MaxInlineImageEncodedBytes * 3 div 4
     if rawSize <= 0 or rawSize > maxRaw:
       return "Error: image file too large to inline (" & $rawSize & " raw bytes)"
     ## Read with the cap applied: the file can grow between the size check and
-    ## the read, and `readFile` would allocate the whole thing.
-    var handle: File
-    if not open(handle, path):
-      return "Error: cannot read image " & splitFile(path).ext
-    defer: close(handle)
-    var bytes = newString(maxRaw + 1)
-    let read = readBuffer(handle, addr bytes[0], maxRaw + 1)
-    if read > maxRaw:
-      return "Error: image file too large to inline (" & $read & " raw bytes)"
-    bytes.setLen(read)
+    ## the read.
+    let bytes = fs.readCapped(path, maxRaw).valueOr:
+      return "Error: image file too large to inline (" & error & ")"
     let encoded  = imageDataUrl(mime, bytes.toOpenArrayByte(0, bytes.high))
     if encoded.isErr:
       return "Error: " & encoded.error

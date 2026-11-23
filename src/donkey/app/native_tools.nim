@@ -459,29 +459,27 @@ proc executeShellNativeTool(tc: ToolCallRequest;
   of ReadFileToolName:
     let readCtx = parseReadFileContext(j, ctx.paddockDir, ctx.log, ReadFileToolName, ctx.fs).valueOr:
       return handledError(error)
-    try:
-      return handledText(renderHashlineSlice(readFile(readCtx.path), readCtx.startLine, readCtx.maxLines))
-    except CatchableError as e:
-      return handledError("Error: " & e.msg)
+    let text = ctx.fs.readFile(readCtx.path).valueOr:
+      return handledError("Error: " & error)
+    return handledText(renderHashlineSlice(text, readCtx.startLine, readCtx.maxLines))
   of EditFileToolName:
     let editCtx = parseEditFileContext(j, ctx.paddockDir, ctx.log, EditFileToolName, ctx.fs).valueOr:
       return handledError(error)
-    try:
-      let original = readFile(editCtx.path)
-      let applyResult = applyEditFileOps(splitEditableLines(original), editCtx.edits).valueOr:
-        return handledError(error)
-      let updated = applyResult.join("\n")
-      writeFile(editCtx.path, updated)
-      return handledText(renderHashlineSlice(updated, 1, updated.splitLines().len))
-    except CatchableError as e:
-      return handledError("Error: " & e.msg)
+    let original = ctx.fs.readFile(editCtx.path).valueOr:
+      return handledError("Error: " & error)
+    let applyResult = applyEditFileOps(splitEditableLines(original), editCtx.edits).valueOr:
+      return handledError(error)
+    let updated = applyResult.join("\n")
+    ctx.fs.writeFile(editCtx.path, updated).isOkOr:
+      return handledError("Error: " & error)
+    return handledText(renderHashlineSlice(updated, 1, updated.splitLines().len))
   of FindToolName:
     let findCtx = parseFindContext(j, ctx.paddockDir, ctx.log, FindToolName, ctx.fs).valueOr:
       return handledError(error)
     let r = if ctx.sandboxMode == smWasm:
       performFindWasm(findCtx.path, findCtx.pattern, findCtx.kind, findCtx.max)
     else:
-      performFind(findCtx.path, findCtx.pattern, findCtx.kind, findCtx.max)
+      performFind(ctx.fs, findCtx.path, findCtx.pattern, findCtx.kind, findCtx.max)
     return handledOutcome(r)
   of GrepToolName:
     let grepCtx = parseGrepContext(j, ctx.paddockDir, ctx.log, GrepToolName, ctx.fs).valueOr:
@@ -489,7 +487,7 @@ proc executeShellNativeTool(tc: ToolCallRequest;
     let r = if ctx.sandboxMode == smWasm:
       performGrepWasm(grepCtx.pattern, grepCtx.path, grepCtx.recursive, grepCtx.max)
     else:
-      performGrep(grepCtx.pattern, grepCtx.path, grepCtx.recursive, grepCtx.max)
+      performGrep(ctx.fs, grepCtx.pattern, grepCtx.path, grepCtx.recursive, grepCtx.max)
     return handledOutcome(r)
   of SedToolName:
     let sedCtx = parseSedContext(j, ctx.paddockDir, ctx.log, SedToolName, ctx.fs).valueOr:
@@ -578,7 +576,7 @@ proc executeStructuredNativeTool(tc: ToolCallRequest;
   of FsListToolName:
     let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, FsListToolName, ctx.fs).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
-    return handledStructured(performFsList(
+    return handledStructured(performFsList(ctx.fs, 
       pathCtx,
       ctx.paddockDir,
       recursive = j.getOrDefault("recursive").getBool(false),
@@ -588,7 +586,7 @@ proc executeStructuredNativeTool(tc: ToolCallRequest;
   of FsReadToolName:
     let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, FsReadToolName, ctx.fs).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
-    return handledStructured(performFsRead(
+    return handledStructured(performFsRead(ctx.fs, 
       pathCtx,
       ctx.paddockDir,
       j.getOrDefault("format").getStr("text"),
@@ -598,7 +596,7 @@ proc executeStructuredNativeTool(tc: ToolCallRequest;
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
     if not j.hasKey("content"):
       return handledStructured(usageErrorToolResult("content is required"))
-    return handledStructured(performFsWrite(
+    return handledStructured(performFsWrite(ctx.fs, 
       pathCtx,
       ctx.paddockDir,
       j.getOrDefault("mode").getStr("replace"),
@@ -608,34 +606,34 @@ proc executeStructuredNativeTool(tc: ToolCallRequest;
   of FsMkdirToolName:
     let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, FsMkdirToolName, ctx.fs).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
-    return handledStructured(performFsMkdir(pathCtx, ctx.paddockDir, j.getOrDefault("parents").getBool(false)))
+    return handledStructured(performFsMkdir(ctx.fs, pathCtx, ctx.paddockDir, j.getOrDefault("parents").getBool(false)))
   of FsCopyToolName:
     let cpCtx = parseCpMvContext(j, ctx.paddockDir, ctx.log, FsCopyToolName, ctx.fs).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
-    return handledStructured(performFsCopy(cpCtx.source, cpCtx.dest, ctx.paddockDir, j.getOrDefault("recursive").getBool(false)))
+    return handledStructured(performFsCopy(ctx.fs, cpCtx.source, cpCtx.dest, ctx.paddockDir, j.getOrDefault("recursive").getBool(false)))
   of FsMoveToolName:
     let mvCtx = parseCpMvContext(j, ctx.paddockDir, ctx.log, FsMoveToolName, ctx.fs).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
-    return handledStructured(performFsMove(mvCtx.source, mvCtx.dest, ctx.paddockDir))
+    return handledStructured(performFsMove(ctx.fs, mvCtx.source, mvCtx.dest, ctx.paddockDir))
   of FsRemoveToolName:
     let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, FsRemoveToolName, ctx.fs).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
-    return handledStructured(performFsRemove(pathCtx, ctx.paddockDir, j.getOrDefault("recursive").getBool(false)))
+    return handledStructured(performFsRemove(ctx.fs, pathCtx, ctx.paddockDir, j.getOrDefault("recursive").getBool(false)))
   of TextSearchToolName:
     let grepCtx = parseGrepContext(j, ctx.paddockDir, ctx.log, TextSearchToolName, ctx.fs).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
-    return handledStructured(performGrepStructured(grepCtx.pattern, grepCtx.path, grepCtx.recursive, grepCtx.max, ctx.paddockDir))
+    return handledStructured(performGrepStructured(ctx.fs, grepCtx.pattern, grepCtx.path, grepCtx.recursive, grepCtx.max, ctx.paddockDir))
   of TextReadToolName:
     let readCtx = parseReadFileContext(j, ctx.paddockDir, ctx.log, TextReadToolName, ctx.fs).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
-    return handledStructured(readStructuredTextSlice(readCtx.path, readCtx.startLine, readCtx.maxLines, ctx.paddockDir))
+    return handledStructured(readStructuredTextSlice(ctx.fs, readCtx.path, readCtx.startLine, readCtx.maxLines, ctx.paddockDir))
   of TextReplaceToolName:
     let pathCtx = parsePathOnly(j, ctx.paddockDir, ctx.log, TextReplaceToolName, ctx.fs).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
     let findText = j.getOrDefault("find").getStr("")
     let replaceText = j.getOrDefault("replace").getStr("")
     let count = j.getOrDefault("count").getInt(0)
-    return handledStructured(replaceStructuredText(pathCtx, findText, replaceText, count, ctx.paddockDir))
+    return handledStructured(replaceStructuredText(ctx.fs, pathCtx, findText, replaceText, count, ctx.paddockDir))
   of JsonQueryToolName:
     return handledStructured(runJsonQuery(j))
   of TableQueryToolName:
@@ -711,13 +709,13 @@ proc executeUtilityNativeTool(tc: ToolCallRequest;
   of InspectImageToolName:
     let inspectCtx = parseInspectImageContext(j, ctx.paddockDir, ctx.log, InspectImageToolName, ctx.fs).valueOr:
       return handledError(error)
-    return handledOutcome(performInspectImage(inspectCtx.path, inspectCtx.prompt, ctx.completeFn))
+    return handledOutcome(performInspectImage(ctx.fs, inspectCtx.path, inspectCtx.prompt, ctx.completeFn))
   of TranscribeAudioToolName:
     let ctxAudio = parseTranscribeContext(j, ctx.paddockDir, ctx.log,
                                           ctx.fs).valueOr:
       return handledError(error)
     let speech = speechSettings(ctx.env)
-    return handledOutcome(performTranscribe(ctxAudio.path, ctx.http,
+    return handledOutcome(performTranscribe(ctx.fs, ctxAudio.path, ctx.http,
       language = ctxAudio.language, prompt = ctxAudio.prompt,
       apiKey = speech.sttApiKey, endpoint = speech.sttEndpoint,
       model = speech.sttModel))
@@ -726,7 +724,7 @@ proc executeUtilityNativeTool(tc: ToolCallRequest;
       return handledError(error)
     let speech = speechSettings(ctx.env)
     if speechCtx.asVoice:
-      let prepared = prepareVoiceReply(
+      let prepared = prepareVoiceReply(ctx.fs,
         speechCtx.text, speechCtx.caption, ctx.paddockDir, ctx.channel,
         ctx.uid, ctx.http, speech, replyTo = ctx.replyTo)
       if prepared.isErr:
@@ -736,7 +734,7 @@ proc executeUtilityNativeTool(tc: ToolCallRequest;
         text: "Voice reply ready.",
         resultKind: trkOutput,
         outbound: some(prepared.get()))
-    let saved = performSpeech(speechCtx.text, ctx.paddockDir, ctx.http,
+    let saved = performSpeech(ctx.fs, speechCtx.text, ctx.paddockDir, ctx.http,
                               voice = (if speechCtx.voice.strip.len > 0: speechCtx.voice
                                        else: speech.ttsVoice),
                               format = speechCtx.format,
@@ -1037,6 +1035,8 @@ proc executeNativeTool*(tc:      ToolCallRequest;
                         state:   SessionState;
                         history: ConversationHistory;
                        ): Future[NativeToolResult] {.async.} =
+  var ctx = ctx
+  ctx.fs = ctx.fs.orUnavailable  ## a context built without a file system fails, not crashes
   let j = try: parseJson(tc.inputJson)
           except CatchableError: newJObject()
   if sessionStopRequested(ctx):

@@ -23,6 +23,7 @@ import ../domain/providers/media_pure
 import ../domain/reminder
 import ../ports/attachment_store
 import ../ports/memory
+import ../ports/fs
 import ../ports/provider
 import ../ports/subagent_workspace
 import ../ports/tool
@@ -409,28 +410,27 @@ proc buildSessionTaskMsg*(msg: InboundMessage;
   newTaskMsg(msgId, tkUserMsg, $msg.userId, encodeSessionPayload(msg, recentContext),
              msg.channel, sessionReplyTo(msg))
 
-proc loadRecentContext*(memory: MemoryRuntimePort;
+proc loadRecentContext*(memory: MemoryRuntimePort; fs: FsRuntimePort;
                         userId: UserId;
                         limit = RecentContextMessageLimit): string {.gcsafe.} =
+  ## The last user and assistant messages of the latest transcripts. Nothing
+  ## when there are none or they cannot be listed.
   if limit <= 0:
     return ""
   let sessionsDir = memory.paddockDir(userId) / "sessions"
-  if not dirExists(sessionsDir):
+  let entries = fs.listDir(sessionsDir).valueOr:
     return ""
   var sessionIds: seq[string] = @[]
-  try:
-    for kind, path in walkDir(sessionsDir):
-      if kind == pcFile and path.endsWith(".jsonl"):
-        sessionIds.add(path.extractFilename().changeFileExt(""))
-  except CatchableError:
-    return ""
+  for entry in entries:
+    if entry.kind == fekFile and entry.path.endsWith(".jsonl"):
+      sessionIds.add(entry.path.extractFilename().changeFileExt(""))
   sessionIds.sort(proc(a, b: string): int = cmp(b, a))
   var lines: seq[string] = @[]
   for sid in sessionIds:
     if lines.len >= limit:
       break
     let path = sessionsDir / (sid & ".jsonl")
-    let content = try: readFile(path) except CatchableError: ""
+    let content = fs.readFile(path).valueOr("")
     if content.len == 0:
       continue
     let rawLines = content.splitLines()

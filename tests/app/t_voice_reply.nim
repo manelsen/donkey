@@ -12,6 +12,9 @@ import donkey/config/environment
 import donkey/app/native_tools
 import donkey/app/session_state
 import donkey/app/tools/audio_tools
+import donkey/adapters/filesystem/fs_adapter
+
+let testFs = newFsAdapter()
 import donkey/core/log
 import donkey/domain/media/audio_pure
 import donkey/domain/message
@@ -66,6 +69,7 @@ proc baseCtx(paddock: string; http: HttpRuntimePort;
     log:        newLogger("test.voice", lvlError),
     paddockDir: paddock,
     replyTo:    replyTo,
+    fs:         testFs,
   )
 
 let voiceSpeech = speechSettings(environmentOf({"DONKEY_TTS_API_KEY": "voice-key"}))
@@ -95,7 +99,7 @@ proc runTests*() =
       let dir = freshDir("ok")
       defer: removeDir(dir)
       let cap = PostCapture(status: 200, response: "OPUSBYTES")
-      let prepared = prepareVoiceReply("olá mundo", "recado",
+      let prepared = prepareVoiceReply(testFs, "olá mundo", "recado",
                                        dir, ckTelegram, UserId("u1"),
                                        fakeHttp(cap), voiceSpeech)
       check prepared.isOk
@@ -122,7 +126,7 @@ proc runTests*() =
       let dir = freshDir("replyto")
       defer: removeDir(dir)
       let cap = PostCapture(status: 200, response: "OPUSBYTES")
-      let prepared = prepareVoiceReply("olá mundo", "recado",
+      let prepared = prepareVoiceReply(testFs, "olá mundo", "recado",
                                        dir, ckTelegram, UserId("u1"),
                                        fakeHttp(cap), voiceSpeech,
                                        replyTo = "77")
@@ -133,7 +137,7 @@ proc runTests*() =
       let dir = freshDir("email")
       defer: removeDir(dir)
       let cap = PostCapture(status: 200, response: "OPUSBYTES")
-      let prepared = prepareVoiceReply("olá mundo", "recado",
+      let prepared = prepareVoiceReply(testFs, "olá mundo", "recado",
                                        dir, ckEmail, UserId("u1"),
                                        fakeHttp(cap), voiceSpeech)
       check prepared.isErr
@@ -145,7 +149,7 @@ proc runTests*() =
       let dir = freshDir("http500")
       defer: removeDir(dir)
       let cap = PostCapture(status: 500, response: "boom")
-      let prepared = prepareVoiceReply("olá mundo", "recado",
+      let prepared = prepareVoiceReply(testFs, "olá mundo", "recado",
                                        dir, ckTelegram, UserId("u1"),
                                        fakeHttp(cap), voiceSpeech)
       check prepared.isErr
@@ -157,7 +161,7 @@ proc runTests*() =
       let dir = freshDir("empty")
       defer: removeDir(dir)
       let cap = PostCapture(status: 200, response: "")
-      let prepared = prepareVoiceReply("olá mundo", "recado",
+      let prepared = prepareVoiceReply(testFs, "olá mundo", "recado",
                                        dir, ckTelegram, UserId("u1"),
                                        fakeHttp(cap), voiceSpeech)
       check prepared.isErr

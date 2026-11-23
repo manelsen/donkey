@@ -64,7 +64,7 @@ proc renderHashlineSlice*(content: string; startLine, maxLines: int): string {.g
     if idx < lastLine:
       result.add('\n')
 
-proc readStructuredTextSlice*(path: string; startLine, maxLines: int;
+proc readStructuredTextSlice*(fs: FsRuntimePort; path: string; startLine, maxLines: int;
                               paddock = ""): StructuredToolResult {.gcsafe, raises: [].} =
   if path.strip().len == 0:
     return usageErrorToolResult("path is required")
@@ -72,10 +72,11 @@ proc readStructuredTextSlice*(path: string; startLine, maxLines: int;
     return usageErrorToolResult("start_line must be >= 1")
   if maxLines < 1:
     return usageErrorToolResult("max_lines must be >= 1")
-  if not fileExists(path):
+  if fs.entryKind(path) != fekFile:
     return operationalErrorToolResult("path not found: " & path)
+  let content = fs.readFile(path).valueOr:
+    return operationalErrorToolResult(error)
   try:
-    let content = readFile(path)
     let lines = splitEditableLines(content)
     if lines.len == 0 or startLine > lines.len:
       return successToolResult(%*{
@@ -123,7 +124,7 @@ proc replaceLiteralLimit(content, needle, replacement: string; maxCount: int): t
   elif result.replacements == 0:
     result.text = content
 
-proc replaceStructuredText*(path, findText, replaceText: string; count: int;
+proc replaceStructuredText*(fs: FsRuntimePort; path, findText, replaceText: string; count: int;
                             paddock = ""): StructuredToolResult {.gcsafe, raises: [].} =
   if path.strip().len == 0:
     return usageErrorToolResult("path is required")
@@ -131,14 +132,16 @@ proc replaceStructuredText*(path, findText, replaceText: string; count: int;
     return usageErrorToolResult("find text is required")
   if count < 0:
     return usageErrorToolResult("count must be >= 0")
-  if not fileExists(path):
+  if fs.entryKind(path) != fekFile:
     return operationalErrorToolResult("path not found: " & path)
+  let original = fs.readFile(path).valueOr:
+    return operationalErrorToolResult(error)
   try:
-    let original = readFile(path)
     let replaced = replaceLiteralLimit(original, findText, replaceText, count)
     let changed = replaced.replacements > 0
     if changed:
-      writeFile(path, replaced.text)
+      fs.writeFile(path, replaced.text).isOkOr:
+        return operationalErrorToolResult(error)
     successToolResult(%*{
       "path": if paddock.len > 0: relativeToPaddock(path, paddock) else: path,
       "changed": changed,

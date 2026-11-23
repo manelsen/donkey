@@ -1,17 +1,24 @@
-## search_tools.nim — find and grep over the filesystem.
+## search_tools.nim — find and grep over the filesystem port.
 ##
 ## NOTE: grep uses literal substring search (case-sensitive).
 ## For full regex, use bash("grep -rn 'pattern' /path") instead.
 ##
-## All three internal traversal procs (walkFind, grepFile, grepDir) log
-## warnings on CatchableError instead of silently discarding them.
+## One walk per tool (`findHits`, `grepHits`) feeds both the text and the
+## structured result. A directory or file that cannot be read is logged and
+## skipped; symlinks are never followed, so a search cannot leave the paddock.
 
 import std/[json, os, strutils, sequtils]
 import ../../core/log
+import ../../core/pipeops
 import ../../core/tooling/structured_tool_result
 import ../../domain/calc  # globMatch
 import ../../infra/sandbox/wasm_tools
+import ../../ports/fs
 import ./fs_tools
+
+const
+  GrepMaxFileBytes* = 32 * 1024 * 1024
+    ## A file is read whole to be searched; a bigger one is skipped.
 
 template searchLog(): Logger =
   ## Built where it is used: a global Logger holds GC memory, which made
@@ -20,60 +27,40 @@ template searchLog(): Logger =
 
 # ── find ──────────────────────────────────────────────────────────────────────
 
-proc walkFind(path, pattern, kind: string; max: int;
-              results: var seq[string]) {.gcsafe, raises: [].} =
-  if results.len >= max: return
-  try:
-    for entry in walkDir(path):
-      let name = splitPath(entry.path).tail
-      case entry.kind
-      of pcFile:
-        if kind != "dir" and globMatch(pattern, name):
-          results.add(entry.path)
-          if results.len >= max: return
-      of pcDir:
-        if kind != "file" and globMatch(pattern, name):
-          results.add(entry.path & "/")
-          if results.len >= max: return
-        walkFind(entry.path, pattern, kind, max, results)
-      of pcLinkToFile, pcLinkToDir:
-        discard  ## skip symlinks — prevents escaping the paddock
-  except CatchableError as e:
-    searchLog().warn("walkFind error at " & path & ": " & e.msg)
+type FindHit = object
+  path:  string
+  isDir: bool
 
-proc performFind*(path, pattern, kind: string; max: int): string {.gcsafe, raises: [].} =
-  var results: seq[string] = @[]
-  walkFind(path, pattern, kind, max, results)
-  if results.len == 0: return "(no matches)"
-  results.join("\n")
+proc walkFind(fs: FsRuntimePort; path, pattern, kind: string; max: int;
+              hits: var seq[FindHit]) {.gcsafe, raises: [].} =
+  ## `kind` is "file", "dir" or "" for both.
+  if hits.len >= max: return
+  let entries = fs.listDir(path).valueOr:
+    searchLog().warn("find: cannot list " & path & ": " & error)
+    return
+  for entry in entries:
+    let name = splitPath(entry.path).tail
+    case entry.kind
+    of fekFile:
+      if kind != "dir" and globMatch(pattern, name):
+        hits.add FindHit(path: entry.path)
+        if hits.len >= max: return
+    of fekDir:
+      if kind != "file" and globMatch(pattern, name):
+        hits.add FindHit(path: entry.path, isDir: true)
+        if hits.len >= max: return
+      walkFind(fs, entry.path, pattern, kind, max, hits)
+    of fekLink, fekMissing:
+      discard  ## skip symlinks — prevents escaping the paddock
 
-proc addFindItem(path, paddock: string; kind: string; max: int; items: var seq[JsonNode]) {.gcsafe, raises: [].} =
-  if items.len < max:
-    items.add(%*{"path": relativeToPaddock(path, paddock), "kind": kind})
+proc performFind*(fs: FsRuntimePort; path, pattern, kind: string;
+                  max: int): string {.gcsafe, raises: [].} =
+  var hits: seq[FindHit] = @[]
+  walkFind(fs, path, pattern, kind, max, hits)
+  if hits.len == 0: return "(no matches)"
+  hits.mapIt(if it.isDir: it.path & "/" else: it.path).join("\n")
 
-proc walkFindStructured(path, pattern, kind: string; max: int;
-                        paddock: string;
-                        items: var seq[JsonNode]) {.gcsafe, raises: [].} =
-  if items.len >= max: return
-  try:
-    for entry in walkDir(path):
-      let name = splitPath(entry.path).tail
-      case entry.kind
-      of pcFile:
-        if kind != "dir" and globMatch(pattern, name):
-          addFindItem(entry.path, paddock, "file", max, items)
-          if items.len >= max: return
-      of pcDir:
-        if kind != "file" and globMatch(pattern, name):
-          addFindItem(entry.path & "/", paddock, "dir", max, items)
-          if items.len >= max: return
-        walkFindStructured(entry.path, pattern, kind, max, paddock, items)
-      of pcLinkToFile, pcLinkToDir:
-        discard
-  except CatchableError as e:
-    searchLog().warn("walkFindStructured error at " & path & ": " & e.msg)
-
-proc performFindStructured*(path, pattern, kind: string; max: int;
+proc performFindStructured*(fs: FsRuntimePort; path, pattern, kind: string; max: int;
                             paddock = ""): StructuredToolResult {.gcsafe, raises: [].} =
   if path.strip().len == 0:
     return usageErrorToolResult("path is required")
@@ -84,19 +71,25 @@ proc performFindStructured*(path, pattern, kind: string; max: int;
   let normalizedKind = if kind.len == 0: "any" else: kind
   if normalizedKind notin ["any", "file", "dir"]:
     return usageErrorToolResult("kind must be one of: any, file, dir")
-  if not dirExists(path) and not fileExists(path):
+  let pathKind = fs.entryKind(path)
+  if pathKind == fekMissing:
     return operationalErrorToolResult("path not found: " & path)
 
   var items: seq[JsonNode] = @[]
-  if fileExists(path):
-    let fileKind =
-      if normalizedKind == "dir": ""
-      else: "file"
-    if fileKind.len > 0 and globMatch(pattern, splitPath(path).tail):
-      addFindItem(path, if paddock.len > 0: paddock else: parentDir(path), fileKind, max, items)
+  if pathKind == fekFile:
+    if normalizedKind != "dir" and globMatch(pattern, splitPath(path).tail):
+      let base = if paddock.len > 0: paddock else: parentDir(path)
+      items.add(%*{"path": relativeToPaddock(path, base), "kind": "file"})
   else:
-    walkFindStructured(path, pattern, if normalizedKind == "any": "" else: normalizedKind, max,
-                       if paddock.len > 0: paddock else: path, items)
+    var hits: seq[FindHit] = @[]
+    walkFind(fs, path, pattern, if normalizedKind == "any": "" else: normalizedKind,
+             max, hits)
+    let base = if paddock.len > 0: paddock else: path
+    for hit in hits:
+      items.add(%*{
+        "path": relativeToPaddock(if hit.isDir: hit.path & "/" else: hit.path, base),
+        "kind": if hit.isDir: "dir" else: "file",
+      })
 
   successToolResult(%*{
     "path": if paddock.len > 0: relativeToPaddock(path, paddock) else: path,
@@ -133,80 +126,63 @@ proc performFindWasm*(path, pattern, kind: string; max: int): string {.gcsafe, r
 
 # ── grep ──────────────────────────────────────────────────────────────────────
 
-proc grepFile(path, pattern: string; max: int;
-              results: var seq[string]) {.gcsafe, raises: [].} =
-  try:
-    var lineNum = 0
-    for line in lines(path):
-      inc lineNum
-      if line.find(pattern) >= 0:
-        results.add(path & ":" & $lineNum & ":" & line)
-        if results.len >= max: return
-  except CatchableError as e:
-    searchLog().warn("grepFile error on " & path & ": " & e.msg)
+type GrepHit = object
+  path: string
+  line: int
+  text: string
 
-proc grepDir(path, pattern: string; recursive: bool;
-             max: int; results: var seq[string]) {.gcsafe, raises: [].} =
-  try:
-    for entry in walkDir(path):
-      if results.len >= max: return
-      case entry.kind
-      of pcFile:
-        grepFile(entry.path, pattern, max, results)
-      of pcDir:
-        if recursive:
-          grepDir(entry.path, pattern, recursive, max, results)
-      of pcLinkToFile, pcLinkToDir:
-        discard  ## skip symlinks — prevents escaping the paddock
-  except CatchableError as e:
-    searchLog().warn("grepDir error at " & path & ": " & e.msg)
+proc grepFile(fs: FsRuntimePort; path, pattern: string; max: int;
+              hits: var seq[GrepHit]) {.gcsafe, raises: [].} =
+  let size = fs.fileSize(path).valueOr:
+    searchLog().warn("grep: cannot inspect " & path & ": " & error)
+    return
+  if size > GrepMaxFileBytes:
+    searchLog().warn("grep: skipping " & path & " (" & $size & " bytes)")
+    return
+  let text = fs.readFile(path).valueOr:
+    searchLog().warn("grep: cannot read " & path & ": " & error)
+    return
+  var lineNum = 0
+  for line in text.splitLines():
+    inc lineNum
+    if line.find(pattern) >= 0:
+      hits.add GrepHit(path: path, line: lineNum, text: line)
+      if hits.len >= max: return
 
-proc performGrep*(pattern, path: string; recursive: bool;
+proc grepDir(fs: FsRuntimePort; path, pattern: string; recursive: bool;
+             max: int; hits: var seq[GrepHit]) {.gcsafe, raises: [].} =
+  let entries = fs.listDir(path).valueOr:
+    searchLog().warn("grep: cannot list " & path & ": " & error)
+    return
+  for entry in entries:
+    if hits.len >= max: return
+    case entry.kind
+    of fekFile:
+      grepFile(fs, entry.path, pattern, max, hits)
+    of fekDir:
+      if recursive:
+        grepDir(fs, entry.path, pattern, recursive, max, hits)
+    of fekLink, fekMissing:
+      discard  ## skip symlinks — prevents escaping the paddock
+
+proc grepHits(fs: FsRuntimePort; pattern, path: string; recursive: bool;
+              max: int): Result[seq[GrepHit], string] {.gcsafe, raises: [].} =
+  var hits: seq[GrepHit] = @[]
+  case fs.entryKind(path)
+  of fekFile: grepFile(fs, path, pattern, max, hits)
+  of fekDir: grepDir(fs, path, pattern, recursive, max, hits)
+  else: return err("path not found: " & path)
+  ok(hits)
+
+proc performGrep*(fs: FsRuntimePort; pattern, path: string; recursive: bool;
                   max: int): string {.gcsafe, raises: [].} =
   if pattern.len == 0: return "Error: empty pattern"
-  var results: seq[string] = @[]
-  if fileExists(path):
-    grepFile(path, pattern, max, results)
-  elif dirExists(path):
-    grepDir(path, pattern, recursive, max, results)
-  else:
-    return "Error: path not found: " & path
-  if results.len == 0: return "(no matches)"
-  results.join("\n")
+  let hits = grepHits(fs, pattern, path, recursive, max).valueOr:
+    return "Error: " & error
+  if hits.len == 0: return "(no matches)"
+  hits.mapIt(it.path & ":" & $it.line & ":" & it.text).join("\n")
 
-proc grepFileStructured(path, pattern, paddock: string; max: int;
-                        matches: var seq[JsonNode]) {.gcsafe, raises: [].} =
-  try:
-    var lineNum = 0
-    for line in lines(path):
-      inc lineNum
-      if line.find(pattern) >= 0:
-        matches.add(%*{
-          "path": relativeToPaddock(path, paddock),
-          "line": lineNum,
-          "text": line,
-        })
-        if matches.len >= max: return
-  except CatchableError as e:
-    searchLog().warn("grepFileStructured error on " & path & ": " & e.msg)
-
-proc grepDirStructured(path, pattern, paddock: string; recursive: bool; max: int;
-                       matches: var seq[JsonNode]) {.gcsafe, raises: [].} =
-  try:
-    for entry in walkDir(path):
-      if matches.len >= max: return
-      case entry.kind
-      of pcFile:
-        grepFileStructured(entry.path, pattern, paddock, max, matches)
-      of pcDir:
-        if recursive:
-          grepDirStructured(entry.path, pattern, paddock, recursive, max, matches)
-      of pcLinkToFile, pcLinkToDir:
-        discard
-  except CatchableError as e:
-    searchLog().warn("grepDirStructured error at " & path & ": " & e.msg)
-
-proc performGrepStructured*(pattern, path: string; recursive: bool;
+proc performGrepStructured*(fs: FsRuntimePort; pattern, path: string; recursive: bool;
                             max: int; paddock = ""): StructuredToolResult {.gcsafe, raises: [].} =
   if pattern.len == 0:
     return usageErrorToolResult("empty pattern")
@@ -214,14 +190,17 @@ proc performGrepStructured*(pattern, path: string; recursive: bool;
     return usageErrorToolResult("path is required")
   if max < 1:
     return usageErrorToolResult("max must be >= 1")
-  if not fileExists(path) and not dirExists(path):
-    return operationalErrorToolResult("path not found: " & path)
-
+  let pathKind = fs.entryKind(path)
+  let hits = grepHits(fs, pattern, path, recursive, max).valueOr:
+    return operationalErrorToolResult(error)
+  let base =
+    if paddock.len > 0: paddock
+    elif pathKind == fekFile: parentDir(path)
+    else: path
   var matches: seq[JsonNode] = @[]
-  if fileExists(path):
-    grepFileStructured(path, pattern, if paddock.len > 0: paddock else: parentDir(path), max, matches)
-  else:
-    grepDirStructured(path, pattern, if paddock.len > 0: paddock else: path, recursive, max, matches)
+  for hit in hits:
+    matches.add(%*{"path": relativeToPaddock(hit.path, base), "line": hit.line,
+                   "text": hit.text})
 
   successToolResult(%*{
     "path": if paddock.len > 0: relativeToPaddock(path, paddock) else: path,

@@ -2,6 +2,9 @@ import std/[json, os, times, unittest]
 
 import donkey/app/tools/data_tools
 import donkey/app/tools/fs_tools
+import donkey/adapters/filesystem/fs_adapter
+
+let testFs = newFsAdapter()
 import donkey/app/tools/search_tools
 
 proc runTests*() =
@@ -178,7 +181,7 @@ proc runTests*() =
       writeFile(paddock / "b.txt", "bbb\n")
       writeFile(paddock / "a.txt", "a\n")
 
-      let fsEnvelope = performFsList(".", paddock, recursive = true).toNode()
+      let fsEnvelope = performFsList(testFs, ".", paddock, recursive = true).toNode()
       let result = runTableQuery(%*{
         "input": fsEnvelope,
         "where": [{"field": "kind", "op": "eq", "value": "file"}],
@@ -201,7 +204,7 @@ proc runTests*() =
       let target = paddock / "notes.txt"
       writeFile(target, "alpha\nneedle beta\nneedle gamma\n")
 
-      let grepEnvelope = performGrepStructured("needle", target, false, 20).toNode()
+      let grepEnvelope = performGrepStructured(testFs, "needle", target, false, 20).toNode()
       let result = runTableQuery(%*{
         "input": grepEnvelope,
         "select": ["line", "text"],

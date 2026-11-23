@@ -62,7 +62,7 @@ proc ingestMemoryFile*(memory: MemoryRuntimePort; uid: UserId;
   if realFile != realPaddock and
      not realFile.startsWith(realPaddock & $DirSep):
     return err("path outside paddock: " & path)
-  if not fileExists(realFile) or dirExists(realFile):
+  if fs.entryKind(realFile) != fekFile:
     return err("file not found: " & path)
   let size = fs.fileSize(realFile).valueOr:
     return err(error)
