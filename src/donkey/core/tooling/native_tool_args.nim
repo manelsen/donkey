@@ -111,6 +111,14 @@ type
   FindingContext* = object
     finding*: string
 
+  ManageAgentsContext* = object
+    action*:      string   ## list, create, update, delete, note
+    name*:        string
+    description*: string
+    provider*:    string
+    model*:       string
+    text*:        string
+
   ManageSkillsContext* = object
     action*:   string
     query*:    string
@@ -431,6 +439,29 @@ func parseAwaitContext*(j: JsonNode): Result[AwaitContext, string] =
 
 func parseFindingContext*(j: JsonNode): Result[FindingContext, string] =
   ok(FindingContext(finding: ?j.requireStringField("finding")))
+
+func parseManageAgentsContext*(j: JsonNode): Result[ManageAgentsContext, string] =
+  let action = j.getOrDefault("action").getStr("list").strip.toLowerAscii()
+  case action
+  of "", "list":
+    ok(ManageAgentsContext(action: "list"))
+  of "create":
+    ok(ManageAgentsContext(action: action, name: ?j.requireStringField("name"),
+      description: ?j.requireStringField("description"),
+      provider: ?j.optionalStringField("provider"),
+      model: ?j.optionalStringField("model")))
+  of "update":
+    ok(ManageAgentsContext(action: action, name: ?j.requireStringField("name"),
+      description: ?j.optionalStringField("description"),
+      provider: ?j.optionalStringField("provider"),
+      model: ?j.optionalStringField("model")))
+  of "delete":
+    ok(ManageAgentsContext(action: action, name: ?j.requireStringField("name")))
+  of "note":
+    ok(ManageAgentsContext(action: action, name: ?j.requireStringField("name"),
+      text: ?j.requireStringField("text")))
+  else:
+    err("Error: unknown action '" & action & "' (list, create, update, delete, note)")
 
 func parseManageSkillsContext*(j: JsonNode): Result[ManageSkillsContext, string] =
   let action = j.getOrDefault("action").getStr("help").strip.toLowerAscii()

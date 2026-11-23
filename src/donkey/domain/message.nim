@@ -109,6 +109,8 @@ type
     maxTokens*: int           ## 0 = provider default
     tools*:     seq[ToolDescription]
     reasoning*: bool          ## whether to enable Chain-of-Thought if supported
+    providerOverride*: string ## a named agent's provider: routed first, the
+    modelOverride*:    string ## user's routing after it as the fallback
 
   CompletionResponse* = object
     text*:         string

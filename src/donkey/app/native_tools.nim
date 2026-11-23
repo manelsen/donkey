@@ -25,6 +25,7 @@ import ./tools/data_tools
 import ./tools/utility_tools
 import ./tools/audio_tools
 import ./tools/task_tools
+import ./named_agents
 import ./tools/code_tools
 import ./tools/memory_ingest_io
 
@@ -836,6 +837,12 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
       "truncated": ingested.truncated,
       "source": ingested.source,
     }))
+  of ManageAgentsToolName:
+    let agentCtx = parseManageAgentsContext(j).valueOr:
+      return handledError(error)
+    let reply = performManageAgents(ctx.fs, ctx.memory.paddockDir(ctx.uid), agentCtx).valueOr:
+      return handledError(error)
+    return handledText(reply)
   of ManageSkillsToolName:
     let skillCtx = parseManageSkillsContext(j).valueOr:
       return handledError(error)
