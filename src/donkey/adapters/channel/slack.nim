@@ -137,7 +137,8 @@ proc postJson(a: SlackAdapter; endpoint: string;
               body: JsonNode): Result[JsonNode, string] =
   ## POSTs JSON to a Slack Web API endpoint; validates "ok" field.
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
-  a.http.post(a.base() & "/" & endpoint, $body, headers) >>= parseSlackBody
+  a.http.post(a.base() & "/" & endpoint, $withoutBroadcastMentions(body),
+              headers) >>= parseSlackBody
 
 # ── DM channel resolution (conversations.open) ────────────────────────────────
 
@@ -199,7 +200,8 @@ proc respondToUrl*(a: SlackAdapter; responseUrl, text: string): Result[void, str
   ## already-verified Slack webhook payload.
   if responseUrl.len == 0 or not responseUrl.startsWith("https://"):
     return err("invalid Slack response_url")
-  let body = $(%* {"text": text, "response_type": "ephemeral"})
+  let body = $(%* {"text": neutralizeBroadcastMentions(text),
+                   "response_type": "ephemeral"})
   let res = a.respondHttp.post(responseUrl, body,
                                @[("Content-Type", "application/json")])
   if res.isErr:

@@ -32,3 +32,11 @@ completa dos 407 commits ainda não foi feita (ver `discord/SCOPE.md`).
 | DS-009 | `020ef76cf1` (no hermes o resto vem do discord.py; aqui é o contrato do gateway) | `tests/domain/channels/t_discord_pure.nim` | `src/donkey/domain/channels/discord_pure.nim` (`heartbeatStep`, `closeAction`), `src/donkey/adapters/channel/discord.nim` (gateway) | portado |
 | DS-010 | `5a3cadf6eb` (cluster de rate limit; o formato do 429 e o `nonce` são contrato da API do Discord) | `tests/http/t_std_http.nim`, `tests/adapters/channel/t_requester_only_send_paths.nim` | `src/donkey/adapters/http/std_http.nim` (`rateLimitWaitMs`), `src/donkey/adapters/channel/discord.nim` (`withNonce`) | portado |
 | DS-011 | `8598746e86`, `f6d4b6a319` | `tests/domain/channels/t_discord_pure.nim`, `tests/adapters/channel/t_requester_only_send_paths.nim` | `src/donkey/domain/channels/discord_pure.nim` (`discordChannelAllowed`), `src/donkey/adapters/channel/discord_runtime.nim` | portado |
+
+## Slack
+
+Casos portados avulsos; o Slack ainda não tem extração nem triagem própria.
+
+| Caso | Commits hermes | Teste Donkey | Implementação Donkey | Status |
+|---|---|---|---|---|
+| SL-001 | `38863322a4` | `tests/domain/channels/t_slack_pure.nim`, `tests/adapters/channel/t_requester_only_send_paths.nim` | `src/donkey/domain/channels/slack_pure.nim` (`neutralizeBroadcastMentions`, `withoutBroadcastMentions`), `src/donkey/adapters/channel/slack.nim` (`postJson`, `respondToUrl`) | portado |
