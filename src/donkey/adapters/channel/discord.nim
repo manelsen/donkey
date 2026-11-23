@@ -23,6 +23,8 @@ import ../../core/types
 import ../../core/pipeops
 import ../../domain/message
 import ../../domain/channels/discord_pure
+import ../../domain/channels/telegram_policy  # mentionRequiredFromEnv
+import ../../config/environment
 import ../../ports/http
 import ../../core/media_download
 import ../http/std_http
@@ -53,6 +55,8 @@ type
     messageId*:        string
     interactionId*:    string
     interactionToken*: string
+    guildId*:          string   ## server id; empty for a DM or an interaction
+    referencedAuthorId*: string ## author of the message this one replies to
 
 # ── Gateway thread ─────────────────────────────────────────────────────────────
 
@@ -127,6 +131,8 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
       content:       r.content,
       channelId:     r.channelId,
       messageId:     r.messageId,
+      guildId:       r.guildId,
+      referencedAuthorId: r.referencedAuthorId,
     )
     bufferOrPush(event)
   of dekSlashCommand:
@@ -334,6 +340,7 @@ type
     dmChannels: ref Table[string, string]  ## discord_user_id → dm_channel_id (ref allows value receiver)
     statusReactions: ref Table[string, string] ## channel_id:message_id -> emoji
     seenMessages: ref RecentIds  ## message ids already handled (RESUME replay, backfill overlap)
+    requireMention*: bool  ## in a server, answer only when mentioned or replied to
     http*:      StdHttpAdapter
 
 func authHeader(a: DiscordAdapter): (string, string) =
@@ -747,6 +754,13 @@ proc getAppId*(a: DiscordAdapter): Result[string, string] =
   except CatchableError as e:
     err(e.msg)
 
+proc botUserId*(a: DiscordAdapter): string =
+  ## The bot's own user id (`/users/@me`), cached after the first lookup.
+  ## Empty when the lookup fails; a server message then addresses nobody.
+  if a.appId != nil and a.appId[].len > 0:
+    return a.appId[]
+  a.getAppId().get("")
+
 proc registerSlashCommands*(a: DiscordAdapter; appId: string; guildId = ""): Result[void, string] =
   ## Registers the operational command surface as global or guild application commands.
   let commands = newCommandCatalog().toDiscordSlashCommandsJson()
@@ -786,9 +800,14 @@ proc isDuplicateMessage*(a: DiscordAdapter; messageId: string;
   if a.seenMessages == nil: return false
   a.seenMessages[].seenBefore(messageId, now)
 
+func discordRequireMention*(env: Environment): bool =
+  ## `DONKEY_DISCORD_REQUIRE_MENTION`: opt-in, like the Telegram switch.
+  mentionRequiredFromEnv(env.get("DONKEY_DISCORD_REQUIRE_MENTION"))
+
 proc newDiscordAdapter*(token:        string;
                         identityPath: string;
-                        apiBase       = ""): DiscordAdapter =
+                        apiBase       = "";
+                        requireMention = false): DiscordAdapter =
   var t = new(Table[string, string])
   t[] = initTable[string, string]()
   var sr = new(Table[string, string])
@@ -805,5 +824,6 @@ proc newDiscordAdapter*(token:        string;
     dmChannels: t,
     statusReactions: sr,
     seenMessages: seen,
+    requireMention: requireMention,
     http:       newStdHttpAdapter(),
   )

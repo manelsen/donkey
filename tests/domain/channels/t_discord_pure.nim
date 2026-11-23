@@ -604,6 +604,43 @@ proc runTests*() =
       let text = "```\n| a | b |\n|---|---|\n| 1 | 2 |\n```"
       check discordText(text) == text
 
+  suite "discord_pure — mentions in a server (hermes 608e8a6062, e9bceb5ae0)":
+    test "the guild and the replied-to author are parsed":
+      var d = makeMessageCreate("u1", "ch1", "m1", "hi")
+      d["guild_id"] = %"g1"
+      d["referenced_message"] = %* {"id": "m0", "author": {"id": "B"}}
+      let r = parseDispatch("MESSAGE_CREATE", d)
+      check r.guildId == "g1"
+      check r.referencedAuthorId == "B"
+
+    test "a DM has no guild":
+      check parseDispatch("MESSAGE_CREATE",
+        makeMessageCreate("u1", "dm", "m1", "hi")).guildId == ""
+
+    test "a raw mention of the bot addresses it, in both forms":
+      check addressesBot("<@B> hi", "B", "")
+      check addressesBot("hey <@!B>", "B", "")
+
+    test "another user's mention, or none, does not":
+      check not addressesBot("<@B2> hi", "B", "")
+      check not addressesBot("hi B", "B", "")
+      check not addressesBot("<@B> hi", "", "")
+
+    test "a reply to the bot's message addresses it":
+      check addressesBot("sure", "B", "B")
+      check not addressesBot("sure", "B", "u9")
+
+    test "the bot's mention is taken out of the text":
+      check stripBotMention("<@B> /help", "B") == "/help"
+      check stripBotMention("hey <@!B> there", "B") == "hey there"
+      check stripBotMention("<@B2> hi", "B") == "<@B2> hi"
+      check stripBotMention("<@B>", "B") == ""
+
+    test "the rest of the spacing is kept":
+      check stripBotMention("<@B> run:  a   b", "B") == "run:  a   b"
+      check stripBotMention("<@B> /ask\n    indented code", "B") ==
+        "/ask\n    indented code"
+
   suite "discord_pure.toInbound — conversion":
 
     test "message converts with correct fields":

@@ -272,6 +272,61 @@ proc runTests*() =
         check content == "**Alice**\n• Score: 95"
       check seen == 3
 
+    test "Discord: with mentions required, an unaddressed server message is ignored":
+      ## hermes 608e8a6062. DONKEY_DISCORD_REQUIRE_MENTION: in a server the
+      ## bot answers only when mentioned or replied to; DMs are unaffected.
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var state = initPresentationState()
+      let dc = newDiscordAdapter("TOK", Tmp / "dc-rm" / "ids.tsv",
+                                 apiBase = base(), requireMention = true)
+      dc.appId[] = "BOT"
+      proc reply(id, guild, text: string; refAuthor = "") =
+        handleDiscordEvent(sm, DiscordRawEvent(kind: deMessage,
+          discordUserId: "51", content: text, channelId: "chan-" & id,
+          messageId: id, guildId: guild, referencedAuthorId: refAuthor),
+          dc, state, env("dc-rm"), msgSeq, logger, noop, noop, noop)
+      proc answered(id: string): bool =
+        anyRequest(proc(r: Recorded): bool =
+          ("/channels/chan-" & id & "/messages") in r.target)
+      reply("a", "g1", "/start")
+      reply("b", "g1", "<@BOT> /start")
+      reply("c", "g1", "<@!BOT> /start")
+      reply("d", "g1", "/start", refAuthor = "BOT")
+      reply("e", "g1", "<@OTHER> /start")
+      check not answered("a")
+      check answered("b")
+      check answered("c")
+      check answered("d")
+      check not answered("e")
+
+    test "Discord: a DM is answered without a mention even when mentions are required":
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var state = initPresentationState()
+      let dc = newDiscordAdapter("TOK", Tmp / "dc-rm2" / "ids.tsv",
+                                 apiBase = base(), requireMention = true)
+      dc.appId[] = "BOT"
+      handleDiscordEvent(sm, DiscordRawEvent(kind: deMessage,
+        discordUserId: "52", content: "/start", messageId: "dm1"),
+        dc, state, env("dc-rm2"), msgSeq, logger, noop, noop, noop)
+      check anyRequest(proc(r: Recorded): bool = "/messages" in r.target)
+
+    test "Discord: without the setting, server messages are answered as before":
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var state = initPresentationState()
+      let dc = newDiscordAdapter("TOK", Tmp / "dc-rm3" / "ids.tsv", apiBase = base())
+      dc.appId[] = "BOT"
+      handleDiscordEvent(sm, DiscordRawEvent(kind: deMessage,
+        discordUserId: "53", content: "/start", channelId: "chan-z",
+        messageId: "z", guildId: "g1"),
+        dc, state, env("dc-rm3"), msgSeq, logger, noop, noop, noop)
+      check anyRequest(proc(r: Recorded): bool = "/channels/chan-z/messages" in r.target)
+
     test "Discord: a message delivered twice is handled once":
       ## A gateway RESUME replays events, and the startup backfill can overlap
       ## the live stream: the second copy must not answer again.

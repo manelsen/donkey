@@ -42,6 +42,8 @@ type
     needsModal*:       bool     ## /continue without code → caller must send modal
     hasMedia*:         bool     ## true when message has attachments
     attachmentUrls*:   seq[string]  ## list of attachment URLs (proxy_url or url)
+    guildId*:          string   ## server id; empty for a DM
+    referencedAuthorId*: string ## author of the message this one replies to
 
 # ── Internal pure helpers ─────────────────────────────────────────────────────
 
@@ -134,6 +136,10 @@ func parseMessageCreate(d: JsonNode): DsParseResult =
     messageId: d.getOrDefault("id").getStr(""),
     hasMedia:  hasMedia,
     attachmentUrls: attachmentUrls,
+    guildId:   d.getOrDefault("guild_id").getStr(""),
+    referencedAuthorId:
+      d.getOrDefault("referenced_message").getOrDefault("author")
+        .getOrDefault("id").getStr(""),
   )
 
 func buildSlashContent(cmdName: string; iData: JsonNode): string =
@@ -223,6 +229,33 @@ func parseInteractionCreate(d: JsonNode): DsParseResult =
     )
 
   DsParseResult(kind: dekUnknown)
+
+# ── Mentions ──────────────────────────────────────────────────────────────────
+
+func mentionForms(botId: string): array[2, string] =
+  ["<@" & botId & ">", "<@!" & botId & ">"]
+
+func addressesBot*(content, botId, referencedAuthorId: string): bool =
+  ## A server message is for the bot when it carries the bot's raw mention or
+  ## replies to one of the bot's messages (hermes 608e8a6062). The `mentions`
+  ## array is not used: a reply ping puts the replied-to author there without
+  ## any mention in the text (hermes e9bceb5ae0).
+  if botId.len == 0: return false
+  if referencedAuthorId == botId: return true
+  for form in mentionForms(botId):
+    if form in content: return true
+  false
+
+func stripBotMention*(content, botId: string): string =
+  ## The text without the bot's mentions, so "<@bot> /help" is the command
+  ## "/help". Each mention goes with one space next to it; any other spacing
+  ## (code, alignment) is kept. Only the mention comes back empty.
+  if botId.len == 0: return content
+  result = content
+  for form in mentionForms(botId):
+    result = result.replace(form & " ", "").replace(" " & form, "")
+      .replace(form, "")
+  result = result.strip()
 
 # ── Outbound text ─────────────────────────────────────────────────────────────
 
