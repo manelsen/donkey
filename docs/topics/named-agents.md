@@ -47,8 +47,25 @@ model = "claude-sonnet-5-5"     # optional
 Names are 1–32 characters of `a-z`, `0-9` and `-`. `manage_agents` supports
 `list`, `create`, `update`, `delete` and `note`; a subagent can never use it.
 
+## Agents talking to each other
+
+- **`ask_agent(name, question, context)`** — the current agent (the main
+  assistant or a named one) asks another and gets its answer back. The asked
+  agent replies once, in its own role, with its notes and model, without tools
+  (so no chain of calls); `context` is what it needs to know, since it does not
+  see the caller's turn.
+- **`convene_agents(agents, question, context, rounds)`** — a deliberation
+  room of 2–5 agents. In round 1 each answers on its own (in parallel); in each
+  further round (up to 3, default 2) each reads the others' latest answers and
+  says where it agrees, where it disagrees and its revised answer. The tool
+  returns the transcript and the caller is the lead: it writes the synthesis for
+  the user.
+
+Both run the provider call on a worker, so the daemon's loop stays free while
+the agents think. Subagents can use neither, nor `manage_agents`.
+
 ## Limits
 
 - An agent with its own provider runs without streaming: streaming is wired to
   the user's default provider only.
-- Agents calling each other and a deliberation room are not here yet.
+- An agent asked through `ask_agent` or a room answers without tools.

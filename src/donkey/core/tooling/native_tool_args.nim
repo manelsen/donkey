@@ -119,6 +119,17 @@ type
     model*:       string
     text*:        string
 
+  AskAgentContext* = object
+    name*:     string
+    question*: string
+    context*:  string
+
+  ConveneAgentsContext* = object
+    agents*:   seq[string]
+    question*: string
+    context*:  string
+    rounds*:   int
+
   ManageSkillsContext* = object
     action*:   string
     query*:    string
@@ -462,6 +473,18 @@ func parseManageAgentsContext*(j: JsonNode): Result[ManageAgentsContext, string]
       text: ?j.requireStringField("text")))
   else:
     err("Error: unknown action '" & action & "' (list, create, update, delete, note)")
+
+func parseAskAgentContext*(j: JsonNode): Result[AskAgentContext, string] =
+  ok(AskAgentContext(name: ?j.requireStringField("name"),
+                     question: ?j.requireStringField("question"),
+                     context: ?j.optionalStringField("context")))
+
+func parseConveneAgentsContext*(j: JsonNode): Result[ConveneAgentsContext, string] =
+  let rounds = ?j.optionalIntField("rounds")
+  ok(ConveneAgentsContext(agents: ?j.stringArrayField("agents"),
+                          question: ?j.requireStringField("question"),
+                          context: ?j.optionalStringField("context"),
+                          rounds: if rounds <= 0: 2 else: rounds))
 
 func parseManageSkillsContext*(j: JsonNode): Result[ManageSkillsContext, string] =
   let action = j.getOrDefault("action").getStr("help").strip.toLowerAscii()

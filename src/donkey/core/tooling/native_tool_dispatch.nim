@@ -65,6 +65,7 @@ const
     "checkpoint",
     "rewind",
     "manage_skills",
+    "manage_agents",
     "session_search",
     "memory_ingest",
   ]
@@ -79,6 +80,8 @@ const
     "await_subagent",
     "list_subagents",
     "cancel_subagent",
+    "ask_agent",
+    "convene_agents",
   ]
 
 func categoryTools(kind: NativeToolCategoryKind): seq[string] =

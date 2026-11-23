@@ -840,7 +840,7 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
   of ManageAgentsToolName:
     let agentCtx = parseManageAgentsContext(j).valueOr:
       return handledError(error)
-    let reply = performManageAgents(ctx.fs, ctx.memory.paddockDir(ctx.uid), agentCtx).valueOr:
+    let reply = performManageAgents(ctx.fs, ctx.paddockDir, agentCtx).valueOr:
       return handledError(error)
     return handledText(reply)
   of ManageSkillsToolName:
@@ -856,6 +856,17 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
   else:
     return NativeToolResult(handled: false)
 
+proc agentCompleteFn(ctx: NativeCtx): AsyncCompleteFn =
+  ## The async completion (the provider call runs on a worker, not on the
+  ## loop); the sync one wrapped when a context has no async one.
+  if ctx.asyncCompleteFn != nil: return ctx.asyncCompleteFn
+  if ctx.completeFn == nil: return nil
+  let syncFn = ctx.completeFn
+  result = proc(req: CompletionRequest): Future[Result[CompletionResponse, string]] {.async.} =
+    ## (Not named `complete`: the async macro's own `complete` would be shadowed.)
+    let resp = syncFn(req)
+    return resp
+
 proc executeAgentNativeTool(tc: ToolCallRequest;
                             ctx: NativeCtx;
                             state: SessionState;
@@ -863,6 +874,22 @@ proc executeAgentNativeTool(tc: ToolCallRequest;
                             j: JsonNode;
                            ): Future[NativeToolResult] {.async.} =
   case tc.name
+  of AskAgentToolName:
+    let askCtx = parseAskAgentContext(j).valueOr:
+      return handledError(error)
+    let answer = await askNamedAgent(ctx.fs, ctx.paddockDir, agentCompleteFn(ctx),
+                                     askCtx.name, askCtx.question, askCtx.context)
+    if answer.isErr:
+      return handledError(answer.error)
+    return handledText(answer.get)
+  of ConveneAgentsToolName:
+    let roomCtx = parseConveneAgentsContext(j).valueOr:
+      return handledError(error)
+    let transcript = await conveneNamedAgents(ctx.fs, ctx.paddockDir, agentCompleteFn(ctx),
+      roomCtx.agents, roomCtx.question, roomCtx.context, roomCtx.rounds)
+    if transcript.isErr:
+      return handledError(transcript.error)
+    return handledText(transcript.get)
   of TaskToolName:
     let taskCtx = parseTaskContext(j).valueOr:
       return handledError(error)

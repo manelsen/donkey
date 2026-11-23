@@ -1,9 +1,15 @@
 ## manage_agents: the user's named agents created, listed, changed and removed
 ## from the chat, and an agent's own notes. Real files in a temp paddock.
 
-import std/[json, os, strutils, unittest]
+import std/[json, os, sequtils, strutils, unittest]
+import chronos
 import donkey/adapters/filesystem/fs_adapter
 import donkey/app/named_agents
+import donkey/app/native_tools
+import donkey/app/provider_executor
+import donkey/app/session_state
+import donkey/core/types
+import donkey/domain/message
 import donkey/core/pipeops
 import donkey/core/tooling/native_tool_args
 import donkey/domain/agents/named_agent_pure
@@ -70,6 +76,79 @@ proc runTests*() =
 
     test "a subagent can never manage the user's agents":
       check "manage_agents" in SubagentHardDeniedTools
+
+  suite "agents talking to each other":
+    setup:
+      removeDir(Paddock)
+      createDir(Paddock / "agents")
+      writeFile(Paddock / "agents" / "revisor.toml",
+        "name = \"revisor\"\ndescription = \"Revisa com rigor.\"\nprovider = \"anthropic\"\n")
+      writeFile(Paddock / "agents" / "revisor.notes.md", "- prefere testes")
+      writeFile(Paddock / "agents" / "otimista.toml",
+        "name = \"otimista\"\ndescription = \"Vê o lado bom.\"\n")
+
+    var seen {.threadvar.}: seq[CompletionRequest]
+    proc fakeAsync(): AsyncCompleteFn =
+      result = proc(req: CompletionRequest): Future[Result[CompletionResponse, string]] {.async.} =
+        {.cast(gcsafe).}: seen.add(req)
+        let who = if "revisor" in req.system: "revisor" else: "otimista"
+        return ok(CompletionResponse(text: who & " responde (" & $req.messages.len & ")"))
+
+    proc ctxFor(): NativeCtx =
+      NativeCtx(uid: UserId("u"), channel: ckCli, paddockDir: Paddock,
+                fs: newFsAdapter(), asyncCompleteFn: fakeAsync())
+
+    test "ask_agent: one call with that agent's persona, notes and model":
+      seen = @[]
+      let r = waitFor askNamedAgent(newFsAdapter(), Paddock, fakeAsync(), "revisor", "o diff está bom?", "PR #9")
+      check r.isOk and r.get.startsWith("revisor responde")
+      check seen.len == 1
+      check "Revisa com rigor." in seen[0].system and "prefere testes" in seen[0].system
+      check seen[0].providerOverride == "anthropic"
+      check seen[0].tools.len == 0
+      check "PR #9" in seen[0].messages[0].text and "o diff está bom?" in seen[0].messages[0].text
+
+    test "ask_agent: an unknown agent is an error and no call":
+      seen = @[]
+      check (waitFor askNamedAgent(newFsAdapter(), Paddock, fakeAsync(), "ghost", "q", "")).isErr
+      check seen.len == 0
+
+    test "convene: every agent answers, then sees the others and revises":
+      seen = @[]
+      let r = waitFor conveneNamedAgents(newFsAdapter(), Paddock, fakeAsync(), @["revisor", "otimista"],
+                                         "vale migrar?", "", rounds = 2)
+      check r.isOk
+      check seen.len == 4
+      let transcript = r.get
+      check "Round 1" in transcript and "Round 2" in transcript
+      check "@revisor" in transcript and "@otimista" in transcript
+      ## in round 2 each one sees the other's round-1 answer
+      let second = seen[2 .. 3]
+      check second.anyIt("otimista responde" in it.messages[^1].text)
+      check second.anyIt("revisor responde" in it.messages[^1].text)
+
+    test "convene: limits and unknown names":
+      check (waitFor conveneNamedAgents(newFsAdapter(), Paddock, fakeAsync(), @["revisor"], "q", "", 1)).isErr
+      check (waitFor conveneNamedAgents(newFsAdapter(), Paddock, fakeAsync(), @["revisor", "ghost"], "q", "", 1)).isErr
+      check (waitFor conveneNamedAgents(newFsAdapter(), Paddock, fakeAsync(), @["revisor", "otimista"], "q", "", 9)).isOk
+
+    test "the tools are dispatched for real (manage_agents, ask_agent, convene_agents)":
+      seen = @[]
+      let state = newSessionState()
+      let listed = waitFor executeNativeTool(ToolCallRequest(id: "1", name: "manage_agents",
+        inputJson: """{"action":"list"}"""), ctxFor(), state, @[])
+      check listed.handled and "@revisor" in listed.text
+      let asked = waitFor executeNativeTool(ToolCallRequest(id: "2", name: "ask_agent",
+        inputJson: """{"name":"revisor","question":"ok?"}"""), ctxFor(), state, @[])
+      check asked.handled and "revisor responde" in asked.text
+      let room = waitFor executeNativeTool(ToolCallRequest(id: "3", name: "convene_agents",
+        inputJson: """{"agents":["revisor","otimista"],"question":"q","rounds":1}"""),
+        ctxFor(), state, @[])
+      check room.handled and "@otimista" in room.text
+
+    test "subagents cannot call or convene the user's agents":
+      check "ask_agent" in SubagentHardDeniedTools
+      check "convene_agents" in SubagentHardDeniedTools
 
 when isMainModule:
   runTests()
