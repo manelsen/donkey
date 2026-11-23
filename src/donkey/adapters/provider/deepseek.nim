@@ -12,6 +12,7 @@
 import std/[json, streams, strutils]
 import ../../domain/message
 import ../../domain/providers/compat
+import ../../domain/providers/profile_deepseek
 import ../../ports/provider
 import ../../core/pipeops
 import ../../core/json_helpers
@@ -121,7 +122,7 @@ proc complete*(a: DeepSeekAdapter;
                req: CompletionRequest): Result[CompletionResponse, string] =
   providerGuard:
     var headers: seq[HttpHeader] = @[("Content-Type", "application/json"), ("Authorization", "Bearer " & a.apiKey)]
-    let body = buildCompatRequestBody(defaultOpenAiProfile(endpoint = DeepSeekEndpoint), a.model, req)
+    let body = buildCompatRequestBody(deepseekCompatProfileAt(DeepSeekEndpoint), a.model, req)
     let url  = if a.endpoint.len > 0: a.endpoint else: DeepSeekEndpoint
     let resp = ? postProvider(a.http, "DeepSeek", url, $body, headers)
     resp |> parseJson |> parseDeepSeekResponse
@@ -135,7 +136,7 @@ proc makeStreamFn*(a: DeepSeekAdapter): StreamFn =
                ): Result[CompletionResponse, string] {.gcsafe.} =
     providerGuard:
       var headers: seq[HttpHeader] = @[("Content-Type", "application/json"), ("Authorization", "Bearer " & adapter.apiKey)]
-      let body = buildCompatRequestBody(defaultOpenAiProfile(endpoint = DeepSeekEndpoint), adapter.model, req, stream = true)
+      let body = buildCompatRequestBody(deepseekCompatProfileAt(DeepSeekEndpoint), adapter.model, req, stream = true)
       let url  = if adapter.endpoint.len > 0: adapter.endpoint else: DeepSeekEndpoint
       let resp = ? postProviderStream(adapter.http, "DeepSeek", url, $body, headers)
       

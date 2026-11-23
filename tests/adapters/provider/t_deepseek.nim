@@ -3,7 +3,11 @@
 ## Tests cover pure helpers and non-network functionality.
 ## Live HTTP tests require a valid DeepSeek API key and are skipped in CI.
 
-import std/[json, unittest]
+import std/[json, strutils, unittest]
+import donkey/domain/providers/compat
+import donkey/domain/providers/openai_pure
+import donkey/domain/providers/profile_deepseek
+import donkey/domain/providers/profile_mistral
 import donkey/core/pipeops
 import donkey/adapters/provider/deepseek
 import donkey/domain/message
@@ -153,6 +157,39 @@ proc runTests*() =
       check result.isErr
 
   # ── Constructor ────────────────────────────────────────────────────────────────
+
+  suite "deepseek reasoning echo (hermes must-echo tier)":
+    ## DeepSeek answers 400 when an assistant turn of a tool round comes back
+    ## without `reasoning_content`; hermes pads every assistant turn with the
+    ## text or " " (DeepSeek V4 rejects ""). Other providers never get it.
+    proc toolRound(reasoning: string): CompletionRequest =
+      CompletionRequest(messages: @[
+        ChatMessage(role: roleUser, text: "que horas são?"),
+        ChatMessage(role: roleAssistant, reasoning: reasoning, toolCalls: @[
+          ToolCallRequest(id: "c1", name: "clock", inputJson: "{}")]),
+        ChatMessage(role: roleTool, text: "12:00", toolCallId: "c1"),
+        ChatMessage(role: roleAssistant, text: "meio-dia"),
+        ChatMessage(role: roleUser, text: "obrigado")])
+
+    test "every assistant turn carries reasoning_content, the text or a pad":
+      let msgs = buildCompatRequestBody(deepseekCompatProfile(), "m",
+                                        toolRound("vou consultar"))["messages"]
+      check msgs[1]["reasoning_content"].getStr == "vou consultar"
+      check msgs[3]["reasoning_content"].getStr == " "
+      check not msgs[0].hasKey("reasoning_content")
+      check not msgs[2].hasKey("reasoning_content")
+      check not msgs[4].hasKey("reasoning_content")
+
+    test "no other profile sends it (Mistral would answer 422)":
+      for profile in [defaultOpenAiProfile(), mistralCompatProfile()]:
+        check not ($buildCompatRequestBody(profile, "m", toolRound("x"))).contains(
+          "reasoning_content")
+
+    test "the tool round keeps the reasoning it came with":
+      var h = newHistory()
+      h.addAssistantWithToolCalls("", @[ToolCallRequest(id: "c1", name: "t")],
+                                  reasoning = "pensei")
+      check h[0].reasoning == "pensei"
 
   suite "deepseek newDeepSeekAdapter":
     test "defaults to deepseek-4.1-flash":
