@@ -399,9 +399,8 @@ proc fetchUnreadMessages*(a: DiscordAdapter; chId: string; limit = 10): Result[s
       return err("Discord messages response is not an array")
     var filtered: seq[JsonNode] = @[]
     for msg in msgs:
-      # Skip bot's own messages
-      let author = msg.getOrDefault("author")
-      if author.getOrDefault("bot").getBool(false):
+      # Skip bots (including our own messages) and webhook posts
+      if isBotAuthored(msg):
         continue
       # Skip messages without content
       let content = msg.getOrDefault("content").getStr("")
@@ -426,7 +425,7 @@ proc makeComponentRows(buttons: seq[seq[(string, string)]]): seq[JsonNode] =
 proc sendChunk(a: DiscordAdapter; chId, text: string): Result[void, string] =
   let body    = %* {"content": text}
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
-  let resp = ? a.http.post(a.base() & "/channels/" & chId & "/messages", $body, headers)
+  let resp = ? a.http.post(a.base() & "/channels/" & chId & "/messages", $withSafeMentions(body), headers)
   if resp.status < 200 or resp.status >= 300:
     return err("Discord send error " & $resp.status & ": " & resp.body)
   ok()
@@ -458,7 +457,7 @@ proc sendKeyboard*(a: DiscordAdapter; userId: UserId;
   let chId = ? a.dmChannelFor(discordId)
   let body = %* {"content": text, "components": makeComponentRows(buttons)}
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
-  let resp = ? a.http.post(a.base() & "/channels/" & chId & "/messages", $body, headers)
+  let resp = ? a.http.post(a.base() & "/channels/" & chId & "/messages", $withSafeMentions(body), headers)
   if resp.status < 200 or resp.status >= 300:
     return err("Discord sendKeyboard error " & $resp.status & ": " & resp.body)
   let msgId = resp.body.parseJson().getOrDefault("id").getStr("")
@@ -476,7 +475,7 @@ proc editKeyboard*(a: DiscordAdapter; userId: UserId;
   let body = %* {"content": text, "components": makeComponentRows(buttons)}
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   let url = a.base() & "/channels/" & chId & "/messages/" & msgId
-  let resp = ? a.http.patch(url, $body, headers)
+  let resp = ? a.http.patch(url, $withSafeMentions(body), headers)
   if resp.status < 200 or resp.status >= 300:
     return err("Discord editKeyboard error " & $resp.status & ": " & resp.body)
   ok()
@@ -490,7 +489,7 @@ proc editInteractionKeyboard*(a: DiscordAdapter;
   ## Use PATCH /webhooks/{application_id}/{interaction_token}/messages/@original
   let appId = if a.appId != nil: a.appId[] else: "unknown"
   let url = a.base() & "/webhooks/" & appId & "/" & interactionToken & "/messages/@original"
-  let resp = ? a.http.patch(url, $body, headers)
+  let resp = ? a.http.patch(url, $withSafeMentions(body), headers)
   if resp.status < 200 or resp.status >= 300:
     return err("Discord edit interaction keyboard error " & $resp.status & ": " & resp.body)
   ok()
@@ -525,7 +524,7 @@ proc send*(a: DiscordAdapter; msg: OutboundMessage): Result[void, string] =
 const DiscordEphemeralFlag* = 64  ## message visible only to the invoking user
 
 func interactionMessageData*(content: string; ephemeral: bool): JsonNode =
-  result = %* {"content": content}
+  result = withSafeMentions(%* {"content": content})
   if ephemeral:
     result["flags"] = %DiscordEphemeralFlag
 
@@ -548,7 +547,8 @@ proc sendInteractionKeyboard*(a: DiscordAdapter;
   ## Responds to a slash command interaction with text and buttons.
   let body = %* {
     "type": 4,
-    "data": {"content": text, "components": makeComponentRows(buttons)},
+    "data": withSafeMentions(%* {"content": text,
+                                 "components": makeComponentRows(buttons)}),
   }
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   let url = a.base() & "/interactions/" & interactionId & "/" & interactionToken & "/callback"
@@ -570,7 +570,7 @@ proc sendInteractionEmbedPage*(a: DiscordAdapter;
   }
   if ephemeral:
     data["flags"] = %DiscordEphemeralFlag
-  let body = %* {"type": 4, "data": data}
+  let body = %* {"type": 4, "data": withSafeMentions(data)}
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   let url = a.base() & "/interactions/" & interactionId & "/" & interactionToken & "/callback"
   let resp = ? a.http.post(url, $body, headers)
@@ -591,7 +591,7 @@ proc editInteractionEmbedPage*(a: DiscordAdapter;
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   let appId = if a.appId != nil: a.appId[] else: "unknown"
   let url = a.base() & "/webhooks/" & appId & "/" & interactionToken & "/messages/@original"
-  let resp = ? a.http.patch(url, $body, headers)
+  let resp = ? a.http.patch(url, $withSafeMentions(body), headers)
   if resp.status < 200 or resp.status >= 300:
     return err("Discord edit embed error " & $resp.status & ": " & resp.body)
   ok()
@@ -638,7 +638,7 @@ proc sendReturnId*(a: DiscordAdapter; msg: OutboundMessage): Result[string, stri
   if msg.keyboard.len > 0:
     body.add("components", %makeComponentRows(msg.keyboard))
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
-  a.http.post(a.base() & "/channels/" & chId & "/messages", $body, headers) >>= extractId
+  a.http.post(a.base() & "/channels/" & chId & "/messages", $withSafeMentions(body), headers) >>= extractId
 
 proc editMessage*(a: DiscordAdapter; userId: UserId;
                   msgId, text: string): Result[void, string] =
@@ -651,7 +651,7 @@ proc editMessage*(a: DiscordAdapter; userId: UserId;
   let body    = %* {"content": txt}
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   let url  = a.base() & "/channels/" & chId & "/messages/" & msgId
-  let resp = ? a.http.patch(url, $body, headers)
+  let resp = ? a.http.patch(url, $withSafeMentions(body), headers)
   if resp.status < 200 or resp.status >= 300:
     return err("Discord editMessage error " & $resp.status)
   ok()

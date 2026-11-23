@@ -12,9 +12,14 @@
 ##   2. toInbound(r, userId)        → InboundMessage
 ##   3. hasInteraction(r)           → bool             (interaction needs ack)
 
-import std/json
+import std/[json, strutils]
 import ../../core/pipeops
 import ../../domain/message
+
+const
+  DiscordMaxInboundAttachmentBytes* = 25 * 1024 * 1024
+    ## Larger attachments are never downloaded (the whole body is held in
+    ## memory); the turn gets a note naming the file instead.
 
 # ── Domain types ──────────────────────────────────────────────────────────────
 
@@ -70,30 +75,57 @@ func extractModalCode(d: JsonNode): string =
           return comp.getOrDefault("value").getStr("")
   ""
 
+func isBotAuthored*(msg: JsonNode): bool =
+  ## A bot account, or a webhook post: a webhook's author carries no `bot`
+  ## flag, `webhook_id` is what marks it (hermes 68276773cf).
+  let author = msg.getOrDefault("author")
+  if author != nil and author.getOrDefault("bot").getBool(false):
+    return true
+  let webhook = msg.getOrDefault("webhook_id")
+  webhook != nil and webhook.kind == JString and webhook.getStr.len > 0
+
+func withSafeMentions*(body: JsonNode): JsonNode =
+  ## Every message body the bot sends: users can be mentioned, but never
+  ## @everyone/@here or a role (hermes efa6c9f715). The text is the model's,
+  ## so a mention in it is not an operator's decision.
+  result = body.copy()
+  result["allowed_mentions"] = %* {"parse": ["users"]}
+
+func oversizeNote(fileName: string; size: BiggestInt): string =
+  "[Anexo " & fileName & " ignorado: " & $size &
+    " bytes, acima do limite de " & $(DiscordMaxInboundAttachmentBytes div
+    (1024 * 1024)) & " MiB.]"
+
 func parseMessageCreate(d: JsonNode): DsParseResult =
   ## Parses a MESSAGE_CREATE dispatch payload.
   let author = d.getOrDefault("author")
   if author == nil: return DsParseResult(kind: dekUnknown)
-  if author.getOrDefault("bot").getBool(false): return DsParseResult(kind: dekUnknown)
-  let content = d.getOrDefault("content").getStr("")
-  
-  # Extract attachments if present
-  var hasMedia = false
+  if isBotAuthored(d): return DsParseResult(kind: dekUnknown)
+  var content = d.getOrDefault("content").getStr("")
+
+  # Extract attachments if present; an oversize one is named, not fetched.
   var attachmentUrls: seq[string] = @[]
-  if d.hasKey("attachments"):
-    let attachments = d["attachments"]
-    if attachments.kind == JArray and attachments.len > 0:
-      hasMedia = true
-      for att in attachments:
-        # Use proxy_url if available, fallback to url
-        let url = att.getOrDefault("proxy_url").getStr(att.getOrDefault("url").getStr(""))
-        if url.len > 0:
-          attachmentUrls.add(url)
-  
+  var notes: seq[string] = @[]
+  let attachments = d.getOrDefault("attachments")
+  if attachments != nil and attachments.kind == JArray:
+    for att in attachments:
+      let size = att.getOrDefault("size").getBiggestInt(0)
+      if size > DiscordMaxInboundAttachmentBytes:
+        notes.add(oversizeNote(att.getOrDefault("filename").getStr("?"), size))
+        continue
+      # Use proxy_url if available, fallback to url
+      let url = att.getOrDefault("proxy_url").getStr(att.getOrDefault("url").getStr(""))
+      if url.len > 0:
+        attachmentUrls.add(url)
+  let hasMedia = attachmentUrls.len > 0
+  if notes.len > 0:
+    if content.len > 0: content.add("\n\n")
+    content.add(notes.join("\n"))
+
   # Allow messages with attachments even if content is empty
   if content.len == 0 and not hasMedia:
     return DsParseResult(kind: dekUnknown)
-  
+
   DsParseResult(
     kind:      dekMessage,
     rawId:     author.getOrDefault("id").getStr(""),
@@ -210,7 +242,7 @@ func toInbound*(r: DsParseResult; userId: UserId): InboundMessage =
   var mediaUrl = ""
   if r.hasMedia and r.attachmentUrls.len > 0:
     mediaUrl = r.attachmentUrls[0]
-  
+
   InboundMessage(
     userId:    userId,
     channel:   ckDiscord,
