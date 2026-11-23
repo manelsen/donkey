@@ -40,6 +40,29 @@ proc runTests*() =
       check part{"functionCall"}{"name"}.getStr() == "bad"
       check part{"functionCall"}{"args"}.kind == JObject
 
+  suite "thought signatures (Gemini 3)":
+    ## Gemini 3 answers 400 when a replayed functionCall lacks its
+    ## thoughtSignature. The real one is kept from the response and sent back;
+    ## a call made by another provider (a fallback) gets the placeholder Google
+    ## accepts (hermes agent/gemini_native_adapter.py, 5c3421082d).
+
+    test "the response's signature is kept on the tool call":
+      let j = %* {"candidates": [{"content": {"parts": [
+        {"functionCall": {"name": "clock", "args": {}}, "thoughtSignature": "sig-1"}]}}]}
+      let resp = parseGeminiResponse(j).value
+      check resp.toolCalls.len == 1
+      check resp.toolCalls[0].signature == "sig-1"
+
+    test "a replayed call carries its own signature":
+      let part = functionCallPart(ToolCallRequest(name: "clock", inputJson: "{}",
+                                                  signature: "sig-1"))
+      check part["thoughtSignature"].getStr == "sig-1"
+
+    test "a call without one carries the placeholder":
+      let part = functionCallPart(ToolCallRequest(name: "clock", inputJson: "{}"))
+      check part["thoughtSignature"].getStr == GeminiSkipThoughtSignature
+      check GeminiSkipThoughtSignature == "skip_thought_signature_validator"
+
   suite "functionResponsePart":
     test "produces functionResponse part":
       let msg = ChatMessage(role: "tool", text: """{"result":42}""", toolCallId: "call_1")

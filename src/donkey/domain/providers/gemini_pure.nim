@@ -31,11 +31,20 @@ func geminiRole*(role: string): string =
 proc textPart*(text: string): JsonNode =
   %* {"text": text}
 
+const GeminiSkipThoughtSignature* = "skip_thought_signature_validator"
+  ## The placeholder Google accepts in place of a real signature, for a call
+  ## that has none (made by another provider before a fallback).
+
 proc functionCallPart*(tc: ToolCallRequest): JsonNode =
   ## Converts a ToolCallRequest to a Gemini functionCall part.
   ## inputJson is used as-is (assumed pre-serialized or simple string).
+  ## Gemini 3 answers 400 when a replayed call lacks its thoughtSignature, so
+  ## every call carries its own or the placeholder (hermes
+  ## agent/gemini_native_adapter.py).
   let args = try: parseJson(tc.inputJson) except CatchableError: newJObject()
-  %* {"functionCall": {"name": tc.name, "args": args}}
+  %* {"functionCall": {"name": tc.name, "args": args},
+      "thoughtSignature": (if tc.signature.len > 0: tc.signature
+                           else: GeminiSkipThoughtSignature)}
 
 proc functionResponsePart*(msg: ChatMessage; functionName: string): JsonNode =
   ## Converts a tool-result message to a Gemini functionResponse part.
@@ -159,6 +168,7 @@ func parseGeminiResponse*(j: JsonNode): Result[CompletionResponse, string] =
         id: fc.getOrDefault("id").getStr(""),
         name: fc.getOrDefault("name").getStr(""),
         inputJson: $fc.getOrDefault("args"),
+        signature: part.getOrDefault("thoughtSignature").getStr(""),
       ))
   let usage = j.getOrDefault("usageMetadata")
   ok CompletionResponse(

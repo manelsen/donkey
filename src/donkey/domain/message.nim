@@ -101,6 +101,7 @@ type
     id*:        string
     name*:      string
     inputJson*: string
+    signature*: string  ## provider-opaque replay data: Gemini's thoughtSignature
 
   CompletionRequest* = object
     system*:    string
