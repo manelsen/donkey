@@ -57,7 +57,7 @@ type
     lastError*: string
       ## Optional last run error; empty means none.
     failures*: int
-      ## Retained failed runs since retention; `0` means none reported.
+      ## Failed firing attempts so far; `0` means none.
 
 # ── formatting helpers ───────────────────────────────────────────────────────
 
@@ -102,7 +102,7 @@ func statusText(record: ScheduleViewRecord): string =
 
 func failuresText(record: ScheduleViewRecord): string =
   if record.failures <= 0: ""
-  else: "failures=" & $record.failures & " (since retention)"
+  else: "failures=" & $record.failures
 
 # ── human output ─────────────────────────────────────────────────────────────
 
@@ -171,7 +171,7 @@ func scheduleDetailLines*(record: ScheduleViewRecord;
   if record.lastError.len > 0:
     result.add "last_error: " & record.lastError
   if record.failures > 0:
-    result.add "failures: " & $record.failures & " (since retention)"
+    result.add "failures: " & $record.failures
   result.add "payload: " & record.spec.payload
 
 # ── JSON output ──────────────────────────────────────────────────────────────

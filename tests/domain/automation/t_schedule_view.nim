@@ -109,9 +109,10 @@ proc runTests*() =
       check "last_status=none" in row
       check "last_error" notin row
 
-    test "shows failures with the retention label":
+    test "shows the failure count":
       let row = formatScheduleRow(makeRow(failures = 2), FixedNow)
-      check "failures=2 (since retention)" in row
+      check "failures=2" in row
+      check "retention" notin row
 
     test "never prints the payload":
       let row = formatScheduleRow(makeRow(), FixedNow)
