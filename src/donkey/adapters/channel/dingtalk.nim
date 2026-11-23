@@ -32,13 +32,13 @@ import ../../ports/http
 import ../http/std_http
 import ../identity/identity_resolver
 import ../../infra/event_queue
+import ../../domain/channels/access_token_pure
 
 export identity_resolver
 export channel.FileDownload
 
 const
   DtDefaultApiBase* = "https://api.dingtalk.com"
-  DtTokenSkewSec    = 60'i64
 
 # ── Public event type ─────────────────────────────────────────────────────────
 
@@ -115,8 +115,7 @@ type
     apiBase*:       string   ## override for testing
     resolver*:      IdentityResolver
     http*:          StdHttpAdapter
-    accessToken:    string
-    tokenExpirySec: int64
+    token:          AccessToken
 
 func resolvedApiBase(a: DingTalkAdapter): string =
   if a.apiBase.len > 0: a.apiBase else: DtDefaultApiBase
@@ -141,9 +140,8 @@ proc parseDtBody(resp: HttpResponse): Result[JsonNode, string]
 
 proc ensureAccessToken*(a: var DingTalkAdapter): Result[string, string] =
   ## Returns a valid access token, refreshing if expired.
-  if a.accessToken.len > 0 and
-     (a.tokenExpirySec - DtTokenSkewSec) > nowUnixSec():
-    return ok(a.accessToken)
+  if a.token.isFresh(nowUnixSec()):
+    return ok(a.token.value)
   let body    = %* {"appKey": a.appKey, "appSecret": a.appSecret}
   let headers = @[("Content-Type", "application/json")]
   let resp    = ? a.http.post(
@@ -157,8 +155,7 @@ proc ensureAccessToken*(a: var DingTalkAdapter): Result[string, string] =
     let exSec = j.getOrDefault("expireIn").getInt(0)
     if tok.len == 0 or exSec <= 0:
       return err("DingTalk token: missing accessToken/expireIn")
-    a.accessToken    = tok
-    a.tokenExpirySec = nowUnixSec() + int64(exSec)
+    a.token = issuedToken(tok, int64(exSec), nowUnixSec())
     ok(tok)
   except CatchableError as e:
     err(e.msg)

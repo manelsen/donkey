@@ -138,6 +138,13 @@ None of these is reachable from `src/donkey.nim`. They are kept alive only by te
 - **Help:** `qqHelpText` and `buildWeComHelpMd` rebuild the help text by hand.
 - **Session tasks:** Discord buttons, Telegram callbacks and Slack onboarding enqueue tasks without `enqueueSessionTask`.
 
+**Progress (0.3.x):**
+- Session tasks: done. Every button press goes through `enqueueSessionTask`; Discord and Telegram created an entry with no orchestrator for a user without a live session, and the task was lost.
+- Access-token cache: done. `domain/channels/access_token_pure` for WeCom, DingTalk and QQ (`qq_webhook` no longer exists).
+- Event queue: done earlier. Every adapter's queue is an `infra/event_queue`; what is left per adapter is a one-line wrapper.
+- LLM reranking: done. `rerankViaChat` and `clipCandidates` in `llm_rerank_common`.
+- Still open: message splitting, the SQLite store boilerplate, the graph store queries and the hand-built help texts.
+
 ### 13. `CLAUDE.md` conventions not followed
 - 19 modules in `domain/` return `Result`, and there are 43 `proc`s in `domain/` (the rule is pure `func`). This needs the ADR already listed as an open question in the command-dispatch PRD.
 - 29 modules import `results` directly instead of `pipeops`.

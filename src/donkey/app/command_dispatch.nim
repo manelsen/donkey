@@ -44,6 +44,9 @@ type
     ensureSession*: EnsureSessionFn  ## smCreate only; nil → plain enqueue
     interactiveUi*: bool   ## help shows the interactive usage forms
 
+const NoLiveSessionText* = "Envie uma mensagem primeiro para iniciar o onboarding."
+  ## The answer to a button pressed without a live session to take it.
+
 proc enqueueSessionTask*(sm: var SessionManager; msgSeq: var int;
                          userId: UserId; kind: TaskKind; value: string;
                          channel: ChannelKind; messageId: string;

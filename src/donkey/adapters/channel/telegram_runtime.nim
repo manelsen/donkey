@@ -696,12 +696,11 @@ proc handleTelegramCoreCallback*(sm: var SessionManager;
     discard tgAdapter.answerCallback(msg.callbackId)
     if ensureTaskSession != nil:
       ensureTaskSession(msg, callbackTaskKind(callback), callback.value)
-    else:
-      let entry = sm.getOrCreate(msg.userId)
-      inc msgSeq
-      entry.inbox.addLastNoWait(
-        newTaskMsg($msgSeq, callbackTaskKind(callback), $msg.userId,
-                   callback.value, ckTelegram, replyTarget(msg)))
+    elif not enqueueSessionTask(sm, msgSeq, msg.userId, callbackTaskKind(callback),
+                                callback.value, ckTelegram, replyTarget(msg)):
+      discard tgAdapter.send(OutboundMessage(userId: msg.userId, channel: ckTelegram,
+                                             text: NoLiveSessionText,
+                                             replyTo: replyTarget(msg)))
     return true
   false
 

@@ -107,16 +107,11 @@ proc drainSlackEvents*(slAdapter: var SlackAdapter;
         let callback = decideCallbackRequest(
           CallbackRequest(channel: ckSlack, data: event.text))
         if callback.kind in {cbkPersonality, cbkName}:
-          if sm.hasLiveSession(userId):
-            let entry = sm.getOrCreate(userId)
-            inc msgSeq
-            entry.inbox.addLastNoWait(
-              newTaskMsg($msgSeq, callbackTaskKind(callback), $userId,
-                         callback.value, ckSlack, messageId))
-          else:
+          if not enqueueSessionTask(sm, msgSeq, userId, callbackTaskKind(callback),
+                                    callback.value, ckSlack, messageId):
             slAdapter.send(OutboundMessage(
               userId: userId, channel: ckSlack,
-              text: "Envie uma mensagem primeiro para iniciar o onboarding.")).isOkOr:
+              text: NoLiveSessionText)).isOkOr:
               log.error("sl send onboarding feedback failed for user=" & $userId &
                         " reason=" & error)
           (hasEvent, event) = slAdapter.tryRecvEvent()
