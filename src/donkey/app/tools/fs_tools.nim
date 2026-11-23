@@ -1,10 +1,9 @@
-## fs_tools.nim — paddock path resolution, bash execution, and structured FS ops.
+## fs_tools.nim — paddock path resolution and structured FS ops.
 ##
 ## resolveInPaddock / inPaddock guard file access to the agent workspace.
-## performBash runs shell commands with CWD management.
 ## performFs* expose the structured filesystem core used by the next tool family.
 
-import std/[algorithm, json, osproc, os, sequtils, strutils]
+import std/[algorithm, json, os, sequtils, strutils]
 import ../../core/pipeops
 import ../../core/tooling/structured_tool_result
 import ../../domain/calc
@@ -294,22 +293,3 @@ proc performFsRemove*(fs: FsRuntimePort; path, paddock: string;
     })
   except CatchableError as e:
     operationalErrorToolResult(e.msg)
-
-# ── bash ──────────────────────────────────────────────────────────────────────
-
-proc performBash*(cmd: string; workingDir = ""): string {.gcsafe, raises: [].} =
-  try:
-    if workingDir.len > 0:
-      createDir(workingDir)
-    let (output, code) = execCmdEx(cmd,
-                                   options = {poEvalCommand, poStdErrToStdOut},
-                                   workingDir = workingDir)
-    result = output
-    if result.endsWith('\n'): result.setLen(result.len - 1)
-    if code != 0:
-      if result.len > 0: result.add('\n')
-      result.add("[exit " & $code & "]")
-    if result.len == 0:
-      result = "[exit " & $code & "]"
-  except CatchableError as e:
-    result = "Error: " & e.msg

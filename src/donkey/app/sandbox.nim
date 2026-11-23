@@ -19,7 +19,7 @@
 ## Call sandboxLogLevel once at daemon startup to surface the active mode.
 
 import ../config/environment
-import std/[osproc, os, streams, strtabs, strutils]
+import std/[os, strtabs, strutils]
 when defined(posix):
   import std/posix
 import results
@@ -31,7 +31,10 @@ import ../core/utf8
 import ../core/app_meta
 import ../infra/sandbox/wasm_tools
 import ../infra/sandbox/shell_composer
+import ../ports/fs
+import ../ports/process
 
+export process
 export SandboxMode
 
 type
@@ -40,10 +43,6 @@ type
     workingDir*:     string
     ensureWorkDir*:  bool
 
-  SandboxRunner* = proc(plan: SandboxPlan): string {.gcsafe, raises: [].}
-  SandboxRunnerRaw* = proc(plan: SandboxPlan;
-                           env: StringTableRef): tuple[output: string, exitCode: int]
-                           {.gcsafe, raises: [CatchableError].}
   PathOwnerFn* = proc(path: string): Result[int, string] {.gcsafe, raises: [].}
 
 const
@@ -82,11 +81,11 @@ proc pathOwnerUid*(path: string): Result[int, string] {.gcsafe, raises: [].} =
     discard path
     ok(-1)
 
-proc collectOwnershipViolations*(root: string;
+proc collectOwnershipViolations*(fs: FsRuntimePort; root: string;
                                  expectedUid: int;
                                  ownerFn: PathOwnerFn = pathOwnerUid): seq[string]
                                  {.gcsafe, raises: [].} =
-  if root.len == 0 or not dirExists(root) or ownerFn == nil or expectedUid < 0:
+  if root.len == 0 or fs.entryKind(root) != fekDir or ownerFn == nil or expectedUid < 0:
     return
   var pending = @[root]
   while pending.len > 0:
@@ -97,28 +96,28 @@ proc collectOwnershipViolations*(root: string;
     if ownerUid != expectedUid:
       result.add(current)
       continue
-    try:
-      for kind, child in walkDir(current, relative = false):
-        case kind
-        of pcDir:
-          pending.add(child)
-        of pcFile, pcLinkToFile, pcLinkToDir:
-          let childOwner = ownerFn(child).valueOr:
-            result.add(child & " (owner lookup failed: " & error & ")")
-            continue
-          if childOwner != expectedUid:
-            result.add(child)
-    except OSError as e:
-      result.add(current & " (walk failed: " & e.msg & ")")
+    let children = fs.listDir(current).valueOr:
+      result.add(current & " (walk failed: " & error & ")")
+      continue
+    for child in children:
+      case child.kind
+      of fekDir:
+        pending.add(child.path)
+      of fekFile, fekLink, fekMissing:
+        let childOwner = ownerFn(child.path).valueOr:
+          result.add(child.path & " (owner lookup failed: " & error & ")")
+          continue
+        if childOwner != expectedUid:
+          result.add(child.path)
 
-proc validatePaddockOwnership*(cfg: DonkeyConfig;
+proc validatePaddockOwnership*(fs: FsRuntimePort; cfg: DonkeyConfig;
                                devMode: bool;
                                ownerFn: PathOwnerFn = pathOwnerUid;
                                uid = effectiveUid()): Result[void, string]
                                {.gcsafe, raises: [].} =
   if devMode or uid < 0:
     return ok()
-  let violations = collectOwnershipViolations(cfg.paddocks, uid, ownerFn)
+  let violations = collectOwnershipViolations(fs, cfg.paddocks, uid, ownerFn)
   if violations.len == 0:
     return ok()
   let shown = violations[0 ..< min(violations.len, 3)].join(", ")
@@ -147,15 +146,25 @@ proc buildHostSandboxEnv*(paddock: string): StringTableRef {.gcsafe, raises: [].
   result["USER"] = user
   result["LOGNAME"] = inheritedByChild("LOGNAME", user)
 
+func childEnvPairs(env: StringTableRef): seq[(string, string)] =
+  if env != nil:
+    for k, v in env: result.add (k, v)
+
+func planSpec(plan: SandboxPlan; env: StringTableRef): ProcessSpec =
+  ## A nil `env` inherits the daemon's environment (the OCI runtime needs it);
+  ## otherwise it is the child's whole environment.
+  ProcessSpec(command: plan.command, workingDir: plan.workingDir,
+              createWorkingDir: plan.ensureWorkDir,
+              env: childEnvPairs(env), replaceEnv: env != nil)
+
 # ── Shell.wasm path resolution ────────────────────────────────────────────────
 
 proc resolveShellWasmPath*(): string {.gcsafe, raises: [].} =
   ## Returns the path to shell.wasm (go-busybox).
   ## The file must be named "busybox" (no extension) so that argv[0] works
   ## with the go-busybox multi-call binary dispatcher.
-  let default = getHomeDir() / ".donkey" / "busybox"
-  if default.fileExists: return default
-  default  # return default even if missing; caller handles the check
+  ## Whether it exists is for the caller to check.
+  getHomeDir() / ".donkey" / "busybox"
 
 # ── Command builder (pure — exported for unit tests) ─────────────────────────
 
@@ -222,23 +231,11 @@ proc formatSandboxResult*(output: string; code: int): string {.gcsafe, raises: [
   if result.len == 0:
     result = "[exit " & $code & "]"
 
-proc runSandboxPlanRaw(plan: SandboxPlan;
-                       env: StringTableRef = nil): tuple[output: string, exitCode: int]
-                       {.gcsafe, raises: [CatchableError].} =
-  if plan.ensureWorkDir and plan.workingDir.len > 0:
-    createDir(plan.workingDir)
-  execCmdEx(plan.command,
-            options = {poEvalCommand, poStdErrToStdOut},
-            workingDir = plan.workingDir,
-            env = env)
-
-proc runSandboxPlan*(plan: SandboxPlan;
+proc runSandboxPlan*(process: ProcessRuntimePort; plan: SandboxPlan;
                      env: StringTableRef = nil): string {.gcsafe, raises: [].} =
-  try:
-    let (output, code) = runSandboxPlanRaw(plan, env)
-    formatSandboxResult(output, code)
-  except CatchableError as e:
-    "Error: " & e.msg
+  let ran = process.run(planSpec(plan, env)).valueOr:
+    return "Error: " & error
+  formatSandboxResult(ran.output, ran.exitCode)
 
 func buildSandboxWriteProbeCmd*(): string {.gcsafe, raises: [].} =
   "touch " & SandboxWriteProbeFile & " && rm -f " & SandboxWriteProbeFile
@@ -263,71 +260,54 @@ func dockerPermissionHint*(runtimeCmd = "docker"): string {.gcsafe, raises: [].}
   if runtime.contains("podman"):
     result &= "\nFor rootless Podman, also export CONTAINER_HOST to the user socket."
 
-proc probeSandboxWorkspaceWritable*(mode: SandboxMode;
+proc probeSandboxWorkspaceWritable*(process: ProcessRuntimePort;
+                                    mode: SandboxMode;
                                     paddock: string;
                                     image: string;
                                     runtimeCmd = "docker";
                                     allowNetwork = false;
-                                    readOnlyRootfs = true;
-                                    runPlanRaw: SandboxRunnerRaw = nil): Result[void, string]
+                                    readOnlyRootfs = true): Result[void, string]
                                     {.gcsafe, raises: [].} =
-  let runner =
-    if runPlanRaw != nil: runPlanRaw
-    else: (proc(plan: SandboxPlan; env: StringTableRef): tuple[output: string, exitCode: int]
-           {.closure, gcsafe, raises: [CatchableError].} =
-      runSandboxPlanRaw(plan, env))
   let plan = buildSandboxPlan(
     buildSandboxWriteProbeCmd(), paddock, mode, image, runtimeCmd,
     allowNetwork, readOnlyRootfs)
   let env =
     if mode == smOci: nil
     else: buildHostSandboxEnv(paddock)
-  try:
-    let (output, code) = runner(plan, env)
-    if code == 0:
-      return ok()
-    let formatted = formatSandboxResult(output, code)
-    if isDockerPermissionError(formatted, runtimeCmd):
-      return err(dockerPermissionHint(runtimeCmd))
-    err(formatted)
-  except CatchableError as e:
-    err("Error: " & e.msg)
+  let ran = process.run(planSpec(plan, env)).valueOr:
+    return err("Error: " & error)
+  if ran.exitCode == 0:
+    return ok()
+  let formatted = formatSandboxResult(ran.output, ran.exitCode)
+  if isDockerPermissionError(formatted, runtimeCmd):
+    return err(dockerPermissionHint(runtimeCmd))
+  err(formatted)
 
-proc runSandboxWorker*(paddock, cmd: string): int {.gcsafe, raises: [].} =
-  try:
-    let (output, code) = runSandboxPlanRaw(buildDirectPlan(cmd, paddock), buildHostSandboxEnv(paddock))
-    stdout.write(output)
-    code
-  except CatchableError as e:
-    discard e
-    1
+proc runSandboxWorker*(process: ProcessRuntimePort; paddock, cmd: string): int
+                      {.gcsafe, raises: [].} =
+  ## The `__sandbox_exec` helper: runs the command and passes its output and
+  ## exit code through.
+  let ran = process.run(planSpec(buildDirectPlan(cmd, paddock),
+                                 buildHostSandboxEnv(paddock))).valueOr:
+    return 1
+  try: stdout.write(ran.output)
+  except CatchableError: discard
+  ran.exitCode
 
-proc runSandboxHelper*(cmd, paddock: string): string {.gcsafe, raises: [].} =
-  try:
-    createDir(paddock)
-    let appPath = getAppFilename()
-    if not canReenterViaHelper(appPath):
-      return runSandboxPlan(buildDirectPlan(cmd, paddock), buildHostSandboxEnv(paddock))
-    var p = startProcess(
-      appPath,
-      args = [SandboxExecCommand, paddock, cmd],
-      env = buildHostSandboxEnv(paddock),
-      options = {poStdErrToStdOut},
-    )
-    let outp = outputStream(p)
-    var output = ""
-    var line = newStringOfCap(120)
-    while true:
-      if outp.readLine(line):
-        output.add(line)
-        output.add("\n")
-      elif not running(p):
-        break
-    let code = waitForExit(p)
-    close(p)
-    formatSandboxResult(output, code)
-  except CatchableError as e:
-    "Error: " & e.msg
+proc runSandboxHelper*(process: ProcessRuntimePort; cmd, paddock: string): string
+                      {.gcsafe, raises: [].} =
+  ## Re-enters this binary as `__sandbox_exec`, so the command runs with the
+  ## filtered host environment in a process of its own.
+  let appPath = try: getAppFilename() except CatchableError: ""
+  if not canReenterViaHelper(appPath):
+    return runSandboxPlan(process, buildDirectPlan(cmd, paddock),
+                          buildHostSandboxEnv(paddock))
+  let ran = process.run(ProcessSpec(
+    argv: @[appPath, SandboxExecCommand, paddock, cmd],
+    workingDir: paddock, createWorkingDir: true,
+    env: childEnvPairs(buildHostSandboxEnv(paddock)), replaceEnv: true)).valueOr:
+    return "Error: " & error
+  formatSandboxResult(ran.output, ran.exitCode)
 
 func shouldFallbackOci*(output: string; runtimeCmd = "docker"): bool {.gcsafe, raises: [].} =
   let normalized = output.toLowerAscii()
@@ -340,17 +320,12 @@ func shouldFallbackOci*(output: string; runtimeCmd = "docker"): bool {.gcsafe, r
   ("error: could not find command: " & runtime in normalized) or
   ("error: " in normalized and runtime in normalized and "no such file or directory" in normalized)
 
-proc executeOciPlan*(cmd, paddock, image: string;
+proc executeOciPlan*(process: ProcessRuntimePort; cmd, paddock, image: string;
                      runtimeCmd = "docker";
                      allowHostFallback = true;
                      allowNetwork = false;
-                     readOnlyRootfs = true;
-                     runPlan: SandboxRunner = nil): string {.gcsafe, raises: [].} =
-  let runner =
-    if runPlan != nil: runPlan
-    else: (proc(plan: SandboxPlan): string {.closure, gcsafe, raises: [].} =
-      runSandboxPlan(plan))
-  let ociResult = runner(buildSandboxPlan(cmd, paddock, smOci, image, runtimeCmd, allowNetwork, readOnlyRootfs))
+                     readOnlyRootfs = true): string {.gcsafe, raises: [].} =
+  let ociResult = runSandboxPlan(process, buildSandboxPlan(cmd, paddock, smOci, image, runtimeCmd, allowNetwork, readOnlyRootfs))
   if isDockerPermissionError(ociResult, runtimeCmd):
     return dockerPermissionHint(runtimeCmd)
   if not shouldFallbackOci(ociResult, runtimeCmd):
@@ -358,11 +333,13 @@ proc executeOciPlan*(cmd, paddock, image: string;
   if not allowHostFallback:
     return "Error: " & runtimeCmd & " sandbox unavailable; host fallback is disabled by configuration."
 
-  let directResult = runSandboxHelper(cmd, paddock)
+  let directResult = runSandboxHelper(process, cmd, paddock)
   "Warning: " & runtimeCmd & " sandbox unavailable; executed without container isolation.\n" &
     directResult
 
-proc sandboxStatusMessage*(mode: SandboxMode; image: string; runtimeCmd = "docker"): (LogLevel, string) {.gcsafe, raises: [].} =
+proc sandboxStatusMessage*(mode: SandboxMode; image: string; runtimeCmd = "docker";
+                           shellPresent = false): (LogLevel, string) {.gcsafe, raises: [].} =
+  ## `shellPresent`: whether shell.wasm exists, for the wasm mode.
   case mode
   of smNone:
     (lvlWarn,
@@ -372,7 +349,7 @@ proc sandboxStatusMessage*(mode: SandboxMode; image: string; runtimeCmd = "docke
     (lvlInfo, "bash sandbox: oci (" & runtimeCmd & ", image: " & image & ")")
   of smWasm:
     let shellPath = resolveShellWasmPath()
-    if shellPath.fileExists:
+    if shellPresent:
       (lvlInfo, "bash sandbox: wasm (wasmtime + " & shellPath & ")")
     else:
       (lvlWarn,
@@ -394,25 +371,15 @@ proc validateSandboxPolicy*(cfg: DonkeyConfig;
     return err("Security Error: sandbox.read_only_rootfs=false is only allowed in --dev-mode")
   ok()
 
-proc probeRuntimeInfo(runtimePath: string; timeoutMs: int):
-                     tuple[output: string, code: int] {.gcsafe, raises: [].} =
-  var p: Process
-  try:
-    p = startProcess(runtimePath, args = @["info"],
-                     options = {poStdErrToStdOut})
-    let code = p.waitForExit(timeout = timeoutMs)
-    let output = p.outputStream.readAll()
-    (output, code)
-  except CatchableError as e:
-    ("Error: " & e.msg, -1)
-  finally:
-    if p != nil:
-      try:
-        p.close()
-      except CatchableError:
-        discard
+proc probeRuntimeInfo(process: ProcessRuntimePort; runtimePath: string;
+                      timeoutMs: int): tuple[output: string, code: int]
+                     {.gcsafe, raises: [].} =
+  let ran = process.run(argvSpec(@[runtimePath, "info"], timeoutMs = timeoutMs)).valueOr:
+    return ("Error: " & error, -1)
+  (ran.output, ran.exitCode)
 
-proc sandboxAvailabilityResult*(cfg: DonkeyConfig;
+proc sandboxAvailabilityResult*(process: ProcessRuntimePort; fs: FsRuntimePort;
+                                cfg: DonkeyConfig;
                                 timeoutMs = 3000): Result[string, string]
                                 {.gcsafe, raises: [].} =
   if cfg.invalidSandboxMode.len > 0:
@@ -425,7 +392,7 @@ proc sandboxAvailabilityResult*(cfg: DonkeyConfig;
     if runtimePath.len == 0:
       err("OCI runtime '" & cfg.sandboxRuntimeCmd & "' not found in PATH")
     else:
-      let (output, code) = probeRuntimeInfo(runtimePath, timeoutMs)
+      let (output, code) = probeRuntimeInfo(process, runtimePath, timeoutMs)
       if code == 0:
         ok("runtime=" & cfg.sandboxRuntimeCmd)
       elif isDockerPermissionError(output, cfg.sandboxRuntimeCmd):
@@ -441,13 +408,14 @@ proc sandboxAvailabilityResult*(cfg: DonkeyConfig;
     if wasmtimePath.len == 0:
       return err("wasmtime not found in PATH")
     let shellPath = resolveShellWasmPath()
-    if not shellPath.fileExists:
+    if fs.entryKind(shellPath) != fekFile:
       return err("shell.wasm not found at " & shellPath)
     ok("wasmtime=" & wasmtimePath & ", shell=" & shellPath)
 
 # ── Executor ──────────────────────────────────────────────────────────────────
 
-proc sandboxBash*(cmd, paddock: string;
+proc sandboxBash*(process: ProcessRuntimePort; fs: FsRuntimePort;
+                  cmd, paddock: string;
                   mode:  SandboxMode;
                   image: string;
                   runtimeCmd = "docker";
@@ -463,26 +431,29 @@ proc sandboxBash*(cmd, paddock: string;
   case mode
   of smWasm:
     let shellPath = resolveShellWasmPath()
-    if not shellPath.fileExists:
+    if fs.entryKind(shellPath) != fekFile:
       if not allowHostFallback:
         return "Error: wasm sandbox unavailable; host fallback is disabled by configuration."
-      return runSandboxHelper(cmd, paddock)
+      return runSandboxHelper(process, cmd, paddock)
     # Use ShellComposer for pipes — composes applet chain in Nim
     if "|" in cmd:
       let adapter = newWasmToolAdapter(shellPath)
       return adapter.composeFormatted(cmd, paddock)
     # Single command — use wasmtime directly
-    runSandboxPlan(buildSandboxPlan(cmd, paddock, mode, image, runtimeCmd, allowNetwork, readOnlyRootfs),
+    runSandboxPlan(process,
+                   buildSandboxPlan(cmd, paddock, mode, image, runtimeCmd, allowNetwork, readOnlyRootfs),
                    buildHostSandboxEnv(paddock))
   of smNone:
-    runSandboxHelper(cmd, paddock)
+    runSandboxHelper(process, cmd, paddock)
   of smOci:
-    executeOciPlan(cmd, paddock, image, runtimeCmd, allowHostFallback, allowNetwork, readOnlyRootfs)
+    executeOciPlan(process, cmd, paddock, image, runtimeCmd, allowHostFallback, allowNetwork, readOnlyRootfs)
 
 # ── Startup log ───────────────────────────────────────────────────────────────
 
-proc sandboxLogLevel*(mode: SandboxMode; image: string; runtimeCmd: string; log: Logger) =
-  let (level, message) = sandboxStatusMessage(mode, image, runtimeCmd)
+proc sandboxLogLevel*(fs: FsRuntimePort; mode: SandboxMode; image: string;
+                      runtimeCmd: string; log: Logger) =
+  let (level, message) = sandboxStatusMessage(
+    mode, image, runtimeCmd, fs.entryKind(resolveShellWasmPath()) == fekFile)
   case level
   of lvlWarn: log.warn(message)
   of lvlInfo: log.info(message)
@@ -490,7 +461,7 @@ proc sandboxLogLevel*(mode: SandboxMode; image: string; runtimeCmd: string; log:
   of lvlError: log.error(message)
   of lvlFatal: log.fatal(message)
 
-proc logSandboxWorkspaceProbe*(mode: SandboxMode;
+proc logSandboxWorkspaceProbe*(process: ProcessRuntimePort; mode: SandboxMode;
                                paddock: string;
                                image: string;
                                runtimeCmd: string;
@@ -498,7 +469,7 @@ proc logSandboxWorkspaceProbe*(mode: SandboxMode;
                                readOnlyRootfs: bool;
                                log: Logger) =
   let probe = probeSandboxWorkspaceWritable(
-    mode, paddock, image, runtimeCmd, allowNetwork, readOnlyRootfs)
+    process, mode, paddock, image, runtimeCmd, allowNetwork, readOnlyRootfs)
   if probe.isOk:
     log.info("bash sandbox workspace: writable")
   else:

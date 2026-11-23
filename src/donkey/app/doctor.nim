@@ -20,28 +20,27 @@ import ../config/types
 import ../domain/providers/descriptors
 import ./credential_runtime
 import ./sandbox
+import ../ports/fs
+import ../ports/process
 
 # ── raw Result-returning procs (for >>= chaining) ─────────────────────────────
 
-proc runRuntimeCmd*(runtimeCmd = "docker"): Result[string, string] =
+proc runRuntimeCmd*(process: ProcessRuntimePort;
+                    runtimeCmd = "docker"): Result[string, string] {.gcsafe, raises: [].} =
   ## Checks OCI runtime binary presence and returns version string or error.
-  try:
-    let (output, code) = execCmdEx(runtimeCmd.quoteShell & " --version")
-    if code == 0: ok(output.strip())
-    else: err(runtimeCmd & " not found (exit " & $code & ")")
-  except CatchableError as e:
-    err(e.msg)
+  let ran = process.run(argvSpec(@[runtimeCmd, "--version"])).valueOr:
+    return err(error)
+  if ran.exitCode == 0: ok(ran.output.strip())
+  else: err(runtimeCmd & " not found (exit " & $ran.exitCode & ")")
 
-proc checkRuntimeCompose*(runtimeCmd: string;
+proc checkRuntimeCompose*(process: ProcessRuntimePort; runtimeCmd: string;
                           runtimeVersion: string): Result[string, string]
                           {.gcsafe, raises: [].} =
   ## Given an OCI runtime is available, checks for the compose subcommand.
-  try:
-    let (output, code) = execCmdEx(runtimeCmd.quoteShell & " compose version")
-    if code == 0: ok(runtimeVersion & " | compose: " & output.strip())
-    else: err(runtimeCmd & " compose plugin not available")
-  except CatchableError:
-    err(runtimeCmd & " compose check failed")
+  let ran = process.run(argvSpec(@[runtimeCmd, "compose", "version"])).valueOr:
+    return err(runtimeCmd & " compose check failed")
+  if ran.exitCode == 0: ok(runtimeVersion & " | compose: " & ran.output.strip())
+  else: err(runtimeCmd & " compose plugin not available")
 
 proc apiKeyResult(v: string; envVar: string): Result[string, string] =
   if v.len > 0: ok("set (" & $v.len & " chars)")
@@ -67,15 +66,16 @@ proc pgvectorResult(dsn: string): Result[string, string] =
 
 # ── public named checks ────────────────────────────────────────────────────────
 
-proc checkContainerRuntime*(runtimeCmd = "docker"): DiagResult =
+proc checkContainerRuntime*(process: ProcessRuntimePort; runtimeCmd = "docker"): DiagResult =
   ## Checks OCI runtime binary + compose plugin via >>= chaining.
-  (runRuntimeCmd(runtimeCmd) >>=
+  (runRuntimeCmd(process, runtimeCmd) >>=
     proc(version: string): Result[string, string] {.gcsafe, raises: [].} =
-      checkRuntimeCompose(runtimeCmd, version)
+      checkRuntimeCompose(process, runtimeCmd, version)
   ) |>-> toDiagResult("container runtime")
 
-proc checkSandboxRuntime*(cfg: DonkeyConfig): DiagResult =
-  sandboxAvailabilityResult(cfg) |>-> toDiagResult("sandbox runtime")
+proc checkSandboxRuntime*(process: ProcessRuntimePort; fs: FsRuntimePort;
+                          cfg: DonkeyConfig): DiagResult =
+  sandboxAvailabilityResult(process, fs, cfg) |>-> toDiagResult("sandbox runtime")
 
 proc checkApiKey*(env: Environment; name: string; envVar: string): DiagResult =
   ## Checks whether an API key environment variable is set.
@@ -213,15 +213,15 @@ const AuxKeyChecks = [
   ("Brave Search",   "BRAVE_API_KEY"),
 ]
 
-proc runDoctorChecks*(cfg: DonkeyConfig;
-                      devMode = false): seq[DiagResult] =
+proc runDoctorChecks*(process: ProcessRuntimePort; fs: FsRuntimePort;
+                      cfg: DonkeyConfig; devMode = false): seq[DiagResult] =
   ## Runs all dependency checks and returns the result list.
   ## Required checks (dsErr on failure): sandbox policy, selected sandbox runtime
   ## Advisory checks (dsWarn on failure): pgvector, API keys, relaxed sandbox knobs in dev mode
   result.add checkSandboxPolicy(cfg, devMode)
-  result.add checkSandboxRuntime(cfg)
+  result.add checkSandboxRuntime(process, fs, cfg)
   if cfg.sandboxMode == smOci:
-    result.add checkContainerRuntime(cfg.sandboxRuntimeCmd)
+    result.add checkContainerRuntime(process, cfg.sandboxRuntimeCmd)
   result.add checkPgvector(cfg.env)
   for (name, envVar) in AuxKeyChecks:
     result.add checkApiKey(cfg.env, name, envVar) |> markWarn
@@ -255,11 +255,11 @@ proc printDoctorReport*(results: seq[DiagResult]) =
   else:
     echo "All required checks passed."
 
-proc runDoctor*(cfg: DonkeyConfig;
-                devMode = false): int =
+proc runDoctor*(process: ProcessRuntimePort; fs: FsRuntimePort;
+                cfg: DonkeyConfig; devMode = false): int =
   ## Runs all checks, prints the report, returns 0 if all passed else 1.
   echo buildDoctorSummary(cfg, devMode)
   echo ""
-  let results = runDoctorChecks(cfg, devMode)
+  let results = runDoctorChecks(process, fs, cfg, devMode)
   printDoctorReport(results)
   if results |> allPassed: 0 else: 1

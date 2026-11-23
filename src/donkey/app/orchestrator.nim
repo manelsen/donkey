@@ -51,6 +51,7 @@ import ../ports/provider
 import ../ports/subagent_workspace
 import ../ports/memory
 import ../ports/reminders
+import ../ports/process
 import ../ports/http
 import ../ports/fs
 import ../ports/tool
@@ -118,6 +119,7 @@ func suppressToolProgressFromEnv*(env: Environment): bool =
 type OrchestratorState = object
   env*:           Environment  ## the snapshot settings are read from
   reminders*:     ReminderPort ## where the reminder tool schedules
+  process*:       ProcessRuntimePort ## where the bash and archive tools run
   history*:       ConversationHistory
   debugMode*:     bool
   showReasoning*: bool
@@ -300,6 +302,7 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
     paddockDir, sandboxMode, sandboxRuntimeCmd, sandboxImage)
   result.nativeCtx.replyTo = msg.replyTo
   result.nativeCtx.reminders = stateRuntime.reminders
+  result.nativeCtx.process = stateRuntime.process
   result.nativeCtx.stopGeneration = stateRuntime.stopGeneration
   ## Recorded per turn: a `/stop` that arrives after this point aborts the
   ## turn; one that arrived before it belongs to an earlier turn.
@@ -814,7 +817,8 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
                       fs:             FsRuntimePort = unavailableFs();
                       reviewRuntime:  ReviewRuntime = nil;
                       env:            Environment = Environment();
-                      reminders:      ReminderPort = ReminderPort()): Future[void] {.async.} =
+                      reminders:      ReminderPort = ReminderPort();
+                      process:        ProcessRuntimePort = unavailableProcess()): Future[void] {.async.} =
   ## Persistent actor. Loops: debounce → memory → LLM → reply → repeat.
   ## `env` is the snapshot tool and turn settings are read from.
   if daemonShuttingDown():
@@ -826,15 +830,16 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
 
   let memAgentFut = runMemoryAgent(memInbox, memOut, memory, searchFn)
   let toolAgentFut = runToolAgent(toolInbox, toolOut, clients)
-  sandboxLogLevel(sandboxMode, sandboxImage, sandboxRuntimeCmd, log)
+  sandboxLogLevel(fs, sandboxMode, sandboxImage, sandboxRuntimeCmd, log)
   if paddockDir.len > 0:
     logSandboxWorkspaceProbe(
-      sandboxMode, paddockDir, sandboxImage, sandboxRuntimeCmd,
+      process, sandboxMode, paddockDir, sandboxImage, sandboxRuntimeCmd,
       false, true, log)
 
   var stateRuntime = newOrchestratorState()
   stateRuntime.env = env
   stateRuntime.reminders = reminders
+  stateRuntime.process = process
   stateRuntime.subagents = newSubagentManager(subagentWorkspace)
   stateRuntime.stopGeneration = currentSessionStopGeneration()
   let sessionId   = $nowMs()

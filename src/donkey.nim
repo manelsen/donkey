@@ -29,6 +29,7 @@ import donkey/core/providers/smart_routing
 import donkey/adapters/memory/md_file
 import donkey/adapters/memory/reminder_store
 import donkey/adapters/memory/dm_allowlist
+import donkey/adapters/process/process_adapter
 when defined(withPostgres) or defined(withSqlite):
   import donkey/adapters/memory/multigraph_runtime
 import donkey/adapters/provider/openrouter
@@ -999,6 +1000,7 @@ func buildDaemonSessionServices(ctx: DaemonContext;
     subagentWorkspace = subagentWorkspacePort(),
     fs = newFsAdapter(),
     reminders = newReminderStore(memory.paddocksDir).toReminderPort(),
+    process = newProcessAdapter(),
   )
 
 proc handleDaemonSessionFallback(runtime:  var DaemonRuntime;
@@ -1768,7 +1770,7 @@ proc main =
       break
 
   if args.len >= 3 and args[0] == SandboxExecCommand:
-    quit(runSandboxWorker(args[1], args[2]))
+    quit(runSandboxWorker(newProcessAdapter(), args[1], args[2]))
 
   # setup doesn't need config — handle it early
   if args.len >= 1 and args[0] == "setup":
@@ -1816,12 +1818,12 @@ proc main =
     stderr.writeLine sandboxPolicy.error
     stderr.writeLine "Use --dev-mode only for local development, or tighten the [sandbox] policy in donkey.toml"
     quit(1)
-  let sandboxAvailability = sandboxAvailabilityResult(cfg)
+  let sandboxAvailability = sandboxAvailabilityResult(newProcessAdapter(), newFsAdapter(), cfg)
   if not devMode and sandboxAvailability.isErr:
     stderr.writeLine "Security Error: " & sandboxAvailability.error
     stderr.writeLine "Install the configured sandbox runtime, or switch to a supported [sandbox] mode before starting in production"
     quit(1)
-  let paddockOwnership = validatePaddockOwnership(cfg, devMode)
+  let paddockOwnership = validatePaddockOwnership(newFsAdapter(), cfg, devMode)
   if paddockOwnership.isErr:
     stderr.writeLine paddockOwnership.error
     stderr.writeLine "Fix ownership of the paddocks directory before starting in production"
@@ -1868,7 +1870,7 @@ proc main =
   cmdReg.register(CommandEntry(
     name: "doctor", minArgs: 1,
     handler: proc(a: seq[string]): int =
-      runDoctor(cfg, devMode),
+      runDoctor(newProcessAdapter(), newFsAdapter(), cfg, devMode),
     context: ccConfigLoaded, description: "Run full runtime diagnostic"))
   cmdReg.register(CommandEntry(
     name: "about", minArgs: 1,

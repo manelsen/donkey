@@ -22,6 +22,7 @@ import donkey/config/clawhub_registry
 import donkey/config/skills_registry
 import donkey/app/session_state
 import donkey/adapters/filesystem/fs_adapter
+import donkey/adapters/process/process_adapter
 
 let testFs = newFsAdapter()
 import donkey/app/native_tools
@@ -44,6 +45,7 @@ proc makeCtx(): NativeCtx =
     tools:       @[],
     log:         newLogger("test"),
     fs:          newFsAdapter(),
+    process: newProcessAdapter(),
   )
 
 proc makeCtxWithMemory(memory: MemoryRuntimePort; uid = UserId("test-user")): NativeCtx =
@@ -134,45 +136,6 @@ proc runTests*() =
 
     test "similar prefix not confused with paddock":
       check not inPaddock("/home/u/paddock-evil/file", "/home/u/paddock")
-
-  # ── performBash ───────────────────────────────────────────────────────────────
-
-  suite "performBash":
-
-    test "echo returns output without trailing newline":
-      check performBash("echo hello") == "hello"
-
-    test "non-zero exit code appended":
-      let r = performBash("exit 42")
-      check r.contains("[exit 42]")
-
-    test "stdout and stderr merged":
-      let r = performBash("echo out; echo err >&2")
-      check r.contains("out")
-      check r.contains("err")
-
-    test "empty stdout with non-zero exit":
-      let r = performBash("exit 1")
-      check r == "[exit 1]"
-
-    test "zero exit with output has no exit marker":
-      let r = performBash("echo ok")
-      check not r.contains("[exit")
-
-    test "workingDir is the CWD for the command":
-      let tmpDir = getTempDir() / "donkey_bash_wd_test"
-      createDir(tmpDir)
-      writeFile(tmpDir / "canary.txt", "found")
-      let r = performBash("cat canary.txt", tmpDir)
-      check r == "found"
-      removeDir(tmpDir)
-
-    test "workingDir is created if missing":
-      let tmpDir = getTempDir() / "donkey_bash_autocreate_" & $epochTime().int
-      defer: (try: removeDir(tmpDir) except: discard)
-      let r = performBash("pwd", tmpDir)
-      check dirExists(tmpDir)
-      check r.contains(tmpDir)
 
   # ── hashline read/edit helpers ────────────────────────────────────────────────
 
@@ -724,6 +687,7 @@ permissions = ["--allow-net=clawhub.ai"]
         log:         newLogger("test"),
         paddockDir:  pd,
         fs:          newFsAdapter(),
+        process: newProcessAdapter(),
       )
 
     test "read_file returns hashline-prefixed content":
@@ -898,6 +862,7 @@ permissions = ["--allow-net=clawhub.ai"]
         log:         newLogger("test"),
         paddockDir:  pd,
         fs:          newFsAdapter(),
+        process: newProcessAdapter(),
       )
 
     test "bash runs in paddock — pwd shows paddock path":

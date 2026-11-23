@@ -66,6 +66,7 @@ import ../ports/http as httpPort
 import ../ports/provider
 import ../ports/memory
 import ../ports/reminders
+import ../ports/process
 import ../core/tooling/native_tool_args
 export native_tool_args  # argument contexts and their pure parsers
 import ../config/types as cfgTypes
@@ -117,6 +118,7 @@ type
     memory*:       MemoryRuntimePort
     reminders*:    ReminderPort
     fs*:           FsRuntimePort
+    process*:      ProcessRuntimePort
     completeFn*:   CompleteFn
     asyncCompleteFn*: AsyncCompleteFn
     http*:         httpPort.HttpRuntimePort
@@ -452,7 +454,7 @@ proc executeShellNativeTool(tc: ToolCallRequest;
   of BashToolName:
     let bashCtx = parseBashContext(j).valueOr:
       return handledError(error)
-    return handledOutcome(sandboxBash(bashCtx.command, ctx.paddockDir,
+    return handledOutcome(sandboxBash(ctx.process, ctx.fs, bashCtx.command, ctx.paddockDir,
                         ctx.sandboxMode, ctx.sandboxImage, ctx.sandboxRuntimeCmd,
                         ctx.sandboxAllowHostFallback, ctx.sandboxAllowNetwork,
                         ctx.sandboxReadOnlyRootfs))
@@ -653,7 +655,7 @@ proc executeStructuredNativeTool(tc: ToolCallRequest;
   of ArchiveExtractToolName:
     let archivePath = j.getOrDefault("archive_path").getStr("")
     let destination = j.getOrDefault("destination").getStr("")
-    return handledStructured(performArchiveExtract(archivePath, destination, ctx.paddockDir))
+    return handledStructured(performArchiveExtract(ctx.process, ctx.fs, archivePath, destination, ctx.paddockDir))
   of ArchiveCreateToolName:
     let archivePath = j.getOrDefault("archive_path").getStr("")
     let inputsNode = j.getOrDefault("inputs")
@@ -664,7 +666,7 @@ proc executeStructuredNativeTool(tc: ToolCallRequest;
       if item.kind != JString:
         return handledStructured(usageErrorToolResult("inputs must be an array of strings"))
       inputs.add(item.getStr())
-    return handledStructured(performArchiveCreate(archivePath, inputs, ctx.paddockDir))
+    return handledStructured(performArchiveCreate(ctx.process, ctx.fs, archivePath, inputs, ctx.paddockDir))
   else:
     return NativeToolResult(handled: false)
 
@@ -705,7 +707,7 @@ proc executeUtilityNativeTool(tc: ToolCallRequest;
   of RenderMermaidToolName:
     let mermaidCtx = parseMermaidContext(j).valueOr:
       return handledError(error)
-    return handledOutcome(performRenderMermaid(mermaidCtx.diagram))
+    return handledOutcome(performRenderMermaid(ctx.process, ctx.fs, mermaidCtx.diagram))
   of InspectImageToolName:
     let inspectCtx = parseInspectImageContext(j, ctx.paddockDir, ctx.log, InspectImageToolName, ctx.fs).valueOr:
       return handledError(error)
@@ -1037,6 +1039,7 @@ proc executeNativeTool*(tc:      ToolCallRequest;
                        ): Future[NativeToolResult] {.async.} =
   var ctx = ctx
   ctx.fs = ctx.fs.orUnavailable  ## a context built without a file system fails, not crashes
+  ctx.process = ctx.process.orUnavailable
   let j = try: parseJson(tc.inputJson)
           except CatchableError: newJObject()
   if sessionStopRequested(ctx):
