@@ -284,3 +284,4 @@ g0	tests/app/t_reminder_delivery.nim
 g0	tests/app/t_tools_on_fake_fs.nim
 g2	tests/adapters/process/t_process_adapter.nim
 g3	tests/adapters/filesystem/t_fs_adapter.nim
+g1	tests/domain/t_access_token.nim

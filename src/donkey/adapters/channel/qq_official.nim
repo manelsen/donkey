@@ -19,11 +19,11 @@ import ../http/std_http
 import ./ws_client
 import ../../infra/event_queue
 import ../../infra/thread_handle
+import ../../domain/channels/access_token_pure
 
 const
   QQOfficialDefaultApiBase* = "https://api.sgroup.qq.com"
   QQOfficialDefaultTokenBase* = "https://bots.qq.com"
-  QQOfficialTokenSkewSec = 60'i64
   QQOfficialDefaultIntents* = (1 shl 25) or (1 shl 26)
 
 type
@@ -45,8 +45,7 @@ type
     tokenBase*:     string
     http*:          HttpRuntimePort
     events:         seq[QQOfficialEvent]
-    accessToken:    string
-    tokenExpirySec: int64
+    token:          AccessToken
     passiveMsgSeq:  Table[string, int]
 
   QQOfficialGatewayInfo* = object
@@ -351,8 +350,8 @@ proc tryRecvEvent*(a: var QQOfficialAdapter): (bool, QQOfficialEvent) =
   (true, localEvent)
 
 proc ensureAccessToken*(a: var QQOfficialAdapter): Result[string, string] =
-  if a.accessToken.len > 0 and (a.tokenExpirySec - QQOfficialTokenSkewSec) > nowUnixSec():
-    return ok(a.accessToken)
+  if a.token.isFresh(nowUnixSec()):
+    return ok(a.token.value)
 
   let body = %* {
     "appId": a.appId,
@@ -362,9 +361,8 @@ proc ensureAccessToken*(a: var QQOfficialAdapter): Result[string, string] =
   if resp.status < 200 or resp.status >= 300:
     return err("qq official token error " & $resp.status & ": " & resp.body)
   let token = ? parseAccessTokenResponse(resp.body)
-  a.accessToken = token.accessToken
-  a.tokenExpirySec = nowUnixSec() + token.expiresInSec
-  ok(a.accessToken)
+  a.token = issuedToken(token.accessToken, token.expiresInSec, nowUnixSec())
+  ok(a.token.value)
 
 proc fetchGatewayInfo*(a: var QQOfficialAdapter): Result[QQOfficialGatewayInfo, string] =
   let token = ? a.ensureAccessToken()

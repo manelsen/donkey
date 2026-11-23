@@ -31,6 +31,7 @@ import ../webhook/http_request_reader
 import ../../app/metrics
 import ../../infra/event_queue
 import ../../infra/thread_handle
+import ../../domain/channels/access_token_pure
 
 const WeComApiBase = "https://qyapi.weixin.qq.com"
 
@@ -51,8 +52,7 @@ type
     apiBase*:       string  ## override for testing
     resolver*:      IdentityResolver
     http:           StdHttpAdapter
-    accessToken:    string
-    tokenExpiry:    int64   ## epoch ms; 0 = not yet fetched
+    token:          AccessToken
 
 ## Module-level channel — opened once, valid for daemon lifetime.
 ## Thread-safe: an `EventQueue` (shared memory, events moved, not copied),
@@ -61,9 +61,6 @@ var gWeComEvents* = initEventQueue[WeComEvent]("wecom")
 
 # ── Token management ──────────────────────────────────────────────────────────
 
-proc epochMs(): int64 =
-  let t = getTime()
-  t.toUnix() * 1000 + (t.nanosecond div 1_000_000)
 
 func base(a: WeComAdapter): string =
   if a.apiBase.len > 0: a.apiBase else: WeComApiBase
@@ -79,15 +76,15 @@ proc refreshToken*(a: var WeComAdapter): Result[void, string] =
   if code != 0:
     return err("WeCom token error " & $code & ": " &
                j.getOrDefault("errmsg").getStr(""))
-  a.accessToken = j.getOrDefault("access_token").getStr("")
-  let expiresIn = j.getOrDefault("expires_in").getInt(7200)
-  a.tokenExpiry = epochMs() + expiresIn.int64 * 1000 - 60_000  # refresh 1 min early
+  a.token = issuedToken(j.getOrDefault("access_token").getStr(""),
+                        j.getOrDefault("expires_in").getInt(7200).int64,
+                        getTime().toUnix())
   ok()
 
 proc ensureToken(a: var WeComAdapter): Result[string, string] =
-  if a.accessToken.len == 0 or epochMs() >= a.tokenExpiry:
+  if not a.token.isFresh(getTime().toUnix()):
     ? a.refreshToken()
-  ok(a.accessToken)
+  ok(a.token.value)
 
 # ── Signature ─────────────────────────────────────────────────────────────────
 
