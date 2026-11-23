@@ -172,10 +172,14 @@ func addToolResult*(h: var ConversationHistory; id, name, output: string;
   )
 
 func addAssistantWithToolCalls*(h: var ConversationHistory;
-                                text: string; calls: seq[ToolCallRequest]) =
+                                text: string; calls: seq[ToolCallRequest];
+                                reasoning = "") =
   ## Appends an assistant message that requested tool calls.
   ## Required before addToolResult for correct function-calling conversation format.
-  h.add ChatMessage(role: roleAssistant, text: text, toolCalls: calls)
+  ## The reasoning is kept: DeepSeek wants it back on the next request of the
+  ## same tool round.
+  h.add ChatMessage(role: roleAssistant, text: text, toolCalls: calls,
+                    reasoning: reasoning)
 
 func trimTo*(h: var ConversationHistory; maxLen: int) =
   ## Keeps the most recent `maxLen` turns (discards oldest).

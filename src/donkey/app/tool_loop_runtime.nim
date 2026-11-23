@@ -612,7 +612,8 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
       log.info($uid & " (" & $channel & ") <- [" & providerLabel &
                "] |" & $streamed.text.len & "| stream")
       if streamed.toolCalls.len > 0:
-        loopState.history.addAssistantWithToolCalls(streamed.text, streamed.toolCalls)
+        loopState.history.addAssistantWithToolCalls(streamed.text, streamed.toolCalls,
+                                                    reasoning = streamed.reasoning)
         let batchResult = await processToolCalls(
           globalOutbox, toolInbox, toolOut, nativeCtx, state, loopState.history,
           uid, channel, replyTo, msgId, round, toolStatusId, streamed.toolCalls,
@@ -694,7 +695,8 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
       continue
 
     of tlrkHandleToolBatch:
-      loopState.history.addAssistantWithToolCalls(r.text, r.toolCalls)
+      loopState.history.addAssistantWithToolCalls(r.text, r.toolCalls,
+                                                  reasoning = r.reasoning)
       let batchResult = await processToolCalls(
         globalOutbox, toolInbox, toolOut, nativeCtx, state, loopState.history,
         uid, channel, replyTo, msgId, round, toolStatusId, r.toolCalls,

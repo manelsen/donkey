@@ -70,6 +70,8 @@ type
     omitStreamKey*:         bool  ## non-streaming bodies omit `stream`
     includeReasoningField*: bool  ## send include_reasoning when req.reasoning
     shortToolIds*:          bool  ## tool ids must be 9 alphanumerics (Mistral)
+    echoReasoningContent*:  bool  ## every assistant turn carries
+                                  ## reasoning_content, the text or " " (DeepSeek)
 
 
 const
@@ -215,7 +217,13 @@ proc buildRequestBodyWithQuirks*(model: string; req: CompletionRequest;
     msgs.add sysMsg
   for msg in req.messages:
     let om = messageToOpenAIWithQuirks(msg, quirks)
-    msgs.add openaiMessageToJsonWithQuirks(om, quirks)
+    var node = openaiMessageToJsonWithQuirks(om, quirks)
+    if quirks.echoReasoningContent and msg.role == roleAssistant:
+      ## Must-echo providers answer 400 on a tool round whose assistant turn
+      ## lacks the field; " " and not "", which DeepSeek V4 rejects (hermes
+      ## message_sanitization.apply_reasoning_content_policy).
+      node["reasoning_content"] = %(if msg.reasoning.len > 0: msg.reasoning else: " ")
+    msgs.add node
   result["messages"] = msgs
   if req.tools.len > 0:
     result["tools"] = req.tools.buildToolsArray
