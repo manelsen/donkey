@@ -8,6 +8,9 @@
 import std/[os, strutils, unittest]
 import results
 import donkey/app/tools/utility_tools
+import donkey/adapters/filesystem/fs_adapter
+
+let testFs = newFsAdapter()
 import donkey/domain/message
 import donkey/domain/providers/media_pure
 import donkey/ports/provider
@@ -35,7 +38,7 @@ proc runTests*() =
     test "a png is sent as a data URL with the right media type":
       let path = writeTemp("ok.png", "PNGDATA")
       defer: removeFile(path)
-      let reply = performInspectImage(path, "o que é?", fakeComplete)
+      let reply = performInspectImage(testFs, path, "o que é?", fakeComplete)
       check reply == "descrição"
       check gCalls.len == 1
       let msg = gCalls[0].messages[^1]
@@ -45,7 +48,7 @@ proc runTests*() =
       for ext in [".svg", ".bmp", ".heic"]:
         let path = writeTemp("bad" & ext, "<svg/>")
         defer: removeFile(path)
-        let reply = performInspectImage(path, "", fakeComplete)
+        let reply = performInspectImage(testFs, path, "", fakeComplete)
         check reply.toLowerAscii().contains("unsupported")
         check not reply.contains("data:")
       check gCalls.len == 0
@@ -56,7 +59,7 @@ proc runTests*() =
       let size = MaxInlineImageEncodedBytes  # raw > 3/4 of the encoded cap
       writeFile(path, repeat('A', size))
       defer: removeFile(path)
-      let reply = performInspectImage(path, "", fakeComplete)
+      let reply = performInspectImage(testFs, path, "", fakeComplete)
       # The precheck must fire, not `imageDataUrl`'s encoded-size error: the
       # latter also contains "large" and would hide a deleted precheck.
       check reply.contains("raw bytes")

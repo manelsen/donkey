@@ -3,6 +3,7 @@ import donkey/adapters/memory/md_file
 import donkey/adapters/provider/runtime_builder
 import donkey/core/pipeops
 import donkey/app/session_bootstrap
+import donkey/adapters/filesystem/fs_adapter
 import donkey/app/credential_runtime
 import donkey/core/providers/smart_routing
 import donkey/domain/more_tools
@@ -159,7 +160,7 @@ thinking = "medium"
       history2.addUser("terceira")
       history2.addAssistant("resposta 3")
       memory.saveSession(userId, "200", history2)
-      let recent = loadRecentContext(memory.toRuntimePort(), userId)
+      let recent = loadRecentContext(memory.toRuntimePort(), newFsAdapter(), userId)
       check "User: resposta" notin recent
       check recent.contains("User: resposta 3") == false
       check recent.contains("User: terceira")

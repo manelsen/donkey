@@ -2,6 +2,9 @@
 
 import std/[json, os, strutils, unittest]
 import donkey/app/tools/audio_tools
+import donkey/adapters/filesystem/fs_adapter
+
+let testFs = newFsAdapter()
 import donkey/core/pipeops
 import donkey/domain/media/audio_pure
 import donkey/ports/http
@@ -44,7 +47,7 @@ proc runTests*() =
       let path = dir / "nota.mp3"
       writeFile(path, "AUDIODATA")
       let cap = Capture(status: 200, response: """{"text": "olá mundo"}""")
-      let got = performTranscribe(path, fakeHttp(cap),
+      let got = performTranscribe(testFs, path, fakeHttp(cap),
         apiKey = "secret", endpoint = "https://stt.test/v1/audio/transcriptions",
         model = "whisper-1")
       check got == "olá mundo"
@@ -63,7 +66,7 @@ proc runTests*() =
       let path = dir / "nota.ogg"
       writeFile(path, "OGG")
       let cap = Capture(status: 200, response: """{"text": "ok"}""")
-      discard performTranscribe(path, fakeHttp(cap), language = "pt",
+      discard performTranscribe(testFs, path, fakeHttp(cap), language = "pt",
                                 prompt = "nomes próprios", apiKey = "k",
                                 endpoint = "https://stt.test")
       check cap.body.contains("""name="language"""")
@@ -77,7 +80,7 @@ proc runTests*() =
       let path = dir / "nota.mp3"
       writeFile(path, "X")
       let cap = Capture()
-      let got = performTranscribe(path, fakeHttp(cap), apiKey = "")
+      let got = performTranscribe(testFs, path, fakeHttp(cap), apiKey = "")
       check got.startsWith("Error:")
       check cap.url == ""
 
@@ -87,7 +90,7 @@ proc runTests*() =
       let path = dir / "nota.txt"
       writeFile(path, "X")
       let cap = Capture()
-      let got = performTranscribe(path, fakeHttp(cap), apiKey = "k")
+      let got = performTranscribe(testFs, path, fakeHttp(cap), apiKey = "k")
       check got.contains("unsupported audio")
       check cap.url == ""
 
@@ -97,7 +100,7 @@ proc runTests*() =
       let path = dir / "nota.mp3"
       writeFile(path, "12345")
       let cap = Capture()
-      let got = performTranscribe(path, fakeHttp(cap), apiKey = "k", maxBytes = 4)
+      let got = performTranscribe(testFs, path, fakeHttp(cap), apiKey = "k", maxBytes = 4)
       check got.contains("too large")
       check cap.url == ""
 
@@ -107,7 +110,7 @@ proc runTests*() =
       let path = dir / "nota.mp3"
       writeFile(path, "X")
       let cap = Capture(status: 500, response: """{"error":{"message":"boom"}}""")
-      let got = performTranscribe(path, fakeHttp(cap), apiKey = "k")
+      let got = performTranscribe(testFs, path, fakeHttp(cap), apiKey = "k")
       check got.startsWith("Error:")
       check got.contains("500")
 
@@ -117,7 +120,7 @@ proc runTests*() =
       let dir = freshDir("tts-ok")
       defer: removeDir(dir)
       let cap = Capture(status: 200, response: "MP3BYTES")
-      let res = performSpeech("olá", dir, fakeHttp(cap), apiKey = "k",
+      let res = performSpeech(testFs, "olá", dir, fakeHttp(cap), apiKey = "k",
         endpoint = "https://tts.test/v1/audio/speech", model = "tts-1",
         voice = "alloy", format = "mp3")
       check res.isOk
@@ -137,21 +140,21 @@ proc runTests*() =
       let dir = freshDir("tts-empty")
       defer: removeDir(dir)
       let cap = Capture()
-      check performSpeech("   ", dir, fakeHttp(cap), apiKey = "k").isErr
+      check performSpeech(testFs, "   ", dir, fakeHttp(cap), apiKey = "k").isErr
       check cap.url == ""
 
     test "a missing key is rejected":
       let dir = freshDir("tts-nokey")
       defer: removeDir(dir)
       let cap = Capture()
-      check performSpeech("olá", dir, fakeHttp(cap), apiKey = "").isErr
+      check performSpeech(testFs, "olá", dir, fakeHttp(cap), apiKey = "").isErr
       check cap.url == ""
 
     test "an unsupported format is rejected":
       let dir = freshDir("tts-format")
       defer: removeDir(dir)
       let cap = Capture()
-      check performSpeech("olá", dir, fakeHttp(cap), apiKey = "k",
+      check performSpeech(testFs, "olá", dir, fakeHttp(cap), apiKey = "k",
                           format = "exe").isErr
       check cap.url == ""
 
@@ -159,7 +162,7 @@ proc runTests*() =
       let dir = freshDir("tts-http")
       defer: removeDir(dir)
       let cap = Capture(status: 429, response: "slow down")
-      let res = performSpeech("olá", dir, fakeHttp(cap), apiKey = "k")
+      let res = performSpeech(testFs, "olá", dir, fakeHttp(cap), apiKey = "k")
       check res.isErr
       check res.error.contains("429")
       check not dirExists(dir / "attachments")

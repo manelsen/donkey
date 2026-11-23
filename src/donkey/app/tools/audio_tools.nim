@@ -16,6 +16,7 @@ import ../../domain/media/audio_pure
 import ../../domain/message
 import ../../ports/channel_capability
 import ../../ports/http
+import ../../ports/fs
 
 const
   SttDefaultEndpoint* = "https://api.openai.com/v1/audio/transcriptions"
@@ -53,7 +54,7 @@ func clipBody(body: string): string =
 func errorText(prefix, detail: string): string =
   "Error: " & prefix & ": " & detail
 
-proc performTranscribe*(path: string; http: HttpRuntimePort;
+proc performTranscribe*(fs: FsRuntimePort; path: string; http: HttpRuntimePort;
                         language = ""; prompt = "";
                         apiKey = ""; endpoint = SttDefaultEndpoint;
                         model = SttDefaultModel;
@@ -65,15 +66,17 @@ proc performTranscribe*(path: string; http: HttpRuntimePort;
   let mime = audioMimeType(path)
   if mime.len == 0:
     return errorText("transcribe_audio", "unsupported audio file: " & path)
-  if not fileExists(path):
+  if fs.entryKind(path) != fekFile:
     return errorText("transcribe_audio", "file not found: " & path)
-  let data = try:
-    readFile(path)
-  except CatchableError as e:
-    return errorText("transcribe_audio", e.msg)
-  if data.len > maxBytes:
-    return errorText("transcribe_audio", "file too large (" & $data.len &
+  ## The size is checked before the file is read into memory.
+  let size = fs.fileSize(path).valueOr:
+    return errorText("transcribe_audio", error)
+  if size > maxBytes:
+    return errorText("transcribe_audio", "file too large (" & $size &
                      " bytes, limit " & $maxBytes & ")")
+  ## Capped too: the file may have grown since its size was read.
+  let data = fs.readCapped(path, maxBytes).valueOr:
+    return errorText("transcribe_audio", error)
 
   var fields: seq[(string, string)] = @[("model", model)]
   if language.strip.len > 0:
@@ -101,7 +104,7 @@ proc performTranscribe*(path: string; http: HttpRuntimePort;
     return errorText("transcribe_audio", parsed.error)
   parsed.get()
 
-proc performSpeech*(text: string; paddockDir: string; http: HttpRuntimePort;
+proc performSpeech*(fs: FsRuntimePort; text: string; paddockDir: string; http: HttpRuntimePort;
                     voice = TtsDefaultVoice; format = "mp3";
                     apiKey = ""; endpoint = TtsDefaultEndpoint;
                     model = TtsDefaultModel): Result[string, string]
@@ -135,17 +138,15 @@ proc performSpeech*(text: string; paddockDir: string; http: HttpRuntimePort;
   let audio = response.get().body
   if audio.len == 0:
     return err("text_to_speech: endpoint returned no audio")
-  try:
-    inc gSpeechSeq
-    let name = "tts-" & $nowMs() & "-" & $gSpeechSeq & "." & extension
-    let dir = paddockDir / "attachments"
-    createDir(dir)
-    writeFile(dir / name, audio)
-    ok("attachments/" & name)
-  except CatchableError as e:
-    err("text_to_speech: " & e.msg)
+  inc gSpeechSeq
+  let name = "tts-" & $nowMs() & "-" & $gSpeechSeq & "." & extension
+  let dir = paddockDir / "attachments"
+  let saved = fs.createDir(dir) and fs.writeFile(dir / name, audio)
+  if saved.isErr:
+    return err("text_to_speech: " & saved.error)
+  ok("attachments/" & name)
 
-proc prepareVoiceReply*(text, caption, paddockDir: string;
+proc prepareVoiceReply*(fs: FsRuntimePort; text, caption, paddockDir: string;
                         channel: ChannelKind; uid: UserId;
                         http: HttpRuntimePort; speech: SpeechSettings;
                         replyTo = ""): Result[OutboundMessage, string]
@@ -157,7 +158,7 @@ proc prepareVoiceReply*(text, caption, paddockDir: string;
   if not supports(channel, cfSendVoice):
     return err("text_to_speech: channel " & $channel &
                " cannot deliver voice notes")
-  let saved = performSpeech(text, paddockDir, http, voice = speech.ttsVoice,
+  let saved = performSpeech(fs, text, paddockDir, http, voice = speech.ttsVoice,
                             format = "opus", apiKey = speech.ttsApiKey,
                             endpoint = speech.ttsEndpoint, model = speech.ttsModel)
   if saved.isErr:

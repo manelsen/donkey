@@ -305,7 +305,8 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
   ## turn; one that arrived before it belongs to an earlier turn.
   result.nativeCtx.userInterrupt = currentUserInterrupt($result.uid)
   result.nativeCtx.scopeSessionId = stateRuntime.sessionId
-  createDir(paddockDir)
+  fs.createDir(paddockDir).isOkOr:
+    log.warn("paddock " & paddockDir & " not created: " & error)
   result.typingLoop = startTypingLoop(typingFn, result.uid, msg.channel)
 
 # ── Control task dispatcher ───────────────────────────────────────────────────

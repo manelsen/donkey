@@ -5,6 +5,9 @@ import std/[os, strutils, times, unittest, options, sequtils]
 import donkey/core/pipeops
 import donkey/core/log
 import donkey/app/heartbeat
+import donkey/adapters/filesystem/fs_adapter
+
+let testFs = newFsAdapter()
 import donkey/app/contemplation
 import donkey/core/types
 import donkey/core/cron
@@ -198,7 +201,7 @@ proc runTests*() =
       var dispatched: seq[string] = @[]
       let outboxFn: HeartbeatOutboxFn = proc(userId, channel, taskPayload: string) {.gcsafe.} =
         {.cast(gcsafe).}: dispatched.add(userId & "|" & channel & "|" & taskPayload)
-      deliverHeartbeats(tmp, outboxFn)
+      deliverHeartbeats(testFs, tmp, outboxFn)
       check dispatched.len == 1
       if dispatched.len > 0:
         check "user-uuid" in dispatched[0]
@@ -216,7 +219,7 @@ proc runTests*() =
       var dispatched: seq[string] = @[]
       let outboxFn: HeartbeatOutboxFn = proc(userId, channel, taskPayload: string) {.gcsafe.} =
         {.cast(gcsafe).}: dispatched.add(userId)
-      deliverHeartbeats(tmp, outboxFn)
+      deliverHeartbeats(testFs, tmp, outboxFn)
       check dispatched.len == 0
       try: removeDir(tmp) except: discard
 
@@ -227,7 +230,7 @@ proc runTests*() =
       var dispatched2: seq[string] = @[]
       let outboxFn2: HeartbeatOutboxFn = proc(userId, channel, taskPayload: string) {.gcsafe.} =
         {.cast(gcsafe).}: dispatched2.add(userId)
-      deliverHeartbeats(tmp, outboxFn2)
+      deliverHeartbeats(testFs, tmp, outboxFn2)
       check dispatched2.len == 0
       try: removeDir(tmp) except: discard
 
@@ -240,7 +243,7 @@ proc runTests*() =
       var dispatched: seq[string] = @[]
       let outboxFn: HeartbeatOutboxFn = proc(userId, channel, taskPayload: string) {.gcsafe.} =
         {.cast(gcsafe).}: dispatched.add(userId)
-      deliverHeartbeats(tmp, outboxFn)
+      deliverHeartbeats(testFs, tmp, outboxFn)
       check dispatched.len == 0
       try: removeDir(tmp) except: discard
 

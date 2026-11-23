@@ -80,6 +80,8 @@ It holds about 25 `parse*Context` functions (argument parsing and validation) an
 ### 8. Raw I/O in `app`
 `app/tools/*` (`fs_tools` 14, `search_tools` 4 and others), `sandbox`, `heartbeat`, `service_handler` and `setup_wizard` call `readFile`, `writeFile`, `execProcess` and `walkDir` directly, even though `ports/fs.nim` exists. This makes it impossible to test with fakes and inconsistent with providers and channels.
 
+**Progress (0.3.x):** `tests/architecture/t_app_raw_io` counts raw file and process calls in `src/donkey/app` (83 at the start, counted the way it counts now) under a budget that only goes down. Part 1 moved the file tools, find/grep, the text, audio and image tools, memory ingest, recent context and the heartbeat onto `FsRuntimePort`, which now covers listing, writing, appending, capped reads, copying, moving and removing: 54 left (the counter now also catches method syntax and counts every call on a line): processes (sandbox, doctor, archives, mermaid, bash), file work in the setup wizard, the service installer and the skill installer, and the IPC socket. Part 2 is a process port; part 3 the remaining file work.
+
 ### 9. Scattered configuration
 There are 127 `getEnv` calls outside `config/` (59 in `app/`, 62 in `adapters/`, plus 87 in `src/donkey.nim`). `adapters/channel/command_services.nim` alone has 25 (`/about` and `/doctor` read the environment to list channels and keys).
 **Fix:** read the environment once into `DonkeyConfig` and inject it.

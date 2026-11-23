@@ -14,6 +14,7 @@ import ../core/pipeops
 import ../core/log
 import ../core/cron as core_cron
 import ../core/types
+import ../ports/fs
 import ../domain/memory/commitment_pure
 
 # ── Types ─────────────────────────────────────────────────────────────────────
@@ -143,49 +144,51 @@ func parseHeartbeatMd*(content: string): seq[HeartbeatTaskEntry] =
     if title.len > 0:
       result.add(HeartbeatTaskEntry(title: title, checked: isChecked))
 
-proc loadHeartbeatState(paddockDir: string): HeartbeatState =
-  let path = paddockDir / HeartbeatStateFile
-  if fileExists(path):
-    try:
-      let parsed = parseJson(readFile(path))
-      result.lastDispatchMs = parsed{"last_dispatch_ms"}.getBiggestInt(0)
-    except CatchableError:
-      discard
-
-proc saveHeartbeatState(paddockDir: string; state: HeartbeatState) =
+proc loadHeartbeatState(fs: FsRuntimePort; paddockDir: string): HeartbeatState =
+  ## A state that is missing or unreadable is a fresh one.
+  let text = fs.readFile(paddockDir / HeartbeatStateFile).valueOr:
+    return
   try:
-    createDir(paddockDir / "memory")
-    writeFile(paddockDir / HeartbeatStateFile, $ %*{
-      "last_dispatch_ms": state.lastDispatchMs,
-    })
+    result.lastDispatchMs = parseJson(text){"last_dispatch_ms"}.getBiggestInt(0)
   except CatchableError:
     discard
 
-proc deliverHeartbeats*(paddocksDir: string;
-                        outboxFn: HeartbeatOutboxFn) =
+proc saveHeartbeatState(fs: FsRuntimePort; paddockDir: string;
+                        state: HeartbeatState): Result[void, string] =
+  fs.createDir(paddockDir / "memory") and
+    fs.writeFile(paddockDir / HeartbeatStateFile,
+                 $ %*{"last_dispatch_ms": state.lastDispatchMs})
+
+proc deliverHeartbeats*(fs: FsRuntimePort; paddocksDir: string;
+                        outboxFn: HeartbeatOutboxFn;
+                        log: Logger = newLogger("heartbeat")) =
   ## Scans all paddock directories for HEARTBEAT.md, selects unchecked tasks,
   ## and dispatches them as heartbeat task messages via outboxFn.
-  if paddocksDir.len == 0 or not dirExists(paddocksDir):
+  if paddocksDir.len == 0 or fs.entryKind(paddocksDir) != fekDir:
+    return
+  let entries = fs.listDir(paddocksDir).valueOr:
+    log.warn("heartbeat: cannot list " & paddocksDir & ": " & error)
     return
   let nowMs = nowMs()
-  for kind, dir in walkDir(paddocksDir):
-    if kind != pcDir: continue
-    let hbPath = dir / HeartbeatFileName
-    if not fileExists(hbPath): continue
+  for entry in entries:
+    if entry.kind != fekDir: continue
+    let dir = entry.path
+    let content = fs.readFile(dir / HeartbeatFileName).valueOr:
+      continue  ## no HEARTBEAT.md, or one that cannot be read
     let userId = extractFilename(dir)
-    let state = loadHeartbeatState(dir)
+    let state = loadHeartbeatState(fs, dir)
     if state.lastDispatchMs > 0 and nowMs >= state.lastDispatchMs and
         (nowMs - state.lastDispatchMs < HeartbeatCooldownMs):
       continue
-    let content = try: readFile(hbPath) except CatchableError: ""
-    let entries = parseHeartbeatMd(content)
-    let unchecked = entries.filterIt(not it.checked)
+    let unchecked = parseHeartbeatMd(content).filterIt(not it.checked)
     if unchecked.len == 0: continue
     let selected = unchecked[0 ..< min(unchecked.len, MaxHeartbeatTasksPerUser)]
     outboxFn(userId, "", buildHeartbeatPrompt(selected))
     var newState = state
     newState.lastDispatchMs = nowMs
-    saveHeartbeatState(dir, newState)
+    saveHeartbeatState(fs, dir, newState).isOkOr:
+      ## Without the state the cooldown is lost and the tasks go out again.
+      log.warn("heartbeat: state of " & userId & " not saved: " & error)
 
 # ── Async timer loop ──────────────────────────────────────────────────────────
 

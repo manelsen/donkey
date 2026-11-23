@@ -1,5 +1,8 @@
 import std/[json, os, strutils, times, unittest]
 import donkey/app/tools/search_tools
+import donkey/adapters/filesystem/fs_adapter
+
+let testFs = newFsAdapter()
 import donkey/app/tools/text_tools
 import donkey/core/tooling/structured_tool_result
 
@@ -20,7 +23,7 @@ proc runTests*() =
       createDir(tmpDir / "nested")
       writeFile(tmpDir / "nested" / "beta.txt", "hello\n")
 
-      let parsed = parseJson(performFindStructured(tmpDir, "*", "any", 20, tmpDir).toJson())
+      let parsed = parseJson(performFindStructured(testFs, tmpDir, "*", "any", 20, tmpDir).toJson())
 
       check parsed["ok"].getBool()
       check parsed["status"].getStr() == "output"
@@ -36,7 +39,7 @@ proc runTests*() =
         if fileExists(tmpFile):
           removeFile(tmpFile)
 
-      let parsed = parseJson(performGrepStructured("needle", tmpFile, false, 20, parentDir(tmpFile)).toJson())
+      let parsed = parseJson(performGrepStructured(testFs, "needle", tmpFile, false, 20, parentDir(tmpFile)).toJson())
 
       check parsed["ok"].getBool()
       check parsed["status"].getStr() == "output"
@@ -48,7 +51,7 @@ proc runTests*() =
       check parsed["data"]["matches"][1]["line"].getInt() == 3
 
     test "performGrepStructured rejects empty pattern as usage error":
-      let parsed = parseJson(performGrepStructured("", ".", true, 20).toJson())
+      let parsed = parseJson(performGrepStructured(testFs, "", ".", true, 20).toJson())
 
       check not parsed["ok"].getBool()
       check parsed["status"].getStr() == "usage_error"
@@ -63,7 +66,7 @@ proc runTests*() =
         if fileExists(tmpFile):
           removeFile(tmpFile)
 
-      let parsed = parseJson(readStructuredTextSlice(tmpFile, 2, 2, parentDir(tmpFile)).toJson())
+      let parsed = parseJson(readStructuredTextSlice(testFs, tmpFile, 2, 2, parentDir(tmpFile)).toJson())
 
       check parsed["ok"].getBool()
       check parsed["data"]["path"].getStr() == extractFilename(tmpFile)
@@ -81,7 +84,7 @@ proc runTests*() =
         if fileExists(tmpFile):
           removeFile(tmpFile)
 
-      let parsed = parseJson(replaceStructuredText(tmpFile, "beta", "delta", 1, parentDir(tmpFile)).toJson())
+      let parsed = parseJson(replaceStructuredText(testFs, tmpFile, "beta", "delta", 1, parentDir(tmpFile)).toJson())
 
       check parsed["ok"].getBool()
       check parsed["data"]["path"].getStr() == extractFilename(tmpFile)
@@ -90,7 +93,7 @@ proc runTests*() =
       check readFile(tmpFile) == "alpha delta beta\n"
 
     test "replaceStructuredText returns operational error for missing file":
-      let parsed = parseJson(replaceStructuredText("/nonexistent/file.txt", "a", "b", 0).toJson())
+      let parsed = parseJson(replaceStructuredText(testFs, "/nonexistent/file.txt", "a", "b", 0).toJson())
 
       check not parsed["ok"].getBool()
       check parsed["status"].getStr() == "operational_error"

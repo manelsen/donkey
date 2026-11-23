@@ -4,13 +4,13 @@
 ## performBash runs shell commands with CWD management.
 ## performFs* expose the structured filesystem core used by the next tool family.
 
-import std/[algorithm, json, osproc, os, sequtils, strutils, times]
+import std/[algorithm, json, osproc, os, sequtils, strutils]
 import ../../core/pipeops
 import ../../core/tooling/structured_tool_result
 import ../../domain/calc
-import ../../infra/fs/copy as fsCopy
+import ../../ports/fs
 
-export StructuredToolResult
+export StructuredToolResult, fs
 
 # ── Paddock path helpers ─────────────────────────────────────────────────────
 
@@ -60,64 +60,35 @@ proc relativeToPaddock*(path, paddock: string): string =
     return resolved[(padNorm.len + 1) .. ^1]
   resolved
 
-proc entryKind(path: string): string =
-  if dirExists(path): "dir"
-  elif fileExists(path): "file"
-  else: "missing"
-
-proc fileMtime(path: string): int64 =
-  try:
-    getLastModificationTime(path).toUnix()
-  except OSError:
-    0'i64
-
-proc fileSizeOrZero(path: string): int64 =
-  try:
-    if fileExists(path): getFileSize(path)
-    else: 0'i64
-  except OSError:
-    0'i64
-
-proc successPathPayload(path, paddock: string; extra: openArray[(string, JsonNode)] = []): StructuredToolResult =
-  var payload = %*{
+proc successPathPayload(fs: FsRuntimePort; path, paddock: string): StructuredToolResult =
+  successToolResult(%*{
     "path": relativeToPaddock(path, paddock),
-    "kind": entryKind(path),
-  }
-  for (key, value) in extra:
-    payload[key] = value
-  successToolResult(payload)
+    "kind": $fs.entryKind(path),
+  })
 
-proc ensureParentDir(path: string) =
+proc ensureParentDir(fs: FsRuntimePort; path: string): Result[void, string] =
   let parent = parentDir(path)
-  if parent.len > 0 and not dirExists(parent):
-    createDir(parent)
+  if parent.len > 0 and fs.entryKind(parent) != fekDir:
+    return fs.createDir(parent)
+  ok()
 
-proc appendToFile(path, content: string) =
-  if fileExists(path):
-    writeFile(path, readFile(path) & content)
-  else:
-    writeFile(path, content)
-
-proc listEntries(root, paddock, pattern: string; recursive, includeHidden: bool;
-                 items: var seq[JsonNode]) =
-  for kind, entry in walkDir(root):
-    let name = entry.extractFilename
+proc listEntries(fs: FsRuntimePort; root, paddock, pattern: string;
+                 recursive, includeHidden: bool;
+                 items: var seq[JsonNode]): Result[void, string] =
+  for entry in ? fs.listDir(root):
+    let name = entry.path.extractFilename
     if not includeHidden and name.startsWith("."):
       continue
-    let relPath = relativeToPaddock(entry, paddock)
-    let kindLabel = case kind
-      of pcDir: "dir"
-      of pcFile: "file"
-      of pcLinkToFile, pcLinkToDir: "link"
     if pattern == "*" or globMatch(pattern, name):
       items.add(%*{
-        "path": relPath,
-        "kind": kindLabel,
-        "size": fileSizeOrZero(entry),
-        "mtime": fileMtime(entry),
+        "path": relativeToPaddock(entry.path, paddock),
+        "kind": $entry.kind,
+        "size": entry.size,
+        "mtime": entry.mtime,
       })
-    if recursive and kind == pcDir:
-      listEntries(entry, paddock, pattern, recursive, includeHidden, items)
+    if recursive and entry.kind == fekDir:
+      ? listEntries(fs, entry.path, paddock, pattern, recursive, includeHidden, items)
+  ok()
 
 proc splitLogicalLines(content: string): seq[string] =
   result = content.splitLines()
@@ -125,17 +96,22 @@ proc splitLogicalLines(content: string): seq[string] =
     result.setLen(result.len - 1)
 
 # ── structured filesystem core ───────────────────────────────────────────────
+# Every operation goes through the filesystem port, so a test can run them on
+# a fake; the paddock guard is checked before the port is touched.
 
-proc performFsList*(path, paddock: string; recursive = false;
+proc performFsList*(fs: FsRuntimePort; path, paddock: string; recursive = false;
                     pattern = "*"; includeHidden = false): StructuredToolResult {.gcsafe, raises: [].} =
   try:
     let guard = resolveGuarded(path, paddock)
     if not guard.ok:
       return guard.err
-    if not dirExists(guard.resolved):
+    if fs.entryKind(guard.resolved) != fekDir:
       return operationalErrorToolResult("directory not found: " & path)
     var items: seq[JsonNode] = @[]
-    listEntries(guard.resolved, paddock, pattern, recursive, includeHidden, items)
+    let listed = listEntries(fs, guard.resolved, paddock, pattern, recursive,
+                             includeHidden, items)
+    if listed.isErr:
+      return operationalErrorToolResult(listed.error)
     items.sort(proc(a, b: JsonNode): int = cmp(a["path"].getStr(), b["path"].getStr()))
     successToolResult(%*{
       "base_path": relativeToPaddock(guard.resolved, paddock),
@@ -144,41 +120,32 @@ proc performFsList*(path, paddock: string; recursive = false;
   except CatchableError as e:
     operationalErrorToolResult(e.msg)
 
-proc performFsRead*(path, paddock: string; format = "text"): StructuredToolResult {.gcsafe, raises: [].} =
+proc performFsRead*(fs: FsRuntimePort; path, paddock: string;
+                    format = "text"): StructuredToolResult {.gcsafe, raises: [].} =
   try:
     let guard = resolveGuarded(path, paddock)
     if not guard.ok:
       return guard.err
-    if not fileExists(guard.resolved):
+    if fs.entryKind(guard.resolved) != fekFile:
       return operationalErrorToolResult("file not found: " & path)
-
+    let relPath = relativeToPaddock(guard.resolved, paddock)
+    if format == "bytes_meta":
+      let size = fs.fileSize(guard.resolved).valueOr:
+        return operationalErrorToolResult(error)
+      return successToolResult(%*{"path": relPath, "format": format, "size": size})
+    if format notin ["text", "lines", "json"]:
+      return usageErrorToolResult("unsupported fs_read format: " & format)
+    let text = fs.readFile(guard.resolved).valueOr:
+      return operationalErrorToolResult(error)
     case format
     of "text":
-      successToolResult(%*{
-        "path": relativeToPaddock(guard.resolved, paddock),
-        "format": format,
-        "text": readFile(guard.resolved),
-      })
+      successToolResult(%*{"path": relPath, "format": format, "text": text})
     of "lines":
-      successToolResult(%*{
-        "path": relativeToPaddock(guard.resolved, paddock),
-        "format": format,
-        "lines": splitLogicalLines(readFile(guard.resolved)),
-      })
-    of "json":
-      successToolResult(%*{
-        "path": relativeToPaddock(guard.resolved, paddock),
-        "format": format,
-        "value": parseJson(readFile(guard.resolved)),
-      })
-    of "bytes_meta":
-      successToolResult(%*{
-        "path": relativeToPaddock(guard.resolved, paddock),
-        "format": format,
-        "size": getFileSize(guard.resolved),
-      })
+      successToolResult(%*{"path": relPath, "format": format,
+                           "lines": splitLogicalLines(text)})
     else:
-      usageErrorToolResult("unsupported fs_read format: " & format)
+      successToolResult(%*{"path": relPath, "format": format,
+                           "value": parseJson(text)})
   except JsonParsingError as e:
     operationalErrorToolResult("invalid json: " & e.msg)
   except CatchableError as e:
@@ -199,7 +166,7 @@ proc contentToString*(content: JsonNode; format: string): tuple[ok: bool, text: 
   else:
     (false, "", usageErrorToolResult("unsupported fs_write format: " & format))
 
-proc performFsWrite*(path, paddock, mode: string; content: JsonNode;
+proc performFsWrite*(fs: FsRuntimePort; path, paddock, mode: string; content: JsonNode;
                      format = "text"): StructuredToolResult {.gcsafe, raises: [].} =
   try:
     let guard = resolveGuarded(path, paddock)
@@ -210,24 +177,21 @@ proc performFsWrite*(path, paddock, mode: string; content: JsonNode;
     if not rendered.ok:
       return rendered.err
 
-    case mode
-    of "create":
-      if fileExists(guard.resolved) or dirExists(guard.resolved):
-        return operationalErrorToolResult("path already exists: " & path)
-      ensureParentDir(guard.resolved)
-      writeFile(guard.resolved, rendered.text)
-    of "replace":
-      ensureParentDir(guard.resolved)
-      writeFile(guard.resolved, rendered.text)
-    of "append":
-      ensureParentDir(guard.resolved)
-      appendToFile(guard.resolved, rendered.text)
-    else:
+    if mode notin ["create", "replace", "append"]:
       return usageErrorToolResult("unsupported fs_write mode: " & mode)
+    if mode == "create" and fs.entryKind(guard.resolved) != fekMissing:
+      return operationalErrorToolResult("path already exists: " & path)
+    var written = ensureParentDir(fs, guard.resolved)
+    if written.isOk:
+      written =
+        if mode == "append": fs.appendFile(guard.resolved, rendered.text)
+        else: fs.writeFile(guard.resolved, rendered.text)
+    if written.isErr:
+      return operationalErrorToolResult(written.error)
 
     successToolResult(%*{
       "path": relativeToPaddock(guard.resolved, paddock),
-      "kind": entryKind(guard.resolved),
+      "kind": $fs.entryKind(guard.resolved),
       "mode": mode,
       "format": format,
       "bytes_written": rendered.text.len,
@@ -235,20 +199,23 @@ proc performFsWrite*(path, paddock, mode: string; content: JsonNode;
   except CatchableError as e:
     operationalErrorToolResult(e.msg)
 
-proc performFsMkdir*(path, paddock: string; parents = false): StructuredToolResult {.gcsafe, raises: [].} =
+proc performFsMkdir*(fs: FsRuntimePort; path, paddock: string;
+                     parents = false): StructuredToolResult {.gcsafe, raises: [].} =
+  ## `parents` is accepted for the schema; the directory is always created
+  ## with its parents, as it was.
+  discard parents
   try:
     let guard = resolveGuarded(path, paddock)
     if not guard.ok:
       return guard.err
-    if parents:
-      createDir(guard.resolved)
-    else:
-      createDir(guard.resolved)
-    successPathPayload(guard.resolved, paddock)
+    fs.createDir(guard.resolved).isOkOr:
+      return operationalErrorToolResult(error)
+    successPathPayload(fs, guard.resolved, paddock)
   except CatchableError as e:
     operationalErrorToolResult(e.msg)
 
-proc performFsCopy*(src, dst, paddock: string; recursive = false): StructuredToolResult {.gcsafe, raises: [].} =
+proc performFsCopy*(fs: FsRuntimePort; src, dst, paddock: string;
+                    recursive = false): StructuredToolResult {.gcsafe, raises: [].} =
   try:
     let srcGuard = resolveGuarded(src, paddock)
     if not srcGuard.ok:
@@ -256,29 +223,31 @@ proc performFsCopy*(src, dst, paddock: string; recursive = false): StructuredToo
     let dstGuard = resolveGuarded(dst, paddock)
     if not dstGuard.ok:
       return dstGuard.err
-    if fileExists(srcGuard.resolved):
-      if symlinkExists(dstGuard.resolved):
+    case fs.entryKind(srcGuard.resolved)
+    of fekFile:
+      if fs.isSymlink(dstGuard.resolved):
         return operationalErrorToolResult(
           "destination is a symlink: " & dstGuard.resolved)
-      ensureParentDir(dstGuard.resolved)
-      copyFile(srcGuard.resolved, dstGuard.resolved)
-    elif dirExists(srcGuard.resolved):
-      if not recursive:
-        return usageErrorToolResult("copying a directory requires recursive=true")
-      let copied = fsCopy.copyTreeResult(srcGuard.resolved, dstGuard.resolved)
+      let copied = ensureParentDir(fs, dstGuard.resolved) and
+                   fs.copyFile(srcGuard.resolved, dstGuard.resolved)
       if copied.isErr:
         return operationalErrorToolResult(copied.error)
+    of fekDir:
+      if not recursive:
+        return usageErrorToolResult("copying a directory requires recursive=true")
+      fs.copyTree(srcGuard.resolved, dstGuard.resolved).isOkOr:
+        return operationalErrorToolResult(error)
     else:
       return operationalErrorToolResult("source not found: " & src)
     successToolResult(%*{
       "src": relativeToPaddock(srcGuard.resolved, paddock),
       "dst": relativeToPaddock(dstGuard.resolved, paddock),
-      "kind": entryKind(dstGuard.resolved),
+      "kind": $fs.entryKind(dstGuard.resolved),
     })
   except CatchableError as e:
     operationalErrorToolResult(e.msg)
 
-proc performFsMove*(src, dst, paddock: string): StructuredToolResult {.gcsafe, raises: [].} =
+proc performFsMove*(fs: FsRuntimePort; src, dst, paddock: string): StructuredToolResult {.gcsafe, raises: [].} =
   try:
     let srcGuard = resolveGuarded(src, paddock)
     if not srcGuard.ok:
@@ -286,40 +255,41 @@ proc performFsMove*(src, dst, paddock: string): StructuredToolResult {.gcsafe, r
     let dstGuard = resolveGuarded(dst, paddock)
     if not dstGuard.ok:
       return dstGuard.err
-    if not (fileExists(srcGuard.resolved) or dirExists(srcGuard.resolved)):
+    if fs.entryKind(srcGuard.resolved) == fekMissing:
       return operationalErrorToolResult("source not found: " & src)
-    ensureParentDir(dstGuard.resolved)
-    if dirExists(srcGuard.resolved):
-      moveDir(srcGuard.resolved, dstGuard.resolved)
-    else:
-      moveFile(srcGuard.resolved, dstGuard.resolved)
+    let moved = ensureParentDir(fs, dstGuard.resolved) and
+                fs.move(srcGuard.resolved, dstGuard.resolved)
+    if moved.isErr:
+      return operationalErrorToolResult(moved.error)
     successToolResult(%*{
       "src": relativeToPaddock(srcGuard.resolved, paddock),
       "dst": relativeToPaddock(dstGuard.resolved, paddock),
-      "kind": entryKind(dstGuard.resolved),
+      "kind": $fs.entryKind(dstGuard.resolved),
     })
-  except Exception as e:  ## effect boundary: callee raises are unannotated
+  except CatchableError as e:
     operationalErrorToolResult(e.msg)
 
-proc performFsRemove*(path, paddock: string; recursive = false): StructuredToolResult {.gcsafe, raises: [].} =
+proc performFsRemove*(fs: FsRuntimePort; path, paddock: string;
+                      recursive = false): StructuredToolResult {.gcsafe, raises: [].} =
   try:
     let guard = resolveGuarded(path, paddock)
     if not guard.ok:
       return guard.err
     let relPath = relativeToPaddock(guard.resolved, paddock)
-    let kind = entryKind(guard.resolved)
+    let kind = fs.entryKind(guard.resolved)
     case kind
-    of "file":
-      removeFile(guard.resolved)
-    of "dir":
+    of fekFile:
+      discard
+    of fekDir:
       if not recursive:
         return usageErrorToolResult("removing a directory requires recursive=true")
-      removeDir(guard.resolved)
     else:
       return operationalErrorToolResult("path not found: " & path)
+    fs.remove(guard.resolved, recursive).isOkOr:
+      return operationalErrorToolResult(error)
     successToolResult(%*{
       "path": relPath,
-      "kind": kind,
+      "kind": $kind,
       "removed": true,
     })
   except CatchableError as e:
