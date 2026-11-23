@@ -5,6 +5,7 @@
 
 import ../../core/pipeops
 import ../../ports/multigraph_store
+import ./magma_stats_sql
 
 when defined(withSqlite):
   import db_connector/db_sqlite
@@ -719,34 +720,14 @@ when defined(withSqlite):
       frontier = nextFrontier
       inc depth
 
-  func parseCount(raw: string): int =
-    if raw.len == 0: 0 else: parseInt(raw)
-
   proc stats*(a: SqliteMagmaStoreAdapter; userId: string): MagmaStats =
     openStoreOr(a, MagmaStats())
     defer: db.close()
     try:
-      let rows = db.getAllRows(sql(
-        "SELECT COUNT(*), " &
-        "COALESCE(SUM(CASE WHEN node_type = 'memory' THEN 1 ELSE 0 END), 0), " &
-        "COALESCE(SUM(CASE WHEN node_type = 'user_profile' THEN 1 ELSE 0 END), 0), " &
-        "COALESCE(SUM(CASE WHEN node_type = 'preference' THEN 1 ELSE 0 END), 0), " &
-        "COALESCE(SUM(CASE WHEN node_type = 'entity' THEN 1 ELSE 0 END), 0), " &
-        "COALESCE(SUM(CASE WHEN length(" & SqliteVectorEmbeddingColumn &
-        ") > 0 OR " & SqliteLegacyEmbeddingColumn & " != '' THEN 1 ELSE 0 END), 0) " &
-        "FROM " & SqliteNodesTable & " WHERE user_id = ?"
-      ), userId)
+      let rows = db.getAllRows(sql(nodeStatsSql(SqliteNodesTable, "length(" & SqliteVectorEmbeddingColumn & ") > 0 OR " & SqliteLegacyEmbeddingColumn & " != ''", perUser = true)), userId)
       if rows.len > 0:
-        result.totalNodes = parseCount(rows[0][0])
-        result.memoryNodes = parseCount(rows[0][1])
-        result.profileNodes = parseCount(rows[0][2])
-        result.preferenceNodes = parseCount(rows[0][3])
-        result.entityNodes = parseCount(rows[0][4])
-        result.embeddingNodes = parseCount(rows[0][5])
-      let edgeRows = db.getAllRows(sql(
-        "SELECT COUNT(*) FROM " & SqliteEdgesTable &
-        " e JOIN " & SqliteNodesTable & " n ON e.from_id = n.id WHERE n.user_id = ?"
-      ), userId)
+        result = nodeStatsFromRow(rows[0])
+      let edgeRows = db.getAllRows(sql(edgeCountSql(SqliteEdgesTable, SqliteNodesTable, perUser = true)), userId)
       if edgeRows.len > 0:
         result.totalEdges = parseCount(edgeRows[0][0])
     except CatchableError:
@@ -756,24 +737,10 @@ when defined(withSqlite):
     openStoreOr(a, MagmaStats())
     defer: db.close()
     try:
-      let rows = db.getAllRows(sql(
-        "SELECT COUNT(*), " &
-        "COALESCE(SUM(CASE WHEN node_type = 'memory' THEN 1 ELSE 0 END), 0), " &
-        "COALESCE(SUM(CASE WHEN node_type = 'user_profile' THEN 1 ELSE 0 END), 0), " &
-        "COALESCE(SUM(CASE WHEN node_type = 'preference' THEN 1 ELSE 0 END), 0), " &
-        "COALESCE(SUM(CASE WHEN node_type = 'entity' THEN 1 ELSE 0 END), 0), " &
-        "COALESCE(SUM(CASE WHEN length(" & SqliteVectorEmbeddingColumn &
-        ") > 0 OR " & SqliteLegacyEmbeddingColumn & " != '' THEN 1 ELSE 0 END), 0) " &
-        "FROM " & SqliteNodesTable
-      ))
+      let rows = db.getAllRows(sql(nodeStatsSql(SqliteNodesTable, "length(" & SqliteVectorEmbeddingColumn & ") > 0 OR " & SqliteLegacyEmbeddingColumn & " != ''", perUser = false)))
       if rows.len > 0:
-        result.totalNodes = parseCount(rows[0][0])
-        result.memoryNodes = parseCount(rows[0][1])
-        result.profileNodes = parseCount(rows[0][2])
-        result.preferenceNodes = parseCount(rows[0][3])
-        result.entityNodes = parseCount(rows[0][4])
-        result.embeddingNodes = parseCount(rows[0][5])
-      let edgeRows = db.getAllRows(sql("SELECT COUNT(*) FROM " & SqliteEdgesTable))
+        result = nodeStatsFromRow(rows[0])
+      let edgeRows = db.getAllRows(sql(edgeCountSql(SqliteEdgesTable, SqliteNodesTable, perUser = false)))
       if edgeRows.len > 0:
         result.totalEdges = parseCount(edgeRows[0][0])
     except CatchableError:

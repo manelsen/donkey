@@ -51,8 +51,10 @@ proc epochMs*(): int64 =
 
 
 func splitChunks*(text: string; maxLen: int): seq[string] =
-  ## Splits text into chunks of at most maxLen characters.
-  ## Prefers splitting at newlines or spaces; falls back to hard cut.
+  ## Splits text into chunks of at most maxLen bytes.
+  ## Prefers splitting at newlines or spaces; falls back to a hard cut on a
+  ## UTF-8 character boundary, never inside a multi-byte character (a cut
+  ## there sent invalid UTF-8 to the channel).
   if text.len <= maxLen:
     return @[text]
   var pos = 0
@@ -67,6 +69,13 @@ func splitChunks*(text: string; maxLen: int): seq[string] =
     if found < 0:
       for i in countdown(pos + maxLen - 1, pos + maxLen div 2):
         if text[i] == ' ': found = i + 1; break
-    if found < 0: found = pos + maxLen
+    if found < 0:
+      found = pos + maxLen
+      ## Back off to the first byte of the character the cut falls in.
+      while found > pos and (ord(text[found]) and 0xC0) == 0x80: dec found
+      if found == pos:
+        ## A single character wider than maxLen: keep it whole.
+        found = pos + 1
+        while found < text.len and (ord(text[found]) and 0xC0) == 0x80: inc found
     result.add(text[pos ..< found])
     pos = found

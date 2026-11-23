@@ -73,6 +73,7 @@ when defined(posix):
 import results
 import ../../app/automation_runtime
 import ../../domain/automation/schedule_pure
+import ./durable_file
 
 const
   ScheduleFileName* = "schedules.json"
@@ -100,32 +101,6 @@ type
 var scheduleStoreLock: Lock
 initLock(scheduleStoreLock)
 
-# ---------------------------------------------------------------------------
-# Small durable-file helpers. `turn_journal_store` keeps the same building
-# blocks private; extracting them into a shared module needs a file this story
-# does not own, so the minimal copies live here.
-# ---------------------------------------------------------------------------
-
-when defined(posix):
-  proc cRename(oldname, newname: cstring): cint {.
-    importc: "rename", header: "<stdio.h>".}
-
-when defined(macosx):
-  ## `fsync` on macOS only reaches the drive cache; `F_FULLFSYNC` flushes it.
-  var F_FULLFSYNC {.importc, header: "<fcntl.h>".}: cint
-
-proc hardenDir(dir: string): Result[void, string] {.raises: [].} =
-  when defined(posix):
-    if dir.len > 0 and posix.chmod(dir.cstring, posix.Mode(0o700)) != 0:
-      return err("cannot restrict permissions of " & dir)
-  ok()
-
-proc hardenFile(path: string): Result[void, string] {.raises: [].} =
-  when defined(posix):
-    if posix.chmod(path.cstring, posix.Mode(0o600)) != 0:
-      return err("cannot restrict permissions of " & path)
-  ok()
-
 proc lockFile(store: ScheduleStore): cint {.raises: [].} =
   ## Cross-process exclusion for the read-modify-write window: `ctl` and the
   ## daemon are different processes, and the in-process `Lock` cannot see each
@@ -146,111 +121,17 @@ proc unlockFile(fd: cint) {.raises: [].} =
       discard posix.lockf(fd, F_ULOCK, 0)
       discard posix.close(fd)
 
-proc syncFile(f: File; path: string): Result[void, string] {.raises: [].} =
-  try:
-    f.flushFile()
-  except CatchableError as e:
-    return err("flush failed for " & path & ": " & e.msg)
-  when defined(posix):
-    let fd = cint(f.getFileHandle())
-    when defined(macosx):
-      if posix.fcntl(fd, F_FULLFSYNC) == 0:
-        return ok()
-    if posix.fsync(fd) != 0:
-      return err("fsync failed for " & path & ": " & osErrorMsg(osLastError()))
-  ok()
-
-proc syncDir(path: string): Result[void, string] {.raises: [].} =
-  ## Persist a directory entry (new file, rename). Needed for durability of the
-  ## name, not of the already-fsynced data.
-  when defined(posix):
-    try:
-      let fd = posix.open(path.cstring, posix.O_RDONLY)
-      if fd < 0:
-        return err("open failed for directory " & path & ": " &
-                   osErrorMsg(osLastError()))
-      defer: discard posix.close(fd)
-      if posix.fsync(fd) != 0:
-        return err("fsync failed for directory " & path & ": " &
-                   osErrorMsg(osLastError()))
-    except CatchableError as e:
-      return err("fsync failed for directory " & path & ": " & e.msg)
-  ok()
-
-proc removeQuietly(path: string) {.raises: [].} =
-  try:
-    if fileExists(path):
-      removeFile(path)
-  except CatchableError:
-    discard
-
-proc renamePath(source, dest: string): Result[void, string] {.raises: [].} =
-  when defined(posix):
-    if cRename(source.cstring, dest.cstring) != 0:
-      return err("rename failed for " & source & ": " &
-                 osErrorMsg(osLastError()))
-    ok()
-  else:
-    try:
-      {.cast(raises: []).}:
-        moveFile(source, dest)
-      ok()
-    except CatchableError as e:
-      err("rename failed for " & source & ": " & e.msg)
-
-proc ensureStateDir(path: string): Result[void, string] {.raises: [].} =
-  let dir = parentDir(path)
-  if dir.len == 0:
-    return ok()
-  try:
-    createDir(dir)
-  except CatchableError as e:
-    return err("cannot create schedule state directory " & dir & ": " & e.msg)
-  hardenDir(dir)
-
 var tmpSerial: int
 
 proc atomicWriteText(path, content: string): Result[void, string] {.raises: [].} =
-  ## Temp file + fsync + rename + directory fsync. Caller holds the store lock,
-  ## so `tmpSerial` needs no further synchronization.
+  ## Caller holds the store lock, so `tmpSerial` needs no further
+  ## synchronization. A failed directory fsync is not an error: reporting it
+  ## would make the caller believe the watermark did not advance and skip an
+  ## occurrence that is, in fact, consumed.
   inc tmpSerial
-  let tmp = path & ".tmp." & $getCurrentProcessId() & "-" & $tmpSerial
-  try:
-    let prepared = ensureStateDir(path)
-    if prepared.isErr:
-      return err(prepared.error)
-    var f = open(tmp, fmWrite)
-    let hardened = hardenFile(tmp)
-    if hardened.isErr:
-      f.close()
-      removeQuietly(tmp)
-      return err(hardened.error)
-    var syncError = ""
-    try:
-      f.write(content)
-      let synced = syncFile(f, tmp)
-      if synced.isErr:
-        syncError = synced.error
-    finally:
-      f.close()
-    if syncError.len > 0:
-      removeQuietly(tmp)
-      return err(syncError)
-    let renamed = renamePath(tmp, path)
-    if renamed.isErr:
-      removeQuietly(tmp)
-      return err(renamed.error)
-    let dir = parentDir(path)
-    if dir.len > 0:
-      ## The rename already made the new content visible. A directory fsync is
-      ## a durability nicety; reporting it as a failed write would make the
-      ## caller believe the watermark did not advance and skip an occurrence
-      ## that is, in fact, consumed.
-      discard syncDir(dir)
-    ok()
-  except CatchableError as e:
-    removeQuietly(tmp)
-    err("atomic write failed for " & path & ": " & e.msg)
+  durable_file.atomicWriteText(path, content,
+                               $getCurrentProcessId() & "-" & $tmpSerial,
+                               requireDirSync = false)
 
 # ---------------------------------------------------------------------------
 # JSON encoding/decoding.

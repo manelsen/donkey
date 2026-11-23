@@ -8,13 +8,14 @@
 ## docs/hermes-mining/telegram/CASES.md#tg-001
 
 import std/unicode
+import ../../core/utf8
 
 const TelegramTextLimit* = 4096
 
 func utf16Units*(s: string): int =
   ## Number of UTF-16 code units Telegram charges for `s`.
   for r in s.runes:
-    result += (if int(r) > 0xFFFF: 2 else: 1)
+    result += utf16Width(r)
 
 func splitForTelegram*(text: string; limit = TelegramTextLimit): seq[string] =
   ## Splits `text` into chunks of at most `limit` UTF-16 code units without
@@ -32,7 +33,7 @@ func splitForTelegram*(text: string; limit = TelegramTextLimit): seq[string] =
   var lastBreakUnits = 0
 
   for r in text.runes:
-    let units = if int(r) > 0xFFFF: 2 else: 1
+    let units = utf16Width(r)
     ## Repeat the cut: after moving the tail of a break, the remainder can
     ## still exceed the limit when the limit is very small.
     while currentUnits + units > limit and currentUnits > 0:
