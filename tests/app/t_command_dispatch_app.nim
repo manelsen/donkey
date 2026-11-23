@@ -206,6 +206,27 @@ proc runTests*() =
       check sm.hasLiveSession(UserId("u-1"))
       check msgSeq == 1
 
+  suite "enqueueSessionTask":
+    ## The one way a button press reaches a session (Discord, Telegram, Slack
+    ## and QQ callbacks).
+    setup:
+      var sm: SessionManager
+      sm.init()
+      var msgSeq = 0
+
+    test "without a live session nothing is enqueued and no entry is left":
+      check not enqueueSessionTask(sm, msgSeq, UserId("u-9"), tkPersonalityChoice,
+                                   "calm", ckDiscord, "m1")
+      check not sm.hasSession(UserId("u-9"))
+      check msgSeq == 0
+
+    test "into a live session the task lands in its inbox":
+      discard sm.getOrCreate(UserId("u-1"))
+      check enqueueSessionTask(sm, msgSeq, UserId("u-1"), tkPersonalityChoice,
+                               "calm", ckDiscord, "m1")
+      check msgSeq == 1
+      check sm.getOrCreate(UserId("u-1")).inbox.len == 1
+
   suite "dispatchCommand: channel capabilities":
     setup:
       var sm: SessionManager

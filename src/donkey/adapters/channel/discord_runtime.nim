@@ -551,10 +551,13 @@ proc handleDiscordEvent*(sm: var SessionManager;
     of cbrUi:
       discard handleDiscordUiCallback(event, dcAdapter, presentationState, memory, userId, callback, modelCatalogLoader, toolsCount, toolClientsCount, daemonStartMs, msgSeq, logger)
     of cbrSessionTask:
-      let entry = sm.getOrCreate(userId)
-      inc msgSeq
-      entry.inbox.addLastNoWait(
-        newTaskMsg($msgSeq, callbackTaskKind(callback), $userId, callback.value, ckDiscord, event.messageId))
+      ## Only into a live session: creating an entry here left one without an
+      ## orchestrator, the task never ran and the entry stayed behind.
+      if not enqueueSessionTask(sm, msgSeq, userId, callbackTaskKind(callback),
+                                callback.value, ckDiscord, event.messageId):
+        dcAdapter.send(OutboundMessage(userId: userId, channel: ckDiscord,
+                                       text: NoLiveSessionText)).isOkOr:
+          core_log.log(logger, core_log.lvlError, "dc no-session reply: " & error)
     of cbrNone:
       discard
 
