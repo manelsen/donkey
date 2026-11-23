@@ -140,6 +140,21 @@ proc runTests*() =
       let r  = parseEvent(makeEventCallback("T1", ev))
       check r.kind == sekUnknown
 
+    test "housekeeping subtypes are not a person speaking (hermes cac288a0c3)":
+      ## A join, topic change or pin carries `user` and `text`; each used to
+      ## start a turn. Unknown subtypes Slack adds later are dropped too.
+      for subtype in ["channel_join", "channel_leave", "channel_topic",
+                      "channel_purpose", "channel_name", "pinned_item",
+                      "channel_convert_to_private", "some_future_subtype"]:
+        let ev = makeMessageEvent("U1", "C1", "<@U1> has joined the channel",
+                                  "1.0", subtype = subtype)
+        check parseEvent(makeEventCallback("T1", ev)).kind == sekUnknown
+
+    test "conversational subtypes still reach the agent":
+      for subtype in ["file_share", "thread_broadcast", "me_message"]:
+        let ev = makeMessageEvent("U1", "C1", "hello", "1.0", subtype = subtype)
+        check parseEvent(makeEventCallback("T1", ev)).kind == sekMessage
+
     test "bot_message subtype returns sekUnknown":
       let ev = makeMessageEvent("U1", "C1", "auto reply", "1.0", subtype = "bot_message")
       let r  = parseEvent(makeEventCallback("T1", ev))

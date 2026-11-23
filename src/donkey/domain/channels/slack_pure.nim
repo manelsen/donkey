@@ -67,9 +67,13 @@ func parseMessageEvent(teamId, eventId: string; event: JsonNode): SlkParseResult
   ## Filter out bot_id messages (posted by bots/apps).
   let botId = event |>-> extractField("bot_id")
   if botId.len > 0: return SlkParseResult(kind: sekUnknown)
-  ## Subtype "bot_message" also indicates a bot posting.
+  ## Only a person speaking starts a turn: no subtype, a file share, a thread
+  ## reply also sent to the channel, or /me. Joins, topic changes, pins,
+  ## bot_message and any subtype Slack adds later are dropped (an allowlist,
+  ## so a new housekeeping subtype is not silently admitted; hermes cac288a0c3).
   let subtype = event |>-> extractField("subtype")
-  if subtype == "bot_message": return SlkParseResult(kind: sekUnknown)
+  if subtype notin ["", "file_share", "thread_broadcast", "me_message"]:
+    return SlkParseResult(kind: sekUnknown)
   SlkParseResult(
     kind:      sekMessage,
     rawId:     userId,
