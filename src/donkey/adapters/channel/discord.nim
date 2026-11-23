@@ -477,14 +477,21 @@ proc makeComponentRows(buttons: seq[seq[(string, string)]]): seq[JsonNode] =
     if comps.len > 0:
       result.add(%* {"type": 1, "components": comps})
 
+var gNonceCounter {.threadvar.}: uint32
+
 proc messageNonce(): string =
   ## Unique per message create; reused by the HTTP layer's retries of the
   ## same request, which is the point. Discord allows up to 25 characters.
+  ## A repeated nonce would make Discord answer with another message, so
+  ## the fallback (no OS randomness) is millisecond + counter + random,
+  ## which cannot repeat within this thread.
   var bytes: array[10, byte]
   if urandom(bytes):
     for b in bytes: result.add(toHex(b, 2))
   else:
-    result = $epochMs() & toHex(rand(int32.high), 8)
+    inc gNonceCounter
+    result = toHex(epochMs(), 11) & toHex(gNonceCounter, 8) &
+             toHex(rand(int32.high), 6)
   result = result[0 ..< min(result.len, 25)]
 
 func withNonce(body: JsonNode; nonce: string): JsonNode =
