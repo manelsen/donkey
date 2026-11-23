@@ -163,6 +163,9 @@ Formato do arquivo: `[salt 32B][nonce 12B][ciphertext][tag 16B]` — binário pu
 
 O ambiente é lido uma vez: `config/environment.readEnvironment` tira um snapshot depois que `donkey.env` e o vault o preencheram, e ele vai em `DonkeyConfig.env`. Quem precisa de uma variável recebe o snapshot (ou settings tipados lidos dele), nunca chama `getEnv`; teste monta o seu com `environmentOf`, sem `putEnv`. Chaves de provider ficam no snapshot instalado no laço (`useCredentials`); configuração de tools vem de `NativeCtx.env`; adapters recebem settings tipados. Processos filhos (sandbox, code runner, navegador) recebem cópia filtrada do ambiente vivo por `inheritedByChild`. Verificado por `tests/architecture/t_env_reads.nim`: nenhuma leitura fora de `config/environment` (e dos que preenchem o ambiente: `dotenv`, vault).
 
+### Arquivos e processos na camada `app`
+`app` não chama `std/os` nem `std/osproc` para arquivo ou processo: usa `ports/fs` (`FsRuntimePort`, adapter `adapters/filesystem/fs_adapter`) e `ports/process` (`ProcessRuntimePort`, adapter `adapters/process/process_adapter`), recebidos como valor (`NativeCtx.fs`, `NativeCtx.process`, parâmetros). Teste passa um fake. Credencial em disco vai por `writePrivate` (0600 desde o primeiro byte). Verificado por `tests/architecture/t_app_raw_io.nim` (orçamento 0).
+
 ### Interface
 **CLI + TUI**. Sem web UI.
 

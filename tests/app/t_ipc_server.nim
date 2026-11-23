@@ -5,6 +5,7 @@ import std/[json, os, strutils, unittest]
 import chronos
 import chronos/transports/stream
 import donkey/app/ipc_server
+import donkey/adapters/filesystem/fs_adapter
 import donkey/ports/ipc
 
 proc request(sockPath, line: string): Future[string] {.async.} =
@@ -22,7 +23,7 @@ proc runTests*() =
         DaemonStatus(uptimeSec: 42, sessionCount: 3)
       let logFn: LogProvider = proc(n: int): seq[IpcLogEntry] {.gcsafe, raises: [].} =
         @[IpcLogEntry(level: "info", msg: "asked for " & $n)]
-      startIpcServer(sockPath, statusFn, logFn)
+      startIpcServer(newFsAdapter(), sockPath, statusFn, logFn)
       let status = parseJson(waitFor request(sockPath, """{"cmd":"status"}"""))
       check status["ok"].getBool
       check status["data"]["uptimeSec"].getInt == 42

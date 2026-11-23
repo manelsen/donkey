@@ -14,6 +14,8 @@ type
     env*:              seq[(string, string)]
     replaceEnv*:       bool    ## `env` is the whole environment; otherwise
                                ## the child inherits ours and `env` is ignored
+    passthrough*:      bool    ## the child writes to our stdout and stderr
+                               ## (a `logs -f`, a `systemctl`); `output` is empty
     timeoutMs*:        int     ## 0: wait as long as it runs; otherwise the
                                ## process is killed and the run is an error.
                                ## For short probes: the output is read after

@@ -43,6 +43,11 @@ proc runTests*() =
     test "a program that does not exist is an error, not an exception":
       check process.run(argvSpec(@["/nonexistent/donkey-binary"])).isErr
 
+    test "a passthrough run gives the exit code and no output":
+      let r = process.run(ProcessSpec(command: "exit 4", passthrough: true)).get
+      check r.exitCode == 4
+      check r.output == ""
+
     test "an empty port fails closed":
       check ProcessRuntimePort().orUnavailable.run(shellSpec("true")).isErr
 

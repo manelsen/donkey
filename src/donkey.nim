@@ -891,7 +891,7 @@ proc setupIpcServer(cfg: DonkeyConfig;
     proc(userId: UserId): AuthVerdict {.gcsafe, raises: [].} =
       authorizeUser(userId, gatewayAccess, cfg.dmPolicy)
   try:
-    startIpcServer(sockPath, ipcStatusFn, ipcLogFn)
+    startIpcServer(newFsAdapter(), sockPath, ipcStatusFn, ipcLogFn)
     log.info("IPC socket: " & sockPath)
   except CatchableError as e:
     log.warn("IPC socket disabled: " & e.msg)
@@ -1775,7 +1775,7 @@ proc main =
   # setup doesn't need config — handle it early
   if args.len >= 1 and args[0] == "setup":
     let env = readEnvironment()
-    runSetupWizard(resolveHome(env), env)
+    runSetupWizard(newFsAdapter(), resolveHome(env), env)
     quit(0)
 
   if configPath.len == 0:
@@ -1846,7 +1846,7 @@ proc main =
   cmdReg.register(CommandEntry(
     name: "setup", minArgs: 1,
     handler: proc(a: seq[string]): int =
-      runSetupWizard(resolveHome(cfg.env), cfg.env); 0,
+      runSetupWizard(newFsAdapter(), resolveHome(cfg.env), cfg.env); 0,
     context: ccNone, description: "Interactive first-run configuration wizard"))
 
   # Post-bootstrap commands
@@ -1860,7 +1860,7 @@ proc main =
   cmdReg.register(CommandEntry(
     name: "service", minArgs: 2,
     handler: proc(a: seq[string]): int =
-      dispatchService(a, logsFollow, cfg.env),
+      dispatchService(newProcessAdapter(), newFsAdapter(), a, logsFollow, cfg.env),
     context: ccNone, description: "Systemd --user service management"))
   cmdReg.register(CommandEntry(
     name: "tui", minArgs: 1,

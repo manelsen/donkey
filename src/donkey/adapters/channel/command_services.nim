@@ -19,6 +19,7 @@ import ../../domain/message
 import ../../ports/command_services
 import ../../ports/provider
 import ../../app/skill_runtime
+import ../filesystem/fs_adapter
 import ../../app/credential_runtime
 import ../../app/preference_commands
 import ./model_catalog_ui
@@ -48,6 +49,7 @@ proc applySkillTextCommand*(memory: MdFileAdapter;
                             searchBackend: skill_runtime.SkillSearchBackend = nil;
                             installBackend: skill_runtime.SkillInstallBackend = nil): Result[string, string] =
   skill_runtime.applySkillCommand(
+    newFsAdapter(),
     memory.paddockDir(userId),
     value,
     homeDir = if homeDir.len > 0: homeDir else: memory.donkeyHomeDir(),

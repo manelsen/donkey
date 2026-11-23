@@ -35,6 +35,17 @@ proc runSpec(spec: ProcessSpec): Result[ProcessOutput, string] {.gcsafe, raises:
     if spec.createWorkingDir and spec.workingDir.len > 0:
       createDir(spec.workingDir)
     let env = envTable(spec)
+    if spec.passthrough:
+      let p =
+        if spec.argv.len > 0:
+          startProcess(spec.argv[0], workingDir = spec.workingDir,
+                       args = spec.argv[1 .. ^1], env = env,
+                       options = {poParentStreams, poUsePath})
+        else:
+          startProcess(spec.command, workingDir = spec.workingDir, env = env,
+                       options = {poParentStreams, poEvalCommand})
+      defer: p.close()
+      return ok(ProcessOutput(exitCode: p.waitForExit()))
     if spec.argv.len == 0 and spec.timeoutMs <= 0:
       let (output, code) = execCmdEx(spec.command,
                                      options = {poEvalCommand, poStdErrToStdOut},

@@ -6,6 +6,7 @@ import results
 import ../config/skills_registry
 import ../config/clawhub_registry
 import ../core/commands/command_catalog
+import ../ports/fs
 
 type
   SkillSearchBackend* = proc(registry, query: string; limit: int):
@@ -30,16 +31,17 @@ proc defaultSkillInstallBackend*(home, registry, slug: string):
                                 Result[RemoteSkillOrigin, string] {.gcsafe.} =
   installRemoteSkill(home, registry, slug)
 
-proc writeSkillRegistry(path: string; skills: seq[SkillManifest]): Result[void, string] =
-  if fileExists(path):
-    removeFile(path)
+proc writeSkillRegistry(fs: FsRuntimePort; path: string;
+                        skills: seq[SkillManifest]): Result[void, string] =
+  if fs.entryKind(path) == fekFile:
+    ? fs.remove(path, false)
   for skill in skills:
     let saved = saveSkillEntry(path, skill)
     if saved.isErr:
       return err(saved.error)
   ok()
 
-proc upsertUserSkills(path: string; manifests: seq[SkillManifest]): Result[seq[SkillManifest], string] =
+proc upsertUserSkills(fs: FsRuntimePort; path: string; manifests: seq[SkillManifest]): Result[seq[SkillManifest], string] =
   var merged = loadSkillRegistry(path)
   for manifest in manifests:
     var found = false
@@ -50,17 +52,17 @@ proc upsertUserSkills(path: string; manifests: seq[SkillManifest]): Result[seq[S
         break
     if not found:
       merged.add(manifest)
-  let saved = writeSkillRegistry(path, merged)
+  let saved = writeSkillRegistry(fs, path, merged)
   if saved.isErr:
     return err(saved.error)
   ok(merged)
 
-proc removeUserSkill(path, name: string): Result[bool, string] =
+proc removeUserSkill(fs: FsRuntimePort; path, name: string): Result[bool, string] =
   let skills = loadSkillRegistry(path)
   let kept = skills.filterIt(it.name != name)
   if kept.len == skills.len:
     return ok(false)
-  let saved = writeSkillRegistry(path, kept)
+  let saved = writeSkillRegistry(fs, path, kept)
   if saved.isErr:
     return err(saved.error)
   ok(true)
@@ -74,11 +76,24 @@ proc canonicalizeSkillManifest(skillDir: string;
   if result.version.len == 0:
     result.version = version
 
-proc inferRemoteSkillManifest(skillDir, slug, version: string): Result[seq[SkillManifest], string] =
+proc filesUnder(fs: FsRuntimePort; dir: string): Result[seq[string], string] =
+  ## Every regular file below `dir`; symlinks are not followed.
+  var pending = @[dir]
+  var files: seq[string]
+  while pending.len > 0:
+    for entry in ? fs.listDir(pending.pop()):
+      case entry.kind
+      of fekDir: pending.add entry.path
+      of fekFile: files.add entry.path
+      else: discard
+  ok(files)
+
+proc inferRemoteSkillManifest(fs: FsRuntimePort;
+                              skillDir, slug, version: string): Result[seq[SkillManifest], string] =
   const PreferredNames = ["main.ts", "index.ts", "skill.ts", "server.ts", "mcp.ts", "tool.ts",
                           "main.js", "index.js", "skill.js", "server.js", "mcp.js", "tool.js"]
   var candidates: seq[string] = @[]
-  for path in walkDirRec(skillDir):
+  for path in ? filesUnder(fs, skillDir):
     if (DirSep & ClawhubDotDir & DirSep) in path:
       continue
     let ext = splitFile(path).ext.toLowerAscii()
@@ -88,7 +103,8 @@ proc inferRemoteSkillManifest(skillDir, slug, version: string): Result[seq[Skill
 
   if candidates.len == 0:
     let hasSkillMd =
-      fileExists(skillDir / "SKILL.md") or fileExists(skillDir / "skill.md")
+      fs.entryKind(skillDir / "SKILL.md") == fekFile or
+      fs.entryKind(skillDir / "skill.md") == fekFile
     if hasSkillMd:
       return ok(@[SkillManifest(name: slug, version: version, script: "")])
     return err("Bundle remoto `" & slug & "` sem SKILL.md nem scripts Deno/JS — bundle corrupto ou registry retornou zip vazio.")
@@ -110,9 +126,9 @@ proc inferRemoteSkillManifest(skillDir, slug, version: string): Result[seq[Skill
 
   ok(@[SkillManifest(name: slug, version: version, script: selected)])
 
-proc resolveRemoteSkillManifests(home, slug: string): Result[seq[SkillManifest], string] =
+proc resolveRemoteSkillManifests(fs: FsRuntimePort; home, slug: string): Result[seq[SkillManifest], string] =
   let skillDir = remoteSkillDir(home, slug)
-  if not dirExists(skillDir):
+  if fs.entryKind(skillDir) != fekDir:
     return err("Skill remota não instalada: `" & slug & "`.")
 
   let origin = readRemoteSkillOrigin(skillDir).valueOr:
@@ -120,7 +136,7 @@ proc resolveRemoteSkillManifests(home, slug: string): Result[seq[SkillManifest],
   let version = if origin.installedVersion.len > 0: origin.installedVersion else: "0.1.0"
 
   let manifestPath = skillDir / "skills.toml"
-  if fileExists(manifestPath):
+  if fs.entryKind(manifestPath) == fekFile:
     let manifests = loadSkillRegistry(manifestPath)
     if manifests.len == 0:
       return err("O bundle remoto `" & slug & "` tem `skills.toml` vazio.")
@@ -129,7 +145,7 @@ proc resolveRemoteSkillManifests(home, slug: string): Result[seq[SkillManifest],
       resolved.add(canonicalizeSkillManifest(skillDir, manifest, version))
     return ok(resolved)
 
-  inferRemoteSkillManifest(skillDir, slug, version)
+  inferRemoteSkillManifest(fs, skillDir, slug, version)
 
 func formatSkillManifestLine(manifest: SkillManifest): string =
   "- `" & manifest.name & "` v" & manifest.version & " — `" & manifest.script & "`"
@@ -165,10 +181,10 @@ proc buildSkillSearchText(hits: seq[RemoteSkillSearchHit]): string =
     let summary = if hit.summary.len > 0: " — " & hit.summary else: ""
     result.add("- `" & hit.slug & "`" & version & summary & "\n")
 
-proc enableRemoteSkillForUser(userPaddockDir, home, slug: string): Result[seq[SkillManifest], string] =
-  let manifests = resolveRemoteSkillManifests(home, slug).valueOr:
+proc enableRemoteSkillForUser(fs: FsRuntimePort; userPaddockDir, home, slug: string): Result[seq[SkillManifest], string] =
+  let manifests = resolveRemoteSkillManifests(fs, home, slug).valueOr:
     return err(error)
-  let updated = upsertUserSkills(userSkillsPath(userPaddockDir), manifests).valueOr:
+  let updated = upsertUserSkills(fs, userSkillsPath(userPaddockDir), manifests).valueOr:
     return err(error)
   var enabled: seq[SkillManifest] = @[]
   for manifest in manifests:
@@ -182,7 +198,7 @@ func skillRegistry*(env: Environment): string =
   ## `CLAWHUB_REGISTRY` from the environment snapshot, or the public registry.
   env.stripped("CLAWHUB_REGISTRY", ClawhubDefaultRegistry)
 
-proc applySkillCommand*(userPaddockDir: string;
+proc applySkillCommand*(fs: FsRuntimePort; userPaddockDir: string;
                         value: string;
                         homeDir = "";
                         registry = "";
@@ -213,14 +229,14 @@ proc applySkillCommand*(userPaddockDir: string;
     if parts.len != 2:
       return err("Use `/skill install <slug>`.")
     let slug = parts[1]
-    if not dirExists(remoteSkillDir(home, slug)):
+    if fs.entryKind(remoteSkillDir(home, slug)) != fekDir:
       discard installFn(home, registryUrl, slug).valueOr:
         return err(error)
-    let manifests = resolveRemoteSkillManifests(home, slug).valueOr:
+    let manifests = resolveRemoteSkillManifests(fs, home, slug).valueOr:
       return err(error)
     let hasExecutable = manifests.anyIt(it.script.len > 0)
     if hasExecutable:
-      let enabled = enableRemoteSkillForUser(userPaddockDir, home, slug).valueOr:
+      let enabled = enableRemoteSkillForUser(fs, userPaddockDir, home, slug).valueOr:
         return err(error)
       ok(
         "✅ Skill remota instalada e habilitada: `" & slug & "`.\n" &
@@ -236,13 +252,13 @@ proc applySkillCommand*(userPaddockDir: string;
     if parts.len != 2:
       return err("Use `/skill enable <slug>`.")
     let slug = parts[1]
-    let manifests = resolveRemoteSkillManifests(home, slug).valueOr:
+    let manifests = resolveRemoteSkillManifests(fs, home, slug).valueOr:
       return err(error)
     let hasExecutable = manifests.anyIt(it.script.len > 0)
     if not hasExecutable:
       return ok("`" & slug & "` é uma skill guidance-only — não precisa de habilitação. " &
         "Ela já entra no system prompt automaticamente.")
-    let enabled = enableRemoteSkillForUser(userPaddockDir, home, slug).valueOr:
+    let enabled = enableRemoteSkillForUser(fs, userPaddockDir, home, slug).valueOr:
       return err(error)
     ok(
       "✅ Skill habilitada: `" & slug & "`.\n" &
@@ -252,7 +268,7 @@ proc applySkillCommand*(userPaddockDir: string;
   of "disable", "remove":
     if parts.len != 2:
       return err("Use `/skill disable <name>`.")
-    let removed = removeUserSkill(userSkillsPath(userPaddockDir), parts[1]).valueOr:
+    let removed = removeUserSkill(fs, userSkillsPath(userPaddockDir), parts[1]).valueOr:
       return err(error)
     if removed:
       ok("✅ Skill desabilitada: `" & parts[1] & "`.")
