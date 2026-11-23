@@ -19,6 +19,7 @@ import ../domain/agent_message
 import ../domain/automation/schedule_pure
 import ../domain/message
 import ../ports/memory
+import ../ports/reminders
 import ../ports/provider
 import ../ports/runtime_state
 import ../ports/tool
@@ -50,6 +51,7 @@ type
   SessionIngressServices* = object
     cfg*:                        DonkeyConfig
     memory*:                     MemoryRuntimePort
+    reminders*:                  ReminderPort
     completeFn*:                 CompleteFn
     streamFactory*:                   StreamFactory
     toolClients*:                seq[ToolRuntimePort]
@@ -189,11 +191,13 @@ func buildSessionIngressServices*(memory: MemoryRuntimePort;
                                   routeCostHook: proc(): seq[RouteCostHint] {.gcsafe.} = nil;
                                   routeProviderCooldownHook: proc(): seq[ProviderCooldown] {.gcsafe.} = nil;
                                   subagentWorkspace: SubagentWorkspacePort = SubagentWorkspacePort();
-                                  fs: FsRuntimePort = unavailableFs()): SessionIngressServices =
+                                  fs: FsRuntimePort = unavailableFs();
+                                  reminders: ReminderPort = ReminderPort()): SessionIngressServices =
   ## Constructs SessionIngressServices.
   SessionIngressServices(
     cfg: cfg,
     memory: memory,
+    reminders: reminders,
     completeFn: completeFn,
     streamFactory: streamFactory,
     toolClients: toolClients,
@@ -240,7 +244,8 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                                typingFn: TypingFn;
                                searchFn: SearchFn;
                                http: HttpRuntimePort;
-                               fs: FsRuntimePort = unavailableFs()) {.gcsafe.} =
+                               fs: FsRuntimePort = unavailableFs();
+                               reminders: ReminderPort = ReminderPort()) {.gcsafe.} =
   ## Spawns an orchestrator actor if the ingress decision requires starting a session runtime.
   if not plan.decision.startsSessionRuntime:
     return
@@ -261,7 +266,7 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                              errorExplainFn = bootstrap.errorExplainFn,
                              asyncCompleteFn = bootstrap.asyncCompleteFn,
                              subagentWorkspace = bootstrap.subagentWorkspace,
-                             fs = fs, env = cfg.env)
+                             fs = fs, env = cfg.env, reminders = reminders)
 
 func sessionTaskMsg(msg: InboundMessage; msgId: string;
                      recentContext = ""): AgentMessage =
@@ -374,7 +379,7 @@ proc startSessionIngress*(sm: var SessionManager;
                            services.globalOutbox, services.log,
                            services.sandboxMode, services.sandboxRuntimeCmd, services.sandboxImage,
                            services.typingFn, services.searchFn,
-                           services.http, services.fs)
+                           services.http, services.fs, services.reminders)
   if result.plan.decision.startsNewSession:
     services.log.info("new session: " & result.plan.uid)
   elif result.plan.decision.rebuildsSessionRuntime:

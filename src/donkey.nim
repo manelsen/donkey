@@ -27,6 +27,7 @@ import donkey/core/app_meta
 import donkey/core/command_registry
 import donkey/core/providers/smart_routing
 import donkey/adapters/memory/md_file
+import donkey/adapters/memory/reminder_store
 when defined(withPostgres) or defined(withSqlite):
   import donkey/adapters/memory/multigraph_runtime
 import donkey/adapters/provider/openrouter
@@ -91,6 +92,7 @@ import donkey/app/chat_bridge
 import donkey/domain/gateway/dashboard_pure
 import donkey/domain/gateway/identity_pure
 import donkey/app/heartbeat
+import donkey/app/reminders
 import donkey/app/scheduler_wiring
 import donkey/app/metrics_server
 import donkey/app/outbound_runtime
@@ -1003,6 +1005,7 @@ func buildDaemonSessionServices(ctx: DaemonContext;
       ctx.runtime.routeHealth.cooldowns(),
     subagentWorkspace = subagentWorkspacePort(),
     fs = newFsAdapter(),
+    reminders = newReminderStore(memory.paddocksDir).toReminderPort(),
   )
 
 proc handleDaemonSessionFallback(runtime:  var DaemonRuntime;
@@ -1121,26 +1124,23 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
 proc publishDueReminders(runtime: var DaemonRuntime;
                          memory:  MdFileAdapter;
                          log:     Logger) =
+  ## The one place reminders are delivered: every 30 s on the daemon tick.
   if nowMs() - runtime.lastReminderCheckMs < 30_000:
     return
-
   runtime.lastReminderCheckMs = nowMs()
-  let dueReminders = memory.loadDueReminders()
-  for rem in dueReminders:
-    let rUid = UserId(rem["userId"].getStr())
-    let rCh  = block:
-      var found = ckTelegram
-      for ck in ChannelKind:
-        if $ck == rem["channel"].getStr(): found = ck; break
-      found
-    let rId = rem["id"].getStr()
-    runtime.globalOutbox.putNoWait(OutboundMessage(
-      userId:  rUid,
-      channel: rCh,
-      text:    "⏰ " & rem["message"].getStr(),
-    ))
-    memory.deleteReminder(rUid, rId)
-    log.info("reminder fired " & $rUid)
+  let outbox = runtime.globalOutbox
+  let reminderLog = log
+  let fired = deliverDueReminders(
+    newReminderStore(memory.paddocksDir).toReminderPort(), getTime().toUnix(),
+    proc(reminder: Reminder): Result[void, string] {.gcsafe, raises: [].} =
+      try:
+        outbox.putNoWait(reminderMessage(reminder))
+        reminderLog.info("reminder fired " & $reminder.userId)
+        ok()
+      except CatchableError as e:
+        err(e.msg),
+    log)
+  discard fired
 
 proc drainGlobalOutbox(runtime:  var DaemonRuntime;
                        adapters: var DaemonAdapters;
@@ -1572,7 +1572,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   let sessionServices = buildDaemonSessionServices(ctx, cfg, memory, log)
   let drainer = buildDaemonGatewayDrainer(ctx, cfg, memory, log)
 
-  ## Heartbeat: periodic maintenance (reminder delivery, etc.)
+  ## Heartbeat: periodic maintenance (reminders go out on the daemon tick)
   var hbReg = newHeartbeatRegistry()
   if ctx.services.browserRuntime != nil:
     let browserRuntime = ctx.services.browserRuntime
@@ -1589,16 +1589,6 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
         log.warn("ledger compaction worker: " & workerRes.error)
       else:
         ctx.runtime.ledgerWorker = workerRes.get()
-  let memPort = memory.toRuntimePort()
-  let reminderOutboxFn: ReminderOutboxFn = proc(userId, channel, message: string) {.gcsafe.} =
-    let uid = UserId(userId)
-    ctx.runtime.globalOutbox.putNoWait(OutboundMessage(
-      userId:  uid,
-      channel: parseEnum[ChannelKind](channel, ckTelegram),
-      text:    message,
-    ))
-  hbReg.registerTask("reminders", proc() {.gcsafe.} =
-    deliverDueReminders(memPort, reminderOutboxFn))
   let heartbeatOutboxFn: HeartbeatOutboxFn = proc(userId, channel, taskPayload: string) {.gcsafe.} =
     let uid = UserId(userId)
     let ck =

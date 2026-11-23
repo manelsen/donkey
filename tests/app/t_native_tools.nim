@@ -17,6 +17,7 @@ import donkey/core/log
 import donkey/domain/message
 import donkey/domain/more_tools
 import donkey/adapters/memory/md_file
+import donkey/adapters/memory/reminder_store
 import donkey/config/clawhub_registry
 import donkey/config/skills_registry
 import donkey/app/session_state
@@ -796,13 +797,13 @@ permissions = ["--allow-net=clawhub.ai"]
       if dirExists(paddock): removeDir(paddock)
 
     test "schedule_reminder is handled as native tool":
-      let memory = MdFileAdapter(paddocksDir: paddock)
+      let store = newReminderStore(paddock)
       let ctx = NativeCtx(
         uid:         UserId("test-user"),
         channel:     ckTelegram,
         outbox:      newAsyncQueue[OutboundMessage](),
         session:     nil,
-        memory:      memory.toRuntimePort(),
+        reminders:   store.toReminderPort(),
         completeFn:  stubComplete,
         braveApiKey: "",
         tools:       @[],
@@ -814,9 +815,18 @@ permissions = ["--allow-net=clawhub.ai"]
       check result.text == "Reminder scheduled."
       check result.resultKind == trkOutput
       var reminderCount = 0
-      for _ in walkDirRec(memory.reminderDir(UserId("test-user"))):
+      for _ in walkDirRec(store.reminderDir(UserId("test-user"))):
         inc reminderCount
       check reminderCount == 1
+
+    test "schedule_reminder without a reminder store is an error, not a crash":
+      let ctx = NativeCtx(uid: UserId("test-user"), channel: ckTelegram,
+                          outbox: newAsyncQueue[OutboundMessage](),
+                          completeFn: stubComplete, log: newLogger("test"))
+      let tc = makeTc("schedule_reminder", """{"when":"+1m","message":"standup"}""")
+      let result = waitFor executeNativeTool(tc, ctx, newSessionState(), newHistory())
+      check result.handled
+      check "not available" in result.text
 
   suite "executeNativeTool — task jobs":
 

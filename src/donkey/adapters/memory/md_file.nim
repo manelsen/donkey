@@ -88,11 +88,6 @@ proc saveIdentity*(a: MdFileAdapter; userId: UserId;
                    {.discardable, gcsafe, raises: [].}
 proc loadIdentity*(a: MdFileAdapter; userId: UserId): (string, PersonalityTraits) {.gcsafe.}
 func paddockDir*(a: MdFileAdapter; userId: UserId): string {.gcsafe.}
-proc scheduleReminder*(a: MdFileAdapter; userId: UserId;
-                       channel: string; scheduledAt: int64;
-                       message: string): string {.gcsafe, raises: [CatchableError].}
-proc loadDueReminders*(a: MdFileAdapter): seq[JsonNode] {.gcsafe.}
-proc deleteReminder*(a: MdFileAdapter; userId: UserId; reminderId: string) {.gcsafe.}
 proc searchSessions*(a: MdFileAdapter; userId: UserId;
                      query: string; limit: int;
                      includeMemory = true): Result[seq[SessionHit], string]
@@ -399,10 +394,6 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
                            {.gcsafe, raises: [].} =
                         a.searchSessions(userId, query, limit, includeMemory),
     paddockDir:       proc(userId: UserId): string {.gcsafe.} = a.paddockDir(userId),
-    scheduleReminder: proc(userId: UserId; channel: string; scheduledAt: int64; message: string): string {.gcsafe, raises: [CatchableError].} =
-                        a.scheduleReminder(userId, channel, scheduledAt, message),
-    loadDueReminders: proc(): seq[JsonNode] {.gcsafe.} = a.loadDueReminders(),
-    deleteReminder:   proc(userId: UserId; reminderId: string) {.gcsafe.} = a.deleteReminder(userId, reminderId),
   )
   when defined(withPostgres) or defined(withSqlite):
     if a.hasMagmaBackend:
@@ -1014,50 +1005,3 @@ proc loadIdentity*(a: MdFileAdapter; userId: UserId): (string, PersonalityTraits
   ## Returns (agent_name, PersonalityTraits) from the stored preferences.
   ## Empty strings when not set.
   parseIdentityPrefs(a.currentPreferences(userId))
-
-# ── Reminder store ────────────────────────────────────────────────────────────
-
-proc reminderDir*(a: MdFileAdapter; userId: UserId): string =
-  a.paddockDir(userId) / "reminders"
-
-proc scheduleReminder*(a: MdFileAdapter; userId: UserId;
-                       channel: string; scheduledAt: int64;
-                       message: string): string =
-  ## Writes a reminder JSON file. Returns the reminder id.
-  a.ensurePaddock(userId)
-  discard secureDir(a.reminderDir(userId))
-  let id   = $getTime().toUnix() & "_" & $userId
-  let data = %* {
-    "id":          id,
-    "userId":      $userId,
-    "channel":     channel,
-    "scheduledAt": scheduledAt,
-    "message":     message,
-  }
-  let reminderPath = a.reminderDir(userId) / id & ".json"
-  writeFile(reminderPath, $data)
-  discard secureFile(reminderPath)
-  id
-
-proc loadDueReminders*(a: MdFileAdapter): seq[JsonNode] =
-  ## Scans ALL paddocks for reminders whose scheduledAt <= now (UTC seconds).
-  let now = getTime().toUnix()
-  if not dirExists(a.paddocksDir): return @[]
-  for _, paddockPath in walkDir(a.paddocksDir):
-    let remDir = paddockPath / "reminders"
-    if not dirExists(remDir): continue
-    for _, rPath in walkDir(remDir):
-      if not rPath.endsWith(".json"): continue
-      try:
-        let j = parseJson(readFile(rPath))
-        if j["scheduledAt"].getBiggestInt() <= now:
-          result.add(j)
-      except CatchableError:
-        let errMsg = getCurrentExceptionMsg()
-        stderr.writeLine("WARN reminder.parse: failed to parse reminder file " &
-                         rPath & " reason=" & errMsg)
-
-proc deleteReminder*(a: MdFileAdapter; userId: UserId; reminderId: string) =
-  ## Deletes a reminder file by id.
-  let path = a.reminderDir(userId) / reminderId & ".json"
-  if fileExists(path): removeFile(path)

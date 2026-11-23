@@ -5,28 +5,21 @@
 ##
 ## Usage:
 ##   var reg = newHeartbeatRegistry()
-##   reg.registerTask("reminders", myReminderTask)
+##   reg.registerTask("heartbeat", myTask)
 ##   startHeartbeat(reg, intervalSec = 60)
-##
-## Concrete tasks shipped here:
-##   deliverDueReminders — polls MemoryRuntimePort for due reminders, delivers via outbox fn.
 
 import std/[json, options, os, sequtils, strutils, times]
 import chronos
 import ../core/pipeops
 import ../core/log
 import ../core/cron as core_cron
-import ../ports/memory
 import ../core/types
 import ../domain/memory/commitment_pure
-import ./metrics
 
 # ── Types ─────────────────────────────────────────────────────────────────────
 
 type
   HeartbeatTask* = proc() {.gcsafe.}
-
-  ReminderOutboxFn* = proc(userId, channel, message: string) {.gcsafe.}
 
   ## Heartbeat task outbox: enqueues a heartbeat task into a user's session inbox.
   HeartbeatOutboxFn* = proc(userId, channel, taskPayload: string) {.gcsafe.}
@@ -110,31 +103,6 @@ proc registerCommitmentReviewTask*(reg: var HeartbeatRegistry;
       if nowSecFn != nil: nowSecFn() else: 0'i64,
     )
   )
-
-# ── Concrete task: reminder delivery ─────────────────────────────────────────
-
-proc deliverDueReminders*(memory: MemoryRuntimePort;
-                          outboxFn: ReminderOutboxFn;
-                          log: Logger = newLogger("heartbeat.reminder")) =
-  ## Fetches due reminders from memory, delivers them via outboxFn,
-  ## and deletes them so they are not delivered twice.
-  ## Errors from outboxFn are logged and recorded as metrics (never silently discarded).
-  if memory.loadDueReminders == nil: return
-  let due = memory.loadDueReminders()
-  for j in due:
-    let userId  = j{"userId"}.getStr("")
-    let channel = j{"channel"}.getStr("")
-    let message = j{"message"}.getStr("")
-    let remId   = j{"id"}.getStr("")
-    if userId.len == 0 or message.len == 0: continue
-    try:
-      outboxFn(userId, channel, message)
-    except CatchableError:
-      let errMsg = getCurrentExceptionMsg()
-      log.error("reminder delivery failed for user=" & userId & " channel=" & channel & " reason=" & errMsg)
-      recordReminderFailure(errMsg)
-    if remId.len > 0 and memory.deleteReminder != nil:
-      memory.deleteReminder(UserId(userId), remId)
 
 const
   HeartbeatFileName* = "HEARTBEAT.md"

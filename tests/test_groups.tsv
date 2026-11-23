@@ -279,3 +279,4 @@ g3	tests/t_version.nim
 g3	tests/tool/t_deno_skill.nim
 g3	tests/tool/t_mcp_client.nim
 g3	tests/tui/t_admin_tui.nim
+g0	tests/app/t_reminder_delivery.nim

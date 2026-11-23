@@ -1,60 +1,81 @@
-import unittest
-import std/[os, times]
-import donkey/adapters/memory/md_file
+## The reminder store: one JSON file per reminder under the user's paddock,
+## behind `ReminderPort`.
+
+import std/[os, strutils, unittest]
+import donkey/core/pipeops
 import donkey/core/types
+import donkey/adapters/memory/reminder_store
+
+const Now = 1_700_000_000'i64
+
+proc freshStore(name: string): ReminderPort =
+  let dir = getTempDir() / name
+  removeDir(dir)
+  newReminderStore(dir).toReminderPort()
 
 proc runTests*() =
-  suite "scheduleReminder / loadDueReminders / deleteReminder":
-
-    test "reminder criado fica em disco":
-      let tmp = getTempDir() / "donkey_rem_test1"
-      defer: removeDir(tmp)
-      let mem = MdFileAdapter(paddocksDir: tmp)
-      let uid = UserId("user-a")
-      mem.ensurePaddock(uid)
-      let past = getTime().toUnix() - 60
-      let id = mem.scheduleReminder(uid, "ckTelegram", past, "standup!")
+  suite "reminder store":
+    test "a reminder that is due comes back typed":
+      let port = freshStore("donkey_rem_due")
+      let id = port.schedule(UserId("user-a"), "ckTelegram", Now - 60, "standup!").get
       check id.len > 0
-      let due = mem.loadDueReminders()
+      let due = port.due(Now).get
       check due.len == 1
-      check due[0]["message"].getStr() == "standup!"
-      check due[0]["channel"].getStr() == "ckTelegram"
+      check due[0].id == id
+      check due[0].userId == UserId("user-a")
+      check due[0].channel == "ckTelegram"
+      check due[0].scheduledAt == Now - 60
+      check due[0].message == "standup!"
 
-    test "reminder futuro não aparece como due":
-      let tmp = getTempDir() / "donkey_rem_test2"
-      defer: removeDir(tmp)
-      let mem = MdFileAdapter(paddocksDir: tmp)
-      let uid = UserId("user-b")
-      mem.ensurePaddock(uid)
-      let future = getTime().toUnix() + 3_600
-      discard mem.scheduleReminder(uid, "ckTelegram", future, "futuro")
-      check mem.loadDueReminders().len == 0
+    test "a future reminder is not due yet":
+      let port = freshStore("donkey_rem_future")
+      discard port.schedule(UserId("user-b"), "ckTelegram", Now + 3_600, "later").get
+      check port.due(Now).get.len == 0
+      check port.due(Now + 3_600).get.len == 1
 
-    test "deleteReminder remove o arquivo":
-      let tmp = getTempDir() / "donkey_rem_test3"
-      defer: removeDir(tmp)
-      let mem = MdFileAdapter(paddocksDir: tmp)
+    test "two reminders scheduled at once both survive":
+      ## The id was the second and the user: the second write replaced the first.
+      let port = freshStore("donkey_rem_twice")
       let uid = UserId("user-c")
-      mem.ensurePaddock(uid)
-      let past = getTime().toUnix() - 10
-      let id = mem.scheduleReminder(uid, "ckTelegram", past, "deleteme")
-      check mem.loadDueReminders().len == 1
-      mem.deleteReminder(uid, id)
-      check mem.loadDueReminders().len == 0
+      let first = port.schedule(uid, "ckTelegram", Now - 1, "one").get
+      let second = port.schedule(uid, "ckTelegram", Now - 1, "two").get
+      check first != second
+      check port.due(Now).get.len == 2
 
-    test "múltiplos usuários — só due aparecem":
-      let tmp = getTempDir() / "donkey_rem_test4"
-      defer: removeDir(tmp)
-      let mem = MdFileAdapter(paddocksDir: tmp)
-      let u1  = UserId("user-x")
-      let u2  = UserId("user-y")
-      mem.ensurePaddock(u1)
-      mem.ensurePaddock(u2)
-      discard mem.scheduleReminder(u1, "ckTelegram", getTime().toUnix() - 5, "due")
-      discard mem.scheduleReminder(u2, "ckTelegram", getTime().toUnix() + 999, "future")
-      let due = mem.loadDueReminders()
+    test "remove takes the reminder out; removing it again is fine":
+      let port = freshStore("donkey_rem_remove")
+      let uid = UserId("user-d")
+      let id = port.schedule(uid, "ckTelegram", Now - 10, "deleteme").get
+      check port.remove(uid, id).isOk
+      check port.due(Now).get.len == 0
+      check port.remove(uid, id).isOk
+
+    test "only the due reminders of every user come back":
+      let port = freshStore("donkey_rem_users")
+      discard port.schedule(UserId("user-x"), "ckTelegram", Now - 5, "due").get
+      discard port.schedule(UserId("user-y"), "ckTelegram", Now + 999, "future").get
+      let due = port.due(Now).get
       check due.len == 1
-      check due[0]["message"].getStr() == "due"
+      check due[0].message == "due"
+
+    test "a corrupt file is skipped, not fatal":
+      let dir = getTempDir() / "donkey_rem_corrupt"
+      removeDir(dir)
+      let port = newReminderStore(dir).toReminderPort()
+      discard port.schedule(UserId("user-z"), "ckTelegram", Now - 5, "ok").get
+      writeFile(dir / "user-z" / "reminders" / "broken.json", "{not json")
+      let due = port.due(Now).get
+      check due.len == 1
+      check due[0].message == "ok"
+
+    test "a reminder id cannot leave the reminders directory":
+      let port = freshStore("donkey_rem_escape")
+      check port.remove(UserId("user-e"), "../USER").isErr
+      check "invalid" in port.remove(UserId("user-e"), "a/b").error
+
+    test "no paddocks directory means nothing is due":
+      let port = newReminderStore(getTempDir() / "donkey_rem_none_here").toReminderPort()
+      check port.due(Now).get.len == 0
 
 when isMainModule:
   runTests()

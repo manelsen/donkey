@@ -8,7 +8,6 @@ import std/[os, strutils, unittest, options, json, times]
 import results
 import donkey/core/log
 import donkey/core/types
-import donkey/app/heartbeat
 import donkey/adapters/memory/md_file
 import donkey/adapters/embedding/openrouter_embed
 import donkey/adapters/http/std_http
@@ -38,62 +37,7 @@ proc makeSink(cap: LogCapture): LogSink =
       message: entry.message,
     ))
 
-# ── Tests: reminder delivery error visibility ─────────────────────────────────
-
 proc runTests*() =
-  suite "error policy — reminder delivery":
-
-    test "deliverDueReminders logs when outboxFn raises":
-      let tmp = getTempDir() / "donkey_err_policy_reminder"
-      defer:
-        try: removeDir(tmp) except: discard
-      let mem = MdFileAdapter(paddocksDir: tmp)
-      let uid = UserId("user-err")
-      mem.ensurePaddock(uid)
-      let past = getTime().toUnix() - 60
-      discard mem.scheduleReminder(uid, "ckTelegram", past, "standup!")
-
-      let cap = newLogCapture()
-      let logger = newLogger("test.reminder", lvlDebug, makeSink(cap))
-
-      # outboxFn that always raises — simulates delivery failure
-      let failingOutbox: ReminderOutboxFn = proc(userId, channel, message: string) {.gcsafe.} =
-        raise newException(CatchableError, "delivery timeout")
-
-      # Must not raise — error must be logged and swallowed
-      deliverDueReminders(mem.toRuntimePort(), failingOutbox, logger)
-      # Verify: at least one error log entry was captured
-      var foundErr = false
-      for e in cap.entries:
-        if e.level == lvlError and "reminder" in e.message.toLowerAscii():
-          foundErr = true
-          break
-      check foundErr
-
-    test "deliverDueReminders still delivers when outboxFn succeeds":
-      let tmp = getTempDir() / "donkey_err_policy_reminder_ok"
-      defer:
-        try: removeDir(tmp) except: discard
-      let mem = MdFileAdapter(paddocksDir: tmp)
-      let uid = UserId("user-ok")
-      mem.ensurePaddock(uid)
-      let past = getTime().toUnix() - 60
-      discard mem.scheduleReminder(uid, "ckTelegram", past, "hello")
-
-      let cap = newLogCapture()
-      let logger = newLogger("test.reminder_ok", lvlDebug, makeSink(cap))
-
-      var delivered: seq[string] = @[]
-      let okOutbox: ReminderOutboxFn = proc(userId, channel, message: string) {.gcsafe.} =
-        {.cast(gcsafe).}: delivered.add(message)
-
-      deliverDueReminders(mem.toRuntimePort(), okOutbox, logger)
-      check delivered.len == 1
-      check "hello" in delivered[0]
-      # No error log on success
-      for e in cap.entries:
-        check e.level != lvlError
-
   # ── Tests: outbound send error visibility ─────────────────────────────────────
 
   suite "error policy — outbound send":
@@ -256,60 +200,6 @@ proc runTests*() =
           foundErr = true
           break
       check foundErr
-
-  # ── Tests: reminder file loading error visibility (US-007) ────────────────────
-
-  suite "error policy — reminder file loading":
-
-    test "loadDueReminders skips corrupted JSON but returns valid reminders":
-      let tmp = getTempDir() / "donkey_err_policy_corrupt_reminder"
-      defer:
-        try: removeDir(tmp) except: discard
-      let mem = MdFileAdapter(paddocksDir: tmp)
-      let uid = UserId("user-corrupt")
-      mem.ensurePaddock(uid)
-
-      # Write a corrupted reminder file
-      let remDir = mem.reminderDir(uid)
-      createDir(remDir)
-      writeFile(remDir / "corrupt.json", "this is not valid json{{{")
-
-      # Write a valid reminder
-      let past = getTime().toUnix() - 60
-      discard mem.scheduleReminder(uid, "ckTelegram", past, "valid reminder")
-
-      # Must not raise — corrupted file is skipped with warning
-      let due = mem.loadDueReminders()
-
-      # Valid reminder should still be returned
-      check due.len == 1
-      check due[0]{"message"}.getStr("") == "valid reminder"
-
-    test "loadDueReminders handles mixed valid/corrupted across users":
-      let tmp = getTempDir() / "donkey_err_policy_multi_user_reminder"
-      defer:
-        try: removeDir(tmp) except: discard
-      let mem = MdFileAdapter(paddocksDir: tmp)
-
-      # User A: valid reminder
-      let uidA = UserId("userA")
-      mem.ensurePaddock(uidA)
-      let past = getTime().toUnix() - 60
-      discard mem.scheduleReminder(uidA, "ckTelegram", past, "userA reminder")
-
-      # User B: only corrupted file
-      let uidB = UserId("userB")
-      mem.ensurePaddock(uidB)
-      let remDirB = mem.reminderDir(uidB)
-      createDir(remDirB)
-      writeFile(remDirB / "bad.json", "{invalid")
-
-      # Must not raise
-      let due = mem.loadDueReminders()
-
-      # Only userA's valid reminder should be returned
-      check due.len == 1
-      check due[0]{"userId"}.getStr("") == "userA"
 
   # ── Tests: embedding error visibility (US-007) ───────────────────────────────
 
