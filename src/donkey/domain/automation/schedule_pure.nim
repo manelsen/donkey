@@ -343,3 +343,30 @@ func catchUpInstant*(
       return some(utcMsOfLocalMinute(localMinute, offset))
     dec localMinute
   none(int64)
+
+func closestGapMs*(spec: ScheduleSpec; fromMs, stopBelowMs: int64): Option[int64] =
+  ## The shortest time between two consecutive occurrences after `fromMs`,
+  ## within the 366-day horizon; `none` with fewer than two. The scan stops
+  ## as soon as a gap below `stopBelowMs` is seen, so a dense schedule is
+  ## answered at once.
+  let trigger = specTrigger(spec)
+  if trigger.isNone:
+    return none(int64)
+  if trigger.get().kind == tkInterval:
+    return some(trigger.get().periodMs)
+  let expr = trigger.get().cron
+  let offset = int64(spec.tzOffsetMinutes)
+  let startLocal = localMinuteOf(fromMs, offset) + 1
+  var previous = -1'i64
+  var best = none(int64)
+  for i in 0'i64 ..< int64(HorizonMinutes):
+    let localMinute = startLocal + i
+    if matchesCron(expr, localDateTime(localMinute)):
+      if previous >= 0:
+        let gap = (localMinute - previous) * MinuteMs
+        if best.isNone or gap < best.get():
+          best = some(gap)
+          if gap < stopBelowMs:
+            return best
+      previous = localMinute
+  best

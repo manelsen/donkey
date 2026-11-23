@@ -53,6 +53,7 @@ import ../ports/provider
 import ../ports/subagent_workspace
 import ../ports/memory
 import ../ports/reminders
+import ../ports/schedules
 import ../ports/process
 import ../ports/attachment_store
 import ../ports/http
@@ -122,6 +123,7 @@ func suppressToolProgressFromEnv*(env: Environment): bool =
 type OrchestratorState = object
   env*:           Environment  ## the snapshot settings are read from
   reminders*:     ReminderPort ## where the reminder tool schedules
+  schedules*:     SchedulePort ## where manage_schedules keeps recurring jobs
   process*:       ProcessRuntimePort ## where the bash and archive tools run
   attachments*:   AttachmentStorePort ## where generated files are kept
   history*:       ConversationHistory
@@ -306,6 +308,7 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
     paddockDir, sandboxMode, sandboxRuntimeCmd, sandboxImage)
   result.nativeCtx.replyTo = msg.replyTo
   result.nativeCtx.reminders = stateRuntime.reminders
+  result.nativeCtx.schedules = stateRuntime.schedules
   result.nativeCtx.process = stateRuntime.process
   result.nativeCtx.attachments = stateRuntime.attachments
   result.nativeCtx.stopGeneration = stateRuntime.stopGeneration
@@ -843,6 +846,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
                       reviewRuntime:  ReviewRuntime = nil;
                       env:            Environment = Environment();
                       reminders:      ReminderPort = ReminderPort();
+                      schedules:      SchedulePort = SchedulePort();
                       process:        ProcessRuntimePort = unavailableProcess();
                       attachments:    AttachmentStorePort = unavailableAttachments()): Future[void] {.async.} =
   ## Persistent actor. Loops: debounce → memory → LLM → reply → repeat.
@@ -865,6 +869,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
   var stateRuntime = newOrchestratorState()
   stateRuntime.env = env
   stateRuntime.reminders = reminders
+  stateRuntime.schedules = schedules
   stateRuntime.process = process
   stateRuntime.attachments = attachments
   stateRuntime.subagents = newSubagentManager(subagentWorkspace)

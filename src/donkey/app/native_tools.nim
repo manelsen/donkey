@@ -67,6 +67,8 @@ import ../ports/http as httpPort
 import ../ports/provider
 import ../ports/memory
 import ../ports/reminders
+import ../ports/schedules
+import ./user_schedules
 import ../ports/process
 import ../ports/attachment_store
 import ../core/tooling/native_tool_args
@@ -119,6 +121,7 @@ type
     session*:      ptr SessionEntry
     memory*:       MemoryRuntimePort
     reminders*:    ReminderPort
+    schedules*:    SchedulePort  ## where manage_schedules keeps the user's jobs
     fs*:           FsRuntimePort
     process*:      ProcessRuntimePort
     attachments*:  AttachmentStorePort  ## where generated files (speech) are kept
@@ -837,6 +840,13 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
       "truncated": ingested.truncated,
       "source": ingested.source,
     }))
+  of ManageSchedulesToolName:
+    let schedCtx = parseManageSchedulesContext(j).valueOr:
+      return handledError(error)
+    let reply = performManageSchedules(ctx.schedules, $ctx.uid, $ctx.channel,
+                                       schedCtx, int64(epochTime() * 1000)).valueOr:
+      return handledError(error)
+    return handledText(reply)
   of ManageAgentsToolName:
     let agentCtx = parseManageAgentsContext(j).valueOr:
       return handledError(error)

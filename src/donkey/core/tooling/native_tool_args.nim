@@ -119,6 +119,14 @@ type
     model*:       string
     text*:        string
 
+  ManageSchedulesContext* = object
+    action*:   string   ## list, create, delete, pause, resume
+    name*:     string
+    schedule*: string   ## cron, alias or `@every …`
+    prompt*:   string   ## what the agent is asked at each firing
+    timezone*: string   ## `UTC±HH:MM`; "" = UTC
+    catchUp*:  string   ## skip | once; "" = skip
+
   AskAgentContext* = object
     name*:     string
     question*: string
@@ -473,6 +481,22 @@ func parseManageAgentsContext*(j: JsonNode): Result[ManageAgentsContext, string]
       text: ?j.requireStringField("text")))
   else:
     err("Error: unknown action '" & action & "' (list, create, update, delete, note)")
+
+func parseManageSchedulesContext*(j: JsonNode): Result[ManageSchedulesContext, string] =
+  let action = j.getOrDefault("action").getStr("list").strip.toLowerAscii()
+  case action
+  of "", "list":
+    ok(ManageSchedulesContext(action: "list"))
+  of "create":
+    ok(ManageSchedulesContext(action: action, name: ?j.requireStringField("name"),
+      schedule: ?j.requireStringField("schedule"),
+      prompt: ?j.requireStringField("prompt"),
+      timezone: ?j.optionalStringField("timezone"),
+      catchUp: ?j.optionalStringField("catch_up")))
+  of "delete", "pause", "resume":
+    ok(ManageSchedulesContext(action: action, name: ?j.requireStringField("name")))
+  else:
+    err("Error: unknown action '" & action & "' (list, create, delete, pause, resume)")
 
 func parseAskAgentContext*(j: JsonNode): Result[AskAgentContext, string] =
   ok(AskAgentContext(name: ?j.requireStringField("name"),

@@ -20,6 +20,7 @@ import ../domain/automation/schedule_pure
 import ../domain/message
 import ../ports/memory
 import ../ports/reminders
+import ../ports/schedules
 import ../ports/process
 import ../ports/attachment_store
 import ../ports/access
@@ -55,6 +56,7 @@ type
     cfg*:                        DonkeyConfig
     memory*:                     MemoryRuntimePort
     reminders*:                  ReminderPort
+    schedules*:                  SchedulePort
     process*:                    ProcessRuntimePort
     attachments*:                AttachmentStorePort
     completeFn*:                 CompleteFn
@@ -196,6 +198,7 @@ func buildSessionIngressServices*(memory: MemoryRuntimePort;
                                   subagentWorkspace: SubagentWorkspacePort = SubagentWorkspacePort();
                                   fs: FsRuntimePort = unavailableFs();
                                   reminders: ReminderPort = ReminderPort();
+                                  schedules: SchedulePort = SchedulePort();
                                   process: ProcessRuntimePort = unavailableProcess();
                                   attachments: AttachmentStorePort = unavailableAttachments()): SessionIngressServices =
   ## Constructs SessionIngressServices.
@@ -203,6 +206,7 @@ func buildSessionIngressServices*(memory: MemoryRuntimePort;
     cfg: cfg,
     memory: memory,
     reminders: reminders,
+    schedules: schedules,
     process: process,
     attachments: attachments,
     completeFn: completeFn,
@@ -252,6 +256,7 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                                http: HttpRuntimePort;
                                fs: FsRuntimePort = unavailableFs();
                                reminders: ReminderPort = ReminderPort();
+                               schedules: SchedulePort = SchedulePort();
                                process: ProcessRuntimePort = unavailableProcess();
                                attachments: AttachmentStorePort = unavailableAttachments()) {.gcsafe.} =
   ## Spawns an orchestrator actor if the ingress decision requires starting a session runtime.
@@ -275,6 +280,7 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                              asyncCompleteFn = bootstrap.asyncCompleteFn,
                              subagentWorkspace = bootstrap.subagentWorkspace,
                              fs = fs, env = cfg.env, reminders = reminders,
+                             schedules = schedules,
                              process = process, attachments = attachments)
 
 func sessionTaskMsg(msg: InboundMessage; msgId: string;
@@ -389,6 +395,7 @@ proc startSessionIngress*(sm: var SessionManager;
                            services.sandboxMode, services.sandboxRuntimeCmd, services.sandboxImage,
                            services.typingFn, services.searchFn,
                            services.http, services.fs, services.reminders,
+                           services.schedules,
                            services.process, services.attachments)
   if result.plan.decision.startsNewSession:
     services.log.info("new session: " & result.plan.uid)

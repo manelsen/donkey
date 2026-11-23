@@ -66,6 +66,7 @@ const
     "rewind",
     "manage_skills",
     "manage_agents",
+    "manage_schedules",
     "session_search",
     "memory_ingest",
   ]
