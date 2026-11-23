@@ -71,11 +71,13 @@ proc streamConnection*(transport: StreamTransport): GatewayConnection =
       if data.len == 0:
         return ok()
       try:
-        ## A reset or broken pipe may complete the write with fewer bytes
-        ## (zero) instead of raising: that is the client gone, not success.
+        ## A reset or broken pipe may complete the write with zero bytes
+        ## instead of raising: that is the client gone, not success. Only zero
+        ## counts: on Windows a write sent in pieces completes with the size
+        ## of the last piece, after every byte went out.
         let written = await transport.write(data)
-        if written < data.len:
-          return err("client gone: wrote " & $written & " of " & $data.len & " bytes")
+        if written == 0:
+          return err("client gone: nothing was sent")
         return ok()
       except CancelledError:
         return err("write cancelled")
