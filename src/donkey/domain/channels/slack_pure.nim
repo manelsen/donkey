@@ -79,6 +79,7 @@ func stripUserMention*(text, userId: string): string =
   ## to it; the rest of the spacing is kept.
   if userId.len == 0: return text
   result = text
+  var removed = false
   let open = "<@" & userId
   var at = result.find(open)
   while at >= 0:
@@ -87,7 +88,11 @@ func stripUserMention*(text, userId: string): string =
     if after < result.len and result[after] == '>':
       stop = after
     elif after < result.len and result[after] == '|':
-      stop = result.find('>', after)
+      ## The label ends at the first `>` on the same line.
+      let close = result.find('>', after)
+      let newline = result.find('\n', after)
+      if close >= 0 and (newline < 0 or close < newline):
+        stop = close
     if stop < 0:
       at = result.find(open, after)
       continue
@@ -98,8 +103,12 @@ func stripUserMention*(text, userId: string): string =
     elif first > 0 and result[first - 1] == ' ':
       dec first
     result = result[0 ..< first] & result[last + 1 .. ^1]
+    removed = true
     at = result.find(open, first)
-  result = result.strip()
+  ## Only what the removal left at the edges; text without the mention keeps
+  ## its own leading and trailing spacing.
+  if removed:
+    result = result.strip()
 
 func botUserIdOf(payload: JsonNode): string =
   ## The installed bot user, from the event's `authorizations`.

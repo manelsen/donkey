@@ -322,6 +322,12 @@ proc runTests*() =
       let ev = makeMessageEvent("U1", "C1", "<@UBOT> ask <@U2>:  a  b", "1.0")
       check parseEvent(withBot(ev)).text == "ask <@U2>:  a  b"
 
+    test "text without the mention keeps its own spacing":
+      check stripUserMention("    indented code", "UBOT") == "    indented code"
+
+    test "a label without its closing bracket on the line is not a mention":
+      check stripUserMention("<@UBOT|na\nme> x", "UBOT") == "<@UBOT|na\nme> x"
+
     test "a message that is only the mention is ignored":
       let ev = makeMessageEvent("U1", "C1", "<@UBOT>", "1.0")
       check parseEvent(withBot(ev)).kind == sekUnknown
