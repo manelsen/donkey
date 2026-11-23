@@ -143,7 +143,12 @@ None of these is reachable from `src/donkey.nim`. They are kept alive only by te
 - Access-token cache: done. `domain/channels/access_token_pure` for WeCom, DingTalk and QQ (`qq_webhook` no longer exists).
 - Event queue: done earlier. Every adapter's queue is an `infra/event_queue`; what is left per adapter is a one-line wrapper.
 - LLM reranking: done. `rerankViaChat` and `clipCandidates` in `llm_rerank_common`.
-- Still open: message splitting, the SQLite store boilerplate, the graph store queries and the hand-built help texts.
+- Message splitting: `splitChunks` cut inside multi-byte characters (fixed); the UTF-16 width rule of the Telegram and LINE splitters lives in `core/utf8`. The three splitters stay apart on purpose: byte-limited channels, Telegram (UTF-16, whitespace-only chunks dropped) and LINE (UTF-16, a bubble budget with an ellipsis).
+- State stores: they are JSON files, not SQLite. The crash-safe write they both copied is `adapters/state/durable_file`.
+- Graph store: the statistics query (four copies) is `adapters/memory/magma_stats_sql`.
+- Help texts: already built from the command catalog (`buildHelpPages`, `commandsForCategories`); only the per-channel markup differs.
+
+**Status (0.3.x): done.**
 
 ### 13. `CLAUDE.md` conventions not followed
 - 19 modules in `domain/` return `Result`, and there are 43 `proc`s in `domain/` (the rule is pure `func`). This needs the ADR already listed as an open question in the command-dispatch PRD.
