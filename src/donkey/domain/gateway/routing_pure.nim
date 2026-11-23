@@ -3,7 +3,7 @@
 ## Pure: the socket handler reads the bytes, these decide what they mean.
 
 import std/[json, strutils]
-import results
+import ../../core/pipeops
 import ../../core/types
 import ../message
 

@@ -22,7 +22,6 @@ import ../config/environment
 import std/[os, strtabs, strutils]
 when defined(posix):
   import std/posix
-import results
 import ../config/types
 import ../core/log
 import ../core/pipeops

@@ -6,7 +6,7 @@
 
 import std/[algorithm, json, options, os, sequtils, strutils]
 import nimcrypto/sha2
-import results
+import ../../core/pipeops
 import ../../core/tooling/structured_tool_result
 import ../../core/tooling/native_tool_args
 export native_tool_args.HashlineAnchor, native_tool_args.EditFileOpKind,

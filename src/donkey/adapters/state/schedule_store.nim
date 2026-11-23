@@ -70,7 +70,7 @@
 import std/[json, locks, options, os, posix, strutils, tables]
 when defined(posix):
   import std/posix
-import results
+import ../../core/pipeops
 import ../../app/automation_runtime
 import ../../domain/automation/schedule_pure
 import ./durable_file

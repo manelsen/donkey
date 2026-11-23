@@ -5,7 +5,6 @@
 ## instead of a half-working request.
 
 import std/[json, strutils]
-import results
 import ../../core/pipeops
 import ../message
 

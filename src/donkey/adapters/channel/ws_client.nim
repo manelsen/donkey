@@ -10,7 +10,7 @@
 ##   finish within frameTimeoutMs (usually the caller's remaining budget).
 
 import std/[base64, monotimes, net, random, strutils, times]
-import results
+import ../../core/pipeops
 when defined(posix):
   import std/posix
 

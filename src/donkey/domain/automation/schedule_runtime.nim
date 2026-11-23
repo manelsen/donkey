@@ -18,7 +18,7 @@
 ## untouched and is used only for `scOnce`.
 
 import std/[options, strutils]
-import results
+import ../../core/pipeops
 import ./schedule_pure
 
 const

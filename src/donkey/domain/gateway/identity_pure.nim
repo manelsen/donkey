@@ -6,7 +6,7 @@
 ## namespace prefix into storage.
 
 import std/strutils
-import results
+import ../../core/pipeops
 import ../../core/types
 import ../message
 

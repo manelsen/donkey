@@ -5,7 +5,6 @@
 ## has its own handler proc; `dispatchCtl` routes to the right one.
 
 import std/[options, os, sets, strutils, tables, terminal, times]
-import results
 import core/types
 import core/pipeops
 import core/app_meta

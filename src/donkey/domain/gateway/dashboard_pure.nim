@@ -6,7 +6,7 @@
 ## values are clamped instead of failing, so a bad query can never become 500.
 
 import std/[json, options, strutils]
-import results
+import ../../core/pipeops
 import ../providers/descriptors
 import ../../core/providers/smart_routing
 

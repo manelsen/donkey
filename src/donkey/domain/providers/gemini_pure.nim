@@ -13,7 +13,6 @@
 ##   https://ai.google.dev/api/rest/v1beta/models/generateContent
 
 import std/[json, tables, strutils]
-import results
 import ../../core/pipeops
 import ../../domain/message
 import ./media_pure

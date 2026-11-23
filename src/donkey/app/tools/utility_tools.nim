@@ -5,7 +5,7 @@
 ## performInspectImage uses the LLM as a vision assistant.
 
 import std/[os, strutils, times]
-import results
+import ../../core/pipeops
 import ../../domain/calc
 import ../../domain/message
 import ../../domain/providers/media_pure

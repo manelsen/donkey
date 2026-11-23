@@ -7,7 +7,7 @@
 ## No I/O, no side effects.
 
 import std/[base64, strutils]
-import results
+import ../../core/pipeops
 import ../../core/providers/provider_defaults
 import ../message
 import ./descriptors

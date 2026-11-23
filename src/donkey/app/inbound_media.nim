@@ -4,7 +4,7 @@
 ## chooses the marker, updates the message and clears the channel file_id.
 
 import std/[os, strutils]
-import results
+import ../core/pipeops
 import ../domain/message
 import ../domain/providers/media_pure
 import ../ports/channel

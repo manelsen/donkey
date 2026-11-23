@@ -6,7 +6,7 @@
 import std/tables
 import chronos
 import chronos/asyncsync
-import results
+import ../../core/pipeops
 import ../session_state
 import ../skill_runtime
 import ../../domain/message

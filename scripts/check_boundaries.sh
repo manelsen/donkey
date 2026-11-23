@@ -28,6 +28,11 @@ check_absent() {
 }
 
 check_absent \
+  "results is imported only by core/pipeops (everything else imports pipeops)" \
+  '^\s*(import|from)\s+(results\b|std/\[.*\bresults\b|.*,\s*results\b)' \
+  --glob '!src/donkey/core/pipeops.nim' src
+
+check_absent \
   "app/core/ports must not import adapters directly" \
   '^\s*(import|from)\s+.*adapters/' \
   src/donkey/app src/donkey/core src/donkey/ports

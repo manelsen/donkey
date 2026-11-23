@@ -5,7 +5,7 @@
 ## still has budget. Default policy is intentionally read-only.
 
 import std/[json, strutils]
-import results
+import ../core/pipeops
 
 type
   SubagentStatus* = enum
