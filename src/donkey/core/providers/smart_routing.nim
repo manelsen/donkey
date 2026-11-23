@@ -734,8 +734,10 @@ func smartRouteSelections*(prefs: SmartRoutingPrefs;
                            req: CompletionRequest;
                            availability: ProviderAvailability): seq[ProviderSelection] =
   ## A named agent's provider (`req.providerOverride`) goes first; the user's
-  ## own routing follows, so an agent whose provider fails still answers.
-  if req.providerOverride.len == 0:
+  ## own routing follows, so an agent whose provider fails still answers. A
+  ## provider with no credentials configured is skipped instead of tried.
+  if req.providerOverride.len == 0 or
+      not isAvailable(availability, req.providerOverride):
     return routedSelections(prefs, req, availability)
   result = @[selection(req.providerOverride,
     if req.modelOverride.len > 0: req.modelOverride

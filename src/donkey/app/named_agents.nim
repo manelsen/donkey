@@ -91,6 +91,8 @@ proc performManageAgents*(fs: FsRuntimePort; paddockDir: string;
     discard fs.remove(dir & "/" & agentNotesFileName(ctx.name), false)
     return ok("Deleted @" & ctx.name & ".")
   of "note":
+    if ctx.text.strip.len == 0:
+      return err("Error: an empty note")
     discard ? loadNamedAgent(fs, paddockDir, ctx.name)
     ? fs.appendFile(agentsDir(paddockDir) & "/" & agentNotesFileName(ctx.name),
                     "- " & ctx.text.strip.replace("\n", " ") & "\n")

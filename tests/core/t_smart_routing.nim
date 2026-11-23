@@ -62,7 +62,8 @@ thinking = "low"
       let prefs = parseSmartRoutingPrefs("provider = \"openai\"\nmodel = \"gpt-5\"")
       let req = CompletionRequest(providerOverride: "anthropic", modelOverride: "claude-x",
         messages: @[ChatMessage(role: "user", text: "oi")])
-      let selections = smartRouteSelections(prefs, req, ProviderAvailability(openai: true))
+      let selections = smartRouteSelections(prefs, req,
+        ProviderAvailability(openai: true, anthropic: true))
       check selections.len == 2
       check selections[0].providerName == "anthropic" and selections[0].modelName == "claude-x"
       check selections[1].providerName == "openai" and selections[1].modelName == "gpt-5"
@@ -70,9 +71,17 @@ thinking = "low"
     test "an agent provider without a model gets that provider's default":
       let req = CompletionRequest(providerOverride: "mistral",
         messages: @[ChatMessage(role: "user", text: "oi")])
-      let selections = smartRouteSelections(parseSmartRoutingPrefs(""), req, ProviderAvailability())
+      let selections = smartRouteSelections(parseSmartRoutingPrefs(""), req,
+        ProviderAvailability(mistral: true))
       check selections[0].providerName == "mistral"
       check selections[0].modelName == defaultModelForProvider("mistral")
+
+    test "an agent provider without credentials is skipped, not tried":
+      let prefs = parseSmartRoutingPrefs("provider = \"openai\"\nmodel = \"gpt-5\"")
+      let req = CompletionRequest(providerOverride: "anthropic",
+        messages: @[ChatMessage(role: "user", text: "oi")])
+      check smartRouteSelections(prefs, req, ProviderAvailability(openai: true)) ==
+        @[ProviderSelection(providerName: "openai", modelName: "gpt-5")]
 
     test "no override, no change":
       let prefs = parseSmartRoutingPrefs("provider = \"openai\"\nmodel = \"gpt-5\"")

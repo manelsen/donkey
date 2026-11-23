@@ -61,6 +61,8 @@ proc runTests*() =
       check run(%* {"action": "delete", "name": "ghost"}).isErr
       check run(%* {"action": "note", "name": "ghost", "text": "x"}).isErr
       check run(%* {"action": "create", "name": "a"}).isErr   ## no description
+      discard run(%* {"action": "create", "name": "b", "description": "d"})
+      check run(%* {"action": "note", "name": "b", "text": "   "}).isErr
 
     test "an empty list says how to create one":
       let r = run(%* {"action": "list"})
