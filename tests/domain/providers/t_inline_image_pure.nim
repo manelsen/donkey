@@ -93,6 +93,9 @@ proc runTests*() =
       check visionSupport("deepseek", "deepseek-4.1-flash") == vsUnknown
       check visionSupport("openrouter", "deepseek/deepseek-v4.1-flash") == vsUnknown
       check visionSupport("openai", "gpt-5") == vsUnknown
+      check visionSupport("zai", "glm-4.5-air") == vsUnknown
+      check visionSupport("zai", "glm-4.5-air-v") == vsUnknown
+      check visionSupport("zai", "glm-z1") == vsUnknown
       check visionSupport("does-not-exist", "") == vsUnknown
 
     test "only a known text-only model loses the inline images, with the note":

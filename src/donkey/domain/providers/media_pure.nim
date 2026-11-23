@@ -208,13 +208,17 @@ func visionSupport*(providerName, model: string): VisionSupport =
     ## The legacy names of DeepSeek's own API are text only.
     if m in ["deepseek-chat", "deepseek-reasoner"]: vsNo else: vsUnknown
   of "zai", "zai-coding", "zai-anthropic":
-    ## GLM's vision models carry a `v` right after the version: glm-4v,
-    ## glm-4.5v, glm-4v-plus. Other glm models are text only.
+    ## GLM's vision models carry a `v` right after the version (glm-4v,
+    ## glm-4.5v, glm-4v-plus). Only the bare version name (glm-4.7, the
+    ## default) is known to be text only; any other suffix is not verified.
     if not m.startsWith("glm-"): vsUnknown
     else:
       var i = 4
       while i < m.len and m[i] in {'0' .. '9', '.'}: inc i
-      if i < m.len and m[i] == 'v': vsYes else: vsNo
+      if i == 4: vsUnknown
+      elif i < m.len and m[i] == 'v': vsYes
+      elif i == m.len: vsNo
+      else: vsUnknown
   of "alibaba":
     if "-vl" in m or m.startsWith("qvq"): vsYes else: vsUnknown
   else:
