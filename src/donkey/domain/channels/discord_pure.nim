@@ -271,7 +271,9 @@ func discordText*(text: string): string =
   while i < lines.len:
     let line = lines[i]
     if line.strip().startsWith("```"):
-      inFence = not inFence
+      ## "```x```" opens and closes on the same line.
+      if line.count("```") mod 2 == 1:
+        inFence = not inFence
       output.add(line)
       inc i
       continue
@@ -280,12 +282,17 @@ func discordText*(text: string): string =
       let headers = tableCells(line)
       var blocks: seq[string]
       i += 2
+      ## The last two conditions stop at the header of a next table placed
+      ## right below this one.
       while i < lines.len and lines[i].isTableRow and
-          not lines[i].strip().startsWith("```"):
+          not lines[i].strip().startsWith("```") and
+          not lines[i].isSeparatorRow and
+          not (i + 1 < lines.len and lines[i + 1].isSeparatorRow):
         let rendered = rowAsBullets(headers, tableCells(lines[i]))
         if rendered.len > 0: blocks.add(rendered)
         inc i
-      output.add(blocks.join("\n\n"))
+      if blocks.len > 0:
+        output.add(blocks.join("\n\n"))
       continue
     output.add(line)
     inc i

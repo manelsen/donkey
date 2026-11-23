@@ -587,6 +587,19 @@ proc runTests*() =
         "a | b without a separator line"
       check discordText("") == ""
 
+    test "a header-only table leaves no stray blank line":
+      check discordText("before\n| a | b |\n|---|---|\nafter") ==
+        "before\nafter"
+
+    test "a second table right below the first is its own table":
+      let rendered = discordText("| k | v |\n|---|---|\n| a | 1 |\n" &
+                                 "| x | y |\n|---|---|\n| b | 2 |")
+      check rendered == "**a**\n• v: 1\n**b**\n• y: 2"
+
+    test "a fence opened and closed on one line does not swallow a table":
+      check discordText("```inline```\n| a | b |\n|---|---|\n| 1 | 2 |") ==
+        "```inline```\n**1**\n• b: 2"
+
     test "a table inside a code block is unchanged":
       let text = "```\n| a | b |\n|---|---|\n| 1 | 2 |\n```"
       check discordText(text) == text
