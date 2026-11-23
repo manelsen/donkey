@@ -102,7 +102,7 @@ func observe*(h: var Histogram; value: float) =
 
 # ── Provider metrics (called from async context) ─────────────────────────────
 
-proc recordLatency*(provider: string; ms: float) {.gcsafe.} =
+proc recordLatency*(provider: string; ms: float) {.gcsafe, raises: [].} =
   withMetrics:
     if not gMetricsReady: return
     gMetrics.providerLatency.mgetOrPut(provider).observe(ms)
@@ -156,7 +156,7 @@ proc setActiveSessions*(count: int) {.gcsafe, raises: [].} =
     if not gMetricsReady: return
     gMetrics.activeSessions = count
 
-proc recordError*(provider: string) {.gcsafe.} =
+proc recordError*(provider: string) {.gcsafe, raises: [].} =
   withMetrics:
     if not gMetricsReady: return
     gMetrics.errors.inc(provider, 1)
