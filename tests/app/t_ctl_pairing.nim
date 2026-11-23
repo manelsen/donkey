@@ -3,6 +3,7 @@ import donkey/config/types
 import donkey/core/pipeops
 import donkey/core/types
 import donkey/adapters/memory/md_file
+import donkey/adapters/memory/dm_allowlist
 import donkey/adapters/identity/identity_resolver
 import donkey/adapters/state/pairing_store
 import donkey/ctl_handler
@@ -26,7 +27,7 @@ proc runTests*() =
       let resolver = newIdentityResolver(cfg.home / "identities.tsv")
       let userId = resolver.lookup(ckTelegram, "777")
       check userId.isSome
-      check memory.isDmAllowed(userId.get)
+      check dmAllowlistOf(memory.paddocksDir).isAllowed(userId.get).get
 
     test "reject removes the request without allowlisting":
       removeDir(CtlTmp / "reject")

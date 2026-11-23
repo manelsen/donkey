@@ -65,6 +65,7 @@ import ../domain/reminder
 import ../ports/http as httpPort
 import ../ports/provider
 import ../ports/memory
+import ../ports/reminders
 import ../core/tooling/native_tool_args
 export native_tool_args  # argument contexts and their pure parsers
 import ../config/types as cfgTypes
@@ -114,6 +115,7 @@ type
     outbox*:       AsyncQueue[OutboundMessage]
     session*:      ptr SessionEntry
     memory*:       MemoryRuntimePort
+    reminders*:    ReminderPort
     fs*:           FsRuntimePort
     completeFn*:   CompleteFn
     asyncCompleteFn*: AsyncCompleteFn
@@ -407,11 +409,12 @@ proc executeLegacyNativeTool(tc: ToolCallRequest;
     let remMsg  = j.getOrDefault("message").getStr("")
     if whenStr.len == 0 or remMsg.len == 0:
       return handledError("Error: 'when' and 'message' are required.")
+    if ctx.reminders.schedule == nil:
+      return handledError("Error: reminders are not available.")
     let ts = reminder.parseWhen(whenStr, getTime().toUnix())
-    try:
-      discard ctx.memory.scheduleReminder(ctx.uid, $ctx.channel, ts, remMsg)
-    except CatchableError as e:
-      return handledError("Error: " & e.msg)
+    let scheduled = ctx.reminders.schedule(ctx.uid, $ctx.channel, ts, remMsg)
+    if scheduled.isErr:
+      return handledError("Error: " & scheduled.error)
     return handledText("Reminder scheduled.")
   of CurrentTimeToolName:
     return now().utc() |> currentTimeResult |> handledText

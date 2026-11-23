@@ -148,7 +148,7 @@ proc runTests*() =
           if dirExists(tmpDir):
             removeDir(tmpDir)
 
-        check memory.toRuntimePort().saveIdentity(userId, PersonalityTraits(
+        check memory.toRuntimePort().saveAgentIdentity(userId, PersonalityTraits(
           energy: "neutro",
           tone: "casual",
           length: "moderado",

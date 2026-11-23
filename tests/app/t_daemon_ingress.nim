@@ -2,7 +2,9 @@ import std/[os, strutils, tables, unittest]
 import chronos
 import chronos/asyncsync
 import donkey/app/session_ingress
+import donkey/ports/access
 import donkey/adapters/memory/md_file
+import donkey/adapters/memory/dm_allowlist
 import donkey/app/session_manager
 import donkey/app/sandbox
 import donkey/config/types
@@ -31,8 +33,8 @@ proc countingRegistry(): SessionRegistryPort =
 
 proc makeTestServices(memory: MdFileAdapter;
                       outbox: AsyncQueue[OutboundMessage];
-                      isRevoked: proc(u: UserId): bool {.gcsafe.} = nil;
-                      isDmAllowed: proc(u: UserId): bool {.gcsafe.} = nil;
+                      isRevoked: ProfileCheck = nil;
+                      isDmAllowed: ProfileCheck = nil;
                       dmPolicy: DmPolicy = DmPolicyOpen): SessionIngressServices =
   let stubComplete: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string] =
     ok(CompletionResponse(text: "ok"))
@@ -52,8 +54,7 @@ proc makeTestServices(memory: MdFileAdapter;
     sandboxImage = "",
     typingFn = nil,
     searchFn = nil,
-    isRevoked = isRevoked,
-    isDmAllowed = isDmAllowed,
+    access = AccessPort(isRevoked: isRevoked, isDmAllowed: isDmAllowed),
     dmPolicy = dmPolicy,
     http = HttpRuntimePort(),
   )
@@ -136,7 +137,7 @@ proc runTests*() =
       let outbox = newAsyncQueue[OutboundMessage]()
       let services = makeTestServices(
         memory, outbox,
-        isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false,
+        isDmAllowed = proc(u: UserId): Result[bool, string] {.gcsafe, raises: [].} = ok(false),
         dmPolicy = DmPolicyAllowlist,
       )
       var sm: SessionManager
@@ -255,7 +256,8 @@ proc runTests*() =
       let outbox = newAsyncQueue[OutboundMessage]()
       let services = SessionIngressServices(
         globalOutbox: outbox,
-        isRevoked: proc(u: UserId): bool = u == UserId("u-revoked-user"),
+        access: AccessPort(isRevoked: proc(u: UserId): Result[bool, string]
+                                       {.gcsafe, raises: [].} = ok(u == UserId("u-revoked-user"))),
       )
       let msg = InboundMessage(
         userId: UserId("u-revoked-user"),
@@ -280,7 +282,8 @@ proc runTests*() =
       sm.init()
       var msgSeq = 0
       let outbox = newAsyncQueue[OutboundMessage]()
-      let services = makeTestServices(memory, outbox, proc(u: UserId): bool = false)
+      let services = makeTestServices(memory, outbox,
+        proc(u: UserId): Result[bool, string] {.gcsafe, raises: [].} = ok(false))
       let msg = InboundMessage(
         userId: UserId("u-allowed-user"),
         channel: ckTelegram,
@@ -324,11 +327,8 @@ proc runTests*() =
       sm.init()
       var msgSeq = 0
       let outbox = newAsyncQueue[OutboundMessage]()
-      let isRevokedHook: proc(u: UserId): bool {.gcsafe.} =
-        proc(u: UserId): bool {.gcsafe.} =
-          {.gcsafe.}:
-            memory.isRevoked(u)
-      let services = makeTestServices(memory, outbox, isRevokedHook)
+      let access = memory.toAccessPort(dmAllowlistOf(dir))
+      let services = makeTestServices(memory, outbox, access.isRevoked)
       let msg = InboundMessage(
         userId: revokedUid,
         channel: ckTelegram,

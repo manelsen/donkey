@@ -8,6 +8,7 @@ import results
 import donkey/core/types
 import donkey/config/types
 import donkey/adapters/memory/md_file
+import donkey/adapters/memory/dm_allowlist
 import donkey/ctl_handler
 import donkey/config/skills_registry
 
@@ -121,7 +122,7 @@ proc runTests*() =
         check ctlUserRevoke(mem, "eve", true).isOk
         let ctx = mem.loadContext(UserId("eve"))
         check "revoked" in ctx.userMd
-        check not mem.isDmAllowed(UserId("eve"))
+        check not dmAllowlistOf(mem.paddocksDir).isAllowed(UserId("eve")).get
       finally:
         cleanupPaddock(tmp)
 
@@ -134,7 +135,7 @@ proc runTests*() =
         check ctlUserRevoke(mem, "frank", false).isOk
         let ctx = mem.loadContext(UserId("frank"))
         check "active" in ctx.userMd
-        check mem.isDmAllowed(UserId("frank"))
+        check dmAllowlistOf(mem.paddocksDir).isAllowed(UserId("frank")).get
       finally:
         cleanupPaddock(tmp)
 

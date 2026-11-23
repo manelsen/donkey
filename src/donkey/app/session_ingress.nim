@@ -19,6 +19,8 @@ import ../domain/agent_message
 import ../domain/automation/schedule_pure
 import ../domain/message
 import ../ports/memory
+import ../ports/reminders
+import ../ports/access
 import ../ports/provider
 import ../ports/runtime_state
 import ../ports/tool
@@ -50,6 +52,7 @@ type
   SessionIngressServices* = object
     cfg*:                        DonkeyConfig
     memory*:                     MemoryRuntimePort
+    reminders*:                  ReminderPort
     completeFn*:                 CompleteFn
     streamFactory*:                   StreamFactory
     toolClients*:                seq[ToolRuntimePort]
@@ -66,8 +69,7 @@ type
     providerRuntimeBuilder*:     ProviderRuntimeBuilder
     skillRuntimeBuilder*:        SkillRuntimeBuilder
     skillRuntimePolicyResolver*: SkillRuntimePolicyResolver
-    isRevoked*:                  proc(userId: UserId): bool {.gcsafe.}
-    isDmAllowed*:                proc(userId: UserId): bool {.gcsafe.}
+    access*:                     AccessPort
     dmPolicy*:                   DmPolicy
     routeRecordHook*:            proc(selection: ProviderSelection) {.gcsafe.}
     routeResultHook*:            proc(selection: ProviderSelection; elapsedMs: int64; ok: bool) {.gcsafe.}
@@ -176,8 +178,7 @@ func buildSessionIngressServices*(memory: MemoryRuntimePort;
                                   sandboxImage: string;
                                   typingFn: TypingFn;
                                   searchFn: SearchFn;
-                                  isRevoked: proc(userId: UserId): bool {.gcsafe.};
-                                  isDmAllowed: proc(userId: UserId): bool {.gcsafe.} = nil;
+                                  access: AccessPort;
                                   dmPolicy: DmPolicy = DmPolicyOpen;
                                   http: HttpRuntimePort;
                                   providerRuntimeBuilder: ProviderRuntimeBuilder = nil;
@@ -189,11 +190,13 @@ func buildSessionIngressServices*(memory: MemoryRuntimePort;
                                   routeCostHook: proc(): seq[RouteCostHint] {.gcsafe.} = nil;
                                   routeProviderCooldownHook: proc(): seq[ProviderCooldown] {.gcsafe.} = nil;
                                   subagentWorkspace: SubagentWorkspacePort = SubagentWorkspacePort();
-                                  fs: FsRuntimePort = unavailableFs()): SessionIngressServices =
+                                  fs: FsRuntimePort = unavailableFs();
+                                  reminders: ReminderPort = ReminderPort()): SessionIngressServices =
   ## Constructs SessionIngressServices.
   SessionIngressServices(
     cfg: cfg,
     memory: memory,
+    reminders: reminders,
     completeFn: completeFn,
     streamFactory: streamFactory,
     toolClients: toolClients,
@@ -210,8 +213,7 @@ func buildSessionIngressServices*(memory: MemoryRuntimePort;
     providerRuntimeBuilder: providerRuntimeBuilder,
     skillRuntimeBuilder: skillRuntimeBuilder,
     skillRuntimePolicyResolver: skillRuntimePolicyResolver,
-    isRevoked: isRevoked,
-    isDmAllowed: isDmAllowed,
+    access: access,
     dmPolicy: dmPolicy,
     routeRecordHook: routeRecordHook,
     routeResultHook: routeResultHook,
@@ -240,7 +242,8 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                                typingFn: TypingFn;
                                searchFn: SearchFn;
                                http: HttpRuntimePort;
-                               fs: FsRuntimePort = unavailableFs()) {.gcsafe.} =
+                               fs: FsRuntimePort = unavailableFs();
+                               reminders: ReminderPort = ReminderPort()) {.gcsafe.} =
   ## Spawns an orchestrator actor if the ingress decision requires starting a session runtime.
   if not plan.decision.startsSessionRuntime:
     return
@@ -261,7 +264,7 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                              errorExplainFn = bootstrap.errorExplainFn,
                              asyncCompleteFn = bootstrap.asyncCompleteFn,
                              subagentWorkspace = bootstrap.subagentWorkspace,
-                             fs = fs, env = cfg.env)
+                             fs = fs, env = cfg.env, reminders = reminders)
 
 func sessionTaskMsg(msg: InboundMessage; msgId: string;
                      recentContext = ""): AgentMessage =
@@ -294,7 +297,7 @@ proc startSessionIngress*(sm: var SessionManager;
     return
   if services.dmPolicy != DmPolicyOpen:
     let allowed =
-      services.isDmAllowed != nil and services.isDmAllowed(msg.userId)
+      services.access.dmAllowed(msg.userId)
     if not allowed:
       if taskKind == tkUserMsg and services.globalOutbox != nil:
         services.globalOutbox.putNoWait(OutboundMessage(
@@ -374,7 +377,7 @@ proc startSessionIngress*(sm: var SessionManager;
                            services.globalOutbox, services.log,
                            services.sandboxMode, services.sandboxRuntimeCmd, services.sandboxImage,
                            services.typingFn, services.searchFn,
-                           services.http, services.fs)
+                           services.http, services.fs, services.reminders)
   if result.plan.decision.startsNewSession:
     services.log.info("new session: " & result.plan.uid)
   elif result.plan.decision.rebuildsSessionRuntime:
@@ -443,10 +446,10 @@ proc enqueueScheduledTask*(sm: var SessionManager;
     ## the HTTP bridge, and a scheduled firing has no turn token to match.
     return err("scheduled task dropped: api: users are request-scoped")
   let uid = UserId(uidText)
-  if services.isRevoked != nil and services.isRevoked(uid):
+  if services.access.revoked(uid):
     return err(ScheduledTaskRevokedError)
   if services.dmPolicy != DmPolicyOpen:
-    let allowed = services.isDmAllowed != nil and services.isDmAllowed(uid)
+    let allowed = services.access.dmAllowed(uid)
     if not allowed:
       return err(ScheduledTaskDroppedError)
 
@@ -490,7 +493,7 @@ proc handleSessionFallback*(sm:           var SessionManager;
                            msg:          InboundMessage;
                            services:     SessionIngressServices) {.gcsafe.} =
   ## Handles fallback message dispatch; rejects if user is revoked.
-  if services.isRevoked != nil and services.isRevoked(msg.userId):
+  if services.access.revoked(msg.userId):
     if services.globalOutbox != nil:
       services.globalOutbox.putNoWait(OutboundMessage(
         userId: msg.userId,

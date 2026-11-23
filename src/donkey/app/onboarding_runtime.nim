@@ -154,7 +154,7 @@ proc safeSaveIdentity*(memory: MemoryRuntimePort;
                       uid: UserId;
                       traits: PersonalityTraits;
                       name: string) {.gcsafe, raises: [].} =
-  warnNotSaved("identity", uid, memory.saveIdentity(uid, traits, name))
+  warnNotSaved("identity", uid, memory.saveAgentIdentity(uid, traits, name))
 
 proc safeSaveUserMd*(memory: MemoryRuntimePort;
                     uid: UserId;
@@ -164,7 +164,7 @@ proc safeSaveUserMd*(memory: MemoryRuntimePort;
 proc safeLoadIdentity*(memory: MemoryRuntimePort;
                       uid: UserId): (string, PersonalityTraits) {.gcsafe, raises: [].} =
   try:
-    memory.loadIdentity(uid)
+    memory.loadAgentIdentity(uid)
   except Exception:  ## effect boundary: callee raises are unannotated
     ("", PersonalityTraits())
 

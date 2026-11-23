@@ -50,6 +50,7 @@ import ./sandbox
 import ../ports/provider
 import ../ports/subagent_workspace
 import ../ports/memory
+import ../ports/reminders
 import ../ports/http
 import ../ports/fs
 import ../ports/tool
@@ -116,6 +117,7 @@ func suppressToolProgressFromEnv*(env: Environment): bool =
 
 type OrchestratorState = object
   env*:           Environment  ## the snapshot settings are read from
+  reminders*:     ReminderPort ## where the reminder tool schedules
   history*:       ConversationHistory
   debugMode*:     bool
   showReasoning*: bool
@@ -297,6 +299,7 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
     tools, log,
     paddockDir, sandboxMode, sandboxRuntimeCmd, sandboxImage)
   result.nativeCtx.replyTo = msg.replyTo
+  result.nativeCtx.reminders = stateRuntime.reminders
   result.nativeCtx.stopGeneration = stateRuntime.stopGeneration
   ## Recorded per turn: a `/stop` that arrives after this point aborts the
   ## turn; one that arrived before it belongs to an earlier turn.
@@ -809,7 +812,8 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
                       subagentWorkspace: SubagentWorkspacePort = SubagentWorkspacePort();
                       fs:             FsRuntimePort = unavailableFs();
                       reviewRuntime:  ReviewRuntime = nil;
-                      env:            Environment = Environment()): Future[void] {.async.} =
+                      env:            Environment = Environment();
+                      reminders:      ReminderPort = ReminderPort()): Future[void] {.async.} =
   ## Persistent actor. Loops: debounce → memory → LLM → reply → repeat.
   ## `env` is the snapshot tool and turn settings are read from.
   if daemonShuttingDown():
@@ -829,6 +833,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
 
   var stateRuntime = newOrchestratorState()
   stateRuntime.env = env
+  stateRuntime.reminders = reminders
   stateRuntime.subagents = newSubagentManager(subagentWorkspace)
   stateRuntime.stopGeneration = currentSessionStopGeneration()
   let sessionId   = $nowMs()

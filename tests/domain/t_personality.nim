@@ -121,5 +121,33 @@ Quer sugestões de nome?"""
           check cb.startsWith("personality:")
           check cb.count(':') == 2
 
+  suite "agent identity in the preferences":
+    test "the identity is merged into the preferences and read back":
+      let prefs = "language = \"pt-BR\"\nagent_tone = \"formal\""
+      let merged = prefs.withAgentIdentity(
+        PersonalityTraits(energy: "neutro", tone: "seco"), "Guano")
+      check "language = \"pt-BR\"" in merged
+      check merged.count("agent_tone") == 1
+      let (name, traits) = agentIdentityOf(merged)
+      check name == "Guano"
+      check traits.tone == "seco"
+      check traits.energy == "neutro"
+
+    test "a name with quotes or backslashes stays valid TOML and comes back whole":
+      for name in ["R2\"D2", "a\\d", "ends with \"", "tab\there"]:
+        let merged = "".withAgentIdentity(PersonalityTraits(), name)
+        check agentIdentityOf(merged)[0] == name
+      check "agent_name = \"R2\\\"D2\"" in "".withAgentIdentity(PersonalityTraits(), "R2\"D2")
+
+    test "a comment after the value is not part of it":
+      check agentIdentityOf("agent_name = \"Nova\" # nome")[0] == "Nova"
+      check agentIdentityOf("agent_name = 'Nova' # nome")[0] == "Nova"
+      check agentIdentityOf("agent_tone = seco # bare")[1].tone == "seco"
+
+    test "preferences without an identity give an empty one":
+      let (name, traits) = agentIdentityOf("language = \"en\"")
+      check name == ""
+      check traits == PersonalityTraits()
+
 when isMainModule:
   runTests()

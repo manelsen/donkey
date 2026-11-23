@@ -3,6 +3,16 @@
 
 import std/strutils
 import ../core/pipeops
+import ../core/types
+
+type
+  Reminder* = object
+    ## A message to deliver to a user at a given time.
+    id*:          string
+    userId*:      UserId
+    channel*:     string   ## a `ChannelKind` name
+    scheduledAt*: int64    ## Unix seconds
+    message*:     string
 
 # ── Tool metadata (injected into every session) ───────────────────────────────
 
