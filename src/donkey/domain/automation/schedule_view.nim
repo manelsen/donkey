@@ -30,8 +30,10 @@
 ##
 ## Documented field names (both formats agree):
 ##   id, cron, tz, user, channel, enabled, catch_up, last_run, next_run,
-##   last_status, last_error, failures, created_at_ms, last_run_at_ms,
-##   last_fire_at_ms. `payload` is show-only.
+##   last_status, last_error, failures, missed, last_missed_at_ms,
+##   created_at_ms, last_run_at_ms, last_fire_at_ms. `payload` is show-only.
+##   `missed` counts occurrences that did not run (downtime, `skip`, the
+##   backlog `once` collapses); human output shows it only when non-zero.
 
 import std/[json, options, strutils, times]
 import ./schedule_pure
@@ -58,6 +60,10 @@ type
       ## Optional last run error; empty means none.
     failures*: int
       ## Failed firing attempts so far; `0` means none.
+    missed*: int
+      ## Occurrences that did not run (downtime, `skip`); `0` means none.
+    lastMissedAtMs*: int64
+      ## When the last of them was noticed; `0` with no misses.
 
 # ── formatting helpers ───────────────────────────────────────────────────────
 
@@ -126,6 +132,9 @@ func formatScheduleRow*(record: ScheduleViewRecord; nowMs: int64): string =
   let failures = failuresText(record)
   if failures.len > 0:
     parts.add failures
+  if record.missed > 0:
+    parts.add "missed=" & $record.missed
+    parts.add "last_missed=" & formatInstant(record.lastMissedAtMs)
   parts.join("  ")
 
 func scheduleListItem*(record: ScheduleViewRecord; nowMs: int64):
@@ -136,7 +145,8 @@ func scheduleListItem*(record: ScheduleViewRecord; nowMs: int64):
    record.spec.cronExpr & " " & formatTzOffset(record.spec.tzOffsetMinutes) &
      " · " & record.spec.channel & " · next " & nextRunText(record, nowMs),
    "last " & lastRunText(record) &
-     (if record.lastStatus == "failed": " · failed: " & record.lastError else: ""))
+     (if record.lastStatus == "failed": " · failed: " & record.lastError else: "") &
+     (if record.missed > 0: " · missed " & $record.missed else: ""))
 
 func schedulePanelLines*(records: seq[ScheduleViewRecord];
                          nowMs: int64): seq[string] =
@@ -172,6 +182,9 @@ func scheduleDetailLines*(record: ScheduleViewRecord;
     result.add "last_error: " & record.lastError
   if record.failures > 0:
     result.add "failures: " & $record.failures
+  if record.missed > 0:
+    result.add "missed: " & $record.missed
+    result.add "last_missed: " & formatInstant(record.lastMissedAtMs)
   result.add "payload: " & record.spec.payload
 
 # ── JSON output ──────────────────────────────────────────────────────────────
@@ -193,6 +206,8 @@ func scheduleJsonNode*(record: ScheduleViewRecord; nowMs: int64;
   result["last_status"] = %statusText(record)
   result["last_error"] = %record.lastError
   result["failures"] = %record.failures
+  result["missed"] = %record.missed
+  result["last_missed_at_ms"] = %record.lastMissedAtMs
   result["created_at_ms"] = %record.spec.createdAtMs
   result["last_run_at_ms"] = %record.lastRunAtMs
   result["last_fire_at_ms"] = %record.lastFireAtMs

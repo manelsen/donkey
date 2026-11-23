@@ -95,6 +95,8 @@ type
     lastStatus*: string   ## "sent" / "failed" for the last attempt; "" before any
     lastError*: string    ## error of the last failed attempt
     failures*: int        ## failed attempts so far
+    missed*: int          ## occurrences that did not run (downtime, skip)
+    lastMissedAtMs*: int64 ## when the last of them was noticed; 0 = never
     loadWarning*: string
 
   ScheduleStore* = ref object
@@ -212,6 +214,8 @@ proc parseRecord(node: JsonNode; version: int): Option[ScheduleRecord] =
     lastStatus: jsonStr(node, "last_status"),
     lastError: jsonStr(node, "last_error"),
     failures: int(jsonInt(node, "failures")),
+    missed: int(jsonInt(node, "missed")),
+    lastMissedAtMs: jsonInt(node, "last_missed_at_ms"),
   )
 
   if version < ScheduleStoreVersion:
@@ -289,6 +293,8 @@ proc recordsToJson(records: OrderedTable[string, ScheduleRecord]): JsonNode =
     node["last_status"] = %record.lastStatus
     node["last_error"] = %record.lastError
     node["failures"] = %record.failures
+    node["missed"] = %record.missed
+    node["last_missed_at_ms"] = %record.lastMissedAtMs
     list.add(node)
   result["schedules"] = list
 
@@ -307,6 +313,8 @@ proc mergeUpsert(existing: ScheduleRecord; incoming: ScheduleRecord
   result.lastStatus = existing.lastStatus
   result.lastError = existing.lastError
   result.failures = existing.failures
+  result.missed = existing.missed
+  result.lastMissedAtMs = existing.lastMissedAtMs
 
 # ---------------------------------------------------------------------------
 # Public API.
@@ -321,6 +329,8 @@ func toViewRecord*(record: ScheduleRecord): ScheduleViewRecord =
     lastStatus: record.lastStatus,
     lastError: record.lastError,
     failures: record.failures,
+    missed: record.missed,
+    lastMissedAtMs: record.lastMissedAtMs,
   )
 
 proc newScheduleStoreRef*(stateDir: string): ScheduleStore =
@@ -543,6 +553,9 @@ proc save*(store: ScheduleStore; state: ScheduleWatermark
     inc record.failures
   else:
     discard  ## a watermark-only save keeps the last outcome
+  if state.missedDelta > 0:
+    record.missed += state.missedDelta
+    record.lastMissedAtMs = state.missedAtMs
   if record.spec.createdAtMs == 0:
     record.spec.createdAtMs = state.createdAtMs
   record.loadWarning = ""

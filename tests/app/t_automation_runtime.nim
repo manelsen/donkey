@@ -44,6 +44,7 @@ type
     saveError: string
     loadCount: int
     saveCount: int
+    saves: seq[ScheduleWatermark]
 
   Recorder = ref object
     instants: seq[int64]
@@ -82,6 +83,7 @@ proc makePort(store: FakeStore): ScheduleStorePort =
       if store.saveError.len > 0:
         return err(store.saveError)
       store.records[state.id] = state
+      store.saves.add(state)
       ok(),
   )
 
@@ -417,6 +419,35 @@ proc runTests*() =
       check tick.error ==
         "cannot persist watermark for schedule 'sched-1': read-only state dir"
       check rec.instants.len == 0
+
+  suite "automation runtime — missed occurrences reach the store":
+
+    test "the watermark save books the misses once, with the tick's time":
+      let spec = makeSpec("0 * * * *", catchUp = scSkip)
+      let store = newFakeStore()
+      let rec = Recorder()
+      store.seedCreated(at(8, 30))
+      let tick = tickSchedule(store.makePort, spec, at(12, 30), rec.makeEnqueue)
+      check tick.isOk
+      check tick.get().missedCount == 4
+      check store.saves.len == 1
+      check store.saves[0].missedDelta == 4
+      check store.saves[0].missedAtMs == at(12, 30)
+      let again = tickSchedule(store.makePort, spec, at(12, 31), rec.makeEnqueue)
+      check again.get().missedCount == 0
+      check store.saves[^1].missedDelta == 0
+
+    test "a run's outcome save does not book the misses again":
+      let spec = makeSpec("0 9 * * *", catchUp = scOnce)
+      let store = newFakeStore()
+      let rec = Recorder()
+      store.seedCreated(0'i64)
+      let tick = tickSchedule(store.makePort, spec, 3 * DayMs + at(12, 0), rec.makeEnqueue)
+      check tick.get().firedAtMs.isSome
+      check store.saves.len == 2
+      check store.saves[0].missedDelta == 3
+      check store.saves[1].lastStatus == "sent"
+      check store.saves[1].missedDelta == 0
 
 when isMainModule:
   runTests()

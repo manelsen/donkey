@@ -31,6 +31,9 @@ type
     lastStatus*: string    ## outcome of the last firing attempt: "sent",
                            ## "failed", or "" for a save that reports none
     lastError*: string     ## why the last attempt failed ("" when it did not)
+    missedDelta*: int      ## occurrences this tick found that will not run;
+                           ## the store adds them to its running count
+    missedAtMs*: int64     ## when this tick noticed them (with `missedDelta`)
 
   ScheduleStorePort* = object
     ## Persistence boundary. Implementations live in the state adapter (or an
@@ -63,6 +66,9 @@ type
       ## The watermark already advanced to `nowMs`; this is for logging.
     enqueueError*: string
       ## Non-empty when the firing was consumed but the enqueue failed.
+    missedCount*: int
+      ## Occurrences of this tick's window that will not run (booked once,
+      ## with the watermark save).
 
 func hasScheduleStore*(store: ScheduleStorePort): bool =
   ## True when both halves of the persistence boundary are wired.
@@ -138,6 +144,7 @@ proc tickSchedule*(
     watermarkMs: decision.watermarkMs,
     rolledBack: decision.rolledBack,
     missedOccurrenceMs: decision.missedOccurrenceMs,
+    missedCount: decision.missedCount,
   )
 
   ## The schedule may have been removed since the load (`ctl remove` is a
@@ -150,11 +157,15 @@ proc tickSchedule*(
   # Upsert on every tick, even when the watermark is unchanged (rollback, two
   # ticks in the same instant). The contract is "persist at the end of each
   # tick"; the adapter may skip an identical write internally.
+  ## The misses ride on this save, the one every tick makes, so they are
+  ## booked exactly once: the outcome saves below carry none.
   let next = ScheduleWatermark(
     id: id,
     lastRunAtMs: decision.watermarkMs,
     createdAtMs: state.createdAtMs,
     lastFireAtMs: state.lastFireAtMs,
+    missedDelta: decision.missedCount,
+    missedAtMs: (if decision.missedCount > 0: nowMs else: 0'i64),
   )
   let saved = store.save(next)
   if saved.isErr:

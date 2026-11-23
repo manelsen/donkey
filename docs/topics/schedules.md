@@ -32,3 +32,9 @@ new jobs.
 not run. `once`: after downtime, the most recent missed occurrence runs once,
 looking back at most `DONKEY_SCHEDULE_CATCHUP_MAX_H` hours. A backlog is never
 replayed. Pausing and resuming does not replay the paused time.
+
+Every occurrence that does not run is counted: the stale ones `skip` drops and
+the backlog `once` collapses into one run (paused time is not a miss). The
+store keeps the total and when the last miss was noticed; `ctl schedule
+list/show` (`missed`, `last_missed`), the TUI and the user's
+`manage_schedules list` show them. Counting stops at 1000 per tick.

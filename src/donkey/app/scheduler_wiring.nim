@@ -263,6 +263,9 @@ proc runSchedulerTick*(store: ScheduleStorePort;
     if tick.firedAtMs.isSome:
       inc result.fired
       log.info("scheduler: fired id=" & id & " at=" & $tick.firedAtMs.get())
+    if tick.missedCount > 0:
+      log.info("scheduler: id=" & id & " missed " & $tick.missedCount &
+        " occurrence(s) that will not run")
     if tick.missedOccurrenceMs.isSome:
       inc result.missed
       let missedAt = tick.missedOccurrenceMs.get()

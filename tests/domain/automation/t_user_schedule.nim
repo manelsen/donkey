@@ -17,9 +17,9 @@ func spec(expr: string; user = "alice"; name = "daily"): ScheduleSpec =
                userId: user, channel: "telegram", payload: "do it",
                catchUp: scSkip, enabled: true, createdAtMs: Now)
 
-func row(s: ScheduleSpec; fired = 0'i64; status = ""): ScheduleViewRecord =
+func row(s: ScheduleSpec; fired = 0'i64; status = ""; missed = 0): ScheduleViewRecord =
   ScheduleViewRecord(spec: s, lastRunAtMs: s.createdAtMs, lastFireAtMs: fired,
-                     lastStatus: status)
+                     lastStatus: status, missed: missed, lastMissedAtMs: Now)
 
 proc runTests*() =
   suite "user schedules — names and ids":
@@ -100,6 +100,11 @@ proc runTests*() =
     test "an interval does not show a timezone it ignores":
       let text = formatUserSchedules(@[row(spec("@every 2h", name = "pulse"))], Now)
       check "- pulse: @every 2h, next " in text
+
+    test "missed runs are reported so the agent can tell the user":
+      let text = formatUserSchedules(@[row(spec("@hourly"), missed = 5)], Now)
+      check "missed 5 (last noticed 2023-11-14T22:14:00Z)" in text
+      check "missed" notin formatUserSchedules(@[row(spec("@hourly"))], Now)
 
     test "no schedules says how to make one":
       check "action=create" in formatUserSchedules(@[], Now)

@@ -31,6 +31,9 @@ const
   CatchUpHoursMax* = 24
     ## Hard ceiling for the catch-up lookback. The pure API clamps to the
     ## 366-day diagnostic horizon; configuration is never allowed near it.
+  MaxCountedMissed* = 1000
+    ## Counting walks the missed window; a once-a-minute schedule off for a
+    ## month stops here. The count is for the operator, not for replay.
   MaxCatchUpHoursDigits = 6
     ## Parsing bound: anything wider is rejected as absurd before it can
     ## overflow an `int`.
@@ -49,6 +52,11 @@ type
       ## `scSkip` only: a due occurrence older than `graceMs` was dropped.
       ## The caller logs it; the watermark has already advanced to `nowMs`.
       ## `none` when nothing was dropped.
+    missedCount*: int
+      ## Occurrences in `(lastRunMs, nowMs]` that will not run: the stale
+      ## ones `scSkip` drops, and the backlog `scOnce` collapses into one run.
+      ## A paused schedule and a clock rollback miss nothing. At most
+      ## `MaxCountedMissed`.
 
 func validateCatchUpHours*(raw: string): Result[int, string] =
   ## Validates the raw `DONKEY_SCHEDULE_CATCHUP_MAX_H` value at the config
@@ -95,13 +103,13 @@ func validateCatchUpHours*(raw: string): Result[int, string] =
       $CatchUpHoursMax & "-hour ceiling (got " & $value & ")")
   ok(value)
 
-func decideTick*(
+func decideFiring(
   spec: ScheduleSpec;
   lastRunMs, nowMs: int64;
-  maxLookbackMinutes = CatchUpMaxMinutesDefault;
-  graceMs = SkipGraceMsDefault,
+  maxLookbackMinutes: int;
+  graceMs: int64,
 ): TickDecision =
-  ## Decides what one tick does without touching I/O.
+  ## What one tick fires and where the watermark goes:
   ##
   ## - A clock rollback (`nowMs < lastRunMs`) is a no-op: no firing and the
   ##   watermark stays at `lastRunMs`.
@@ -159,3 +167,18 @@ func decideTick*(
     let at = instant.get()
     if at > lastRunMs and at <= nowMs:
       result.fireAtMs = some(at)
+
+func decideTick*(
+  spec: ScheduleSpec;
+  lastRunMs, nowMs: int64;
+  maxLookbackMinutes = CatchUpMaxMinutesDefault;
+  graceMs = SkipGraceMsDefault,
+): TickDecision =
+  ## Decides what one tick does without touching I/O (`decideFiring`), and
+  ## counts the occurrences of the window that will not run.
+  result = decideFiring(spec, lastRunMs, nowMs, maxLookbackMinutes, graceMs)
+  if result.rolledBack or not spec.enabled:
+    return
+  let due = countDueCapped(spec, lastRunMs, nowMs, MaxCountedMissed + 1)
+  let fired = (if result.fireAtMs.isSome: 1 else: 0)
+  result.missedCount = min(max(due - fired, 0), MaxCountedMissed)
