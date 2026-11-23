@@ -636,6 +636,11 @@ proc runTests*() =
       check stripBotMention("<@B2> hi", "B") == "<@B2> hi"
       check stripBotMention("<@B>", "B") == ""
 
+    test "the rest of the spacing is kept":
+      check stripBotMention("<@B> run:  a   b", "B") == "run:  a   b"
+      check stripBotMention("<@B> /ask\n    indented code", "B") ==
+        "/ask\n    indented code"
+
   suite "discord_pure.toInbound — conversion":
 
     test "message converts with correct fields":

@@ -248,16 +248,14 @@ func addressesBot*(content, botId, referencedAuthorId: string): bool =
 
 func stripBotMention*(content, botId: string): string =
   ## The text without the bot's mentions, so "<@bot> /help" is the command
-  ## "/help". Spacing left by the removal is collapsed line by line, so a
-  ## multi-line message keeps its lines. Only the mention comes back empty.
+  ## "/help". Each mention goes with one space next to it; any other spacing
+  ## (code, alignment) is kept. Only the mention comes back empty.
   if botId.len == 0: return content
-  var lines: seq[string]
-  for line in content.splitLines():
-    var cleaned = line
-    for form in mentionForms(botId):
-      cleaned = cleaned.replace(form, "")
-    lines.add(if cleaned == line: line else: cleaned.splitWhitespace().join(" "))
-  lines.join("\n").strip()
+  result = content
+  for form in mentionForms(botId):
+    result = result.replace(form & " ", "").replace(" " & form, "")
+      .replace(form, "")
+  result = result.strip()
 
 # ── Outbound text ─────────────────────────────────────────────────────────────
 
