@@ -6,6 +6,9 @@ import donkey/config/types
 import donkey/core/types
 import donkey/domain/providers/descriptors
 import donkey/adapters/memory/md_file
+import donkey/adapters/state/schedule_store
+import donkey/domain/automation/schedule_pure
+import donkey/core/pipeops
 
 proc runTests*() =
   suite "Admin TUI":
@@ -21,7 +24,7 @@ proc runTests*() =
 
     test "sectionLabels returns all labels":
       let labels = sectionLabels()
-      check labels.len == 8
+      check labels.len == 9
       check "Config" in labels.join
       check "Agents" in labels.join
       check "Channels" in labels.join
@@ -756,7 +759,36 @@ summary: Test user detail view.
 
     test "sectionCount matches AdminSection count":
       let count = AdminSection.high.ord + 1
-      check count == 8  # Config, Agents, Channels, Providers, Models, Hooks, Plugins, Users
+      check count == 9  # Config, Agents, Channels, Providers, Models, Hooks, Plugins, Users, Schedules
+
+  suite "Admin TUI — schedules":
+    test "the schedules section lists the store, read-only":
+      let home = getTempDir() / "donkey_tui_schedules"
+      removeDir(home)
+      defer: removeDir(home)
+      let spec = ScheduleSpec(id: "daily", cronExpr: "0 9 * * *", userId: "alice",
+                              channel: "telegram", payload: "secret report",
+                              catchUp: scSkip, enabled: true,
+                              createdAtMs: 1_700_000_000_000'i64)
+      check newScheduleStoreRef(home / "state").upsert(
+        ScheduleRecord(spec: spec, lastRunAtMs: 1_700_000_000_000'i64)).isOk
+      var st = newAdminState(defaultConfig(home))
+      st.config.home = home
+      st.section = asSchedules
+      st.loadScheduleItems(nowMs = 1_700_000_040_000'i64)
+      check st.items.len == 1
+      check st.items[0].name == "daily"
+      check "0 9 * * *" in st.items[0].description
+      check "next 2023-11-15T09:00:00Z" in st.items[0].description
+      check st.items[0].status == "last never"
+      check "secret" notin st.items[0].description  ## no payload, as in `list`
+      check sectionLabel(asSchedules) == "[Schedules]"
+
+    test "no store yet is an empty list":
+      var st = newAdminState(defaultConfig(getTempDir() / "donkey_tui_no_schedules"))
+      st.config.home = getTempDir() / "donkey_tui_no_schedules"
+      st.loadScheduleItems(nowMs = 0)
+      check st.items.len == 0
 
 when isMainModule:
   runTests()

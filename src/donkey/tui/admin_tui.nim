@@ -13,6 +13,8 @@ import ../core/types
 import ../config/types
 import ../domain/providers/descriptors
 import ../adapters/memory/md_file
+import ../adapters/state/schedule_store
+import ../domain/automation/schedule_view
 import ../ports/provider
 
 # Helper for drawing boxes
@@ -31,6 +33,7 @@ type
     asHooks
     asPlugins
     asUsers
+    asSchedules  ## read-only: schedules change through `donkey ctl schedule`
 
   AdminItem* = object
     name*: string
@@ -288,6 +291,7 @@ func sectionLabel*(s: AdminSection): string =
   of asHooks:     "[Hooks]"
   of asPlugins:    "[Plugins]"
   of asUsers:     "[Users]"
+  of asSchedules: "[Schedules]"
 
 func sectionLabels*(): seq[string] =
   for s in AdminSection:
@@ -433,6 +437,22 @@ proc loadUsersItems*(st: var AdminState) =
       status: u.access
     ))
 
+proc loadScheduleItems*(st: var AdminState; nowMs = -1'i64) =
+  ## The schedules of `home/state`, as `ctl schedule list` sees them. A store
+  ## that cannot be read is one error row, not an empty list.
+  st.items = @[]
+  if st.config.home.len == 0: return
+  let records = newScheduleStoreRef(st.config.home / "state").loadAllRecords()
+  if records.isErr:
+    st.items.add(AdminItem(name: "error", description: records.error,
+                           enabled: false, status: "error"))
+    return
+  let at = if nowMs >= 0: nowMs else: getTime().toUnix() * 1000
+  for record in records.get:
+    let row = record.toViewRecord.scheduleListItem(at)
+    st.items.add(AdminItem(name: row.name, description: row.description,
+                           enabled: record.spec.enabled, status: row.status))
+
 proc loadSection*(st: var AdminState) =
   case st.section
   of asConfig:    st.loadConfigItems()
@@ -443,6 +463,7 @@ proc loadSection*(st: var AdminState) =
   of asHooks:     st.loadHookItems()
   of asPlugins:   st.loadPluginItems()
   of asUsers:     st.loadUsersItems()
+  of asSchedules: st.loadScheduleItems()
 
 proc showToast*(st: var AdminState; msg: string; kind = tkInfo) =
   st.toast = some(Toast(message: msg, kind: kind, timestamp: int64(times.epochTime())))

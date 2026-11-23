@@ -402,15 +402,6 @@ proc scheduleNow(nowMs: int64): int64 =
   ## `-1` means "use the wall clock"; tests always inject an instant.
   if nowMs >= 0: nowMs else: epochMs()
 
-func scheduleViewOf(record: ScheduleRecord): ScheduleViewRecord =
-  ## Adapter row → pure view projection. `last_status`/`last_error`/`failures`
-  ## stay empty: this store slice does not persist them, and the view never
-  ## invents a status.
-  ScheduleViewRecord(
-    spec: record.spec,
-    lastRunAtMs: record.lastRunAtMs,
-    lastFireAtMs: record.lastFireAtMs,
-  )
 
 func parseCatchUpArg(raw: string): Result[ScheduleCatchUp, string] =
   case raw.strip().toLowerAscii()
@@ -428,7 +419,7 @@ proc ctlScheduleList*(stateDir: string; asJson = false;
     return err(loaded.error)
   var rows: seq[ScheduleViewRecord]
   for record in loaded.get():
-    rows.add scheduleViewOf(record)
+    rows.add record.toViewRecord
   let at = scheduleNow(nowMs)
   if asJson:
     return ok(formatScheduleJson(rows, at))
@@ -444,7 +435,7 @@ proc ctlScheduleShow*(stateDir, scheduleId: string; asJson = false;
   if loaded.get().isNone:
     return err("schedule not found: " & scheduleId)
   let record = loaded.get().get()
-  let row = scheduleViewOf(record)
+  let row = record.toViewRecord
   let at = scheduleNow(nowMs)
   if asJson:
     return ok(formatScheduleObjectJson(row, at))
