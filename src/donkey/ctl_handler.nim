@@ -644,6 +644,8 @@ proc scheduleUsage() =
   echo "  show <id> [--json]"
   echo "  add <id> --cron <expr> --user <id> --payload <text>"
   echo "           [--channel " & ScheduleDefaultChannel & "] [--tz UTC+00:00] [--catchup skip|once]"
+  echo "           <expr>: 5-field cron (\"0 9 * * 1-5\"), @hourly, @daily, @weekly,"
+  echo "           @monthly, @yearly, or \"@every 30m\" (m/h/d, counted from creation)"
   echo "  remove <id>"
   echo "  enable <id>"
   echo "  disable <id>"

@@ -7,6 +7,15 @@
 ## Instants are epoch milliseconds. A cron occurrence lives on a minute
 ## boundary in *local* wall-clock time; the offset is added before matching and
 ## removed before returning the real UTC epoch.
+##
+## `cronExpr` holds one of three trigger forms (`parseTrigger`):
+##   - a 5-field cron expression (`0 9 * * 1-5`);
+##   - an alias for one: `@hourly`, `@daily`/`@midnight`, `@weekly`,
+##     `@monthly`, `@yearly`/`@annually`;
+##   - an interval, `@every <n><m|h|d>…` (`@every 30m`, `@every 1h30m`): the
+##     occurrences are `createdAtMs + k × period`, k ≥ 1, so the first comes
+##     one period after the creation. An interval has no wall clock and ignores
+##     the timezone offset.
 
 import std/[options, strutils, times]
 import ../../core/pipeops
@@ -15,6 +24,12 @@ import ../../core/types
 
 const
   MinuteMs* = 60_000'i64
+  EveryPrefix* = "@every"
+  CronAliases* = [
+    ("@hourly", "0 * * * *"), ("@daily", "0 0 * * *"),
+    ("@midnight", "0 0 * * *"), ("@weekly", "0 0 * * 0"),
+    ("@monthly", "0 0 1 * *"), ("@yearly", "0 0 1 1 *"),
+    ("@annually", "0 0 1 1 *")]
   HorizonDays* = 366
   HorizonMinutes* = HorizonDays * 24 * 60
   CatchUpMaxMinutesDefault* = 24 * 60
@@ -23,6 +38,17 @@ const
   MaxPayloadBytes* = 4096
 
 type
+  TriggerKind* = enum
+    tkCron,      ## a cron expression or an alias for one
+    tkInterval   ## `@every …`: a fixed period from the creation
+
+  Trigger* = object
+    case kind*: TriggerKind
+    of tkCron:
+      cron*: CronExpr
+    of tkInterval:
+      periodMs*: int64
+
   ScheduleCatchUp* = enum
     ## What to do with occurrences missed while the scheduler was down/behind.
     scSkip,  ## never fire a missed occurrence
@@ -84,6 +110,61 @@ func parseTzOffset*(raw: string): Result[int, string] =
     return err("timezone offset out of range: '" & s & "' (max ±14:00)")
   ok(signed)
 
+# ── Trigger parsing ──────────────────────────────────────────────────────────
+
+func parseInterval(body: string): Result[int64, string] =
+  ## `30m`, `2h`, `1d`, `1h30m`: whole numbers each followed by a unit. The
+  ## period is between one minute and the 366-day horizon.
+  let maxMinutes = int64(HorizonMinutes)
+  if body.len == 0:
+    return err("an interval needs a period, like '@every 30m'")
+  var total = 0'i64
+  var number = -1'i64
+  for c in body:
+    if c in {'0' .. '9'}:
+      if number < 0: number = 0
+      number = number * 10 + int64(ord(c) - ord('0'))
+      if number > maxMinutes:
+        return err("interval longer than " & $HorizonDays & " days: " & body)
+    elif c in {'m', 'h', 'd'}:
+      if number < 0:
+        return err("a unit without a number in interval '" & body & "'")
+      let minutes = case c
+        of 'm': number
+        of 'h': number * 60
+        else: number * 24 * 60
+      total += minutes
+      if total > maxMinutes:
+        return err("interval longer than " & $HorizonDays & " days: " & body)
+      number = -1
+    else:
+      return err("unknown unit '" & $c & "' in interval '" & body &
+        "': use m, h or d")
+  if number >= 0:
+    return err("a number without a unit in interval '" & body &
+      "': use m, h or d")
+  if total < 1:
+    return err("interval must be at least one minute: " & body)
+  ok(total * MinuteMs)
+
+func parseTrigger*(expr: string): Result[Trigger, string] =
+  ## The trigger a schedule's `cronExpr` names (see the module header).
+  let s = expr.strip()
+  if s.startsWith("@"):
+    let word = s.splitWhitespace()[0]
+    if word == EveryPrefix:
+      let period = ? parseInterval(s[EveryPrefix.len .. ^1].replace(" ", ""))
+      return ok(Trigger(kind: tkInterval, periodMs: period))
+    for (alias, cron) in CronAliases:
+      if s == alias:
+        return ok(Trigger(kind: tkCron, cron: ? parseCronExpr(cron)))
+    return err("unknown schedule '" & s & "': use a cron expression, " &
+      "@hourly, @daily, @weekly, @monthly, @yearly or @every <n><m|h|d>")
+  let cron = parseCronExpr(s)
+  if cron.isErr:
+    return err("invalid cron expression: " & cron.error)
+  ok(Trigger(kind: tkCron, cron: cron.get()))
+
 # ── Spec validation ──────────────────────────────────────────────────────────
 
 func isChannelKindName(name: string): bool =
@@ -100,9 +181,7 @@ func validateScheduleSpec*(spec: ScheduleSpec): Result[void, string] =
   if spec.id.strip().len == 0:
     return err("schedule id must not be empty")
 
-  let cron = parseCronExpr(spec.cronExpr)
-  if cron.isErr:
-    return err("invalid cron expression: " & cron.error)
+  discard ? parseTrigger(spec.cronExpr)
 
   if spec.tzOffsetMinutes < MinTzOffsetMinutes or
       spec.tzOffsetMinutes > MaxTzOffsetMinutes:
@@ -147,12 +226,24 @@ func localDateTime(localMinute: int64): DateTime =
   {.cast(noSideEffect).}:
     fromUnix(localMinute * 60).utc
 
-func specCron(spec: ScheduleSpec): Option[CronExpr] =
-  let parsed = parseCronExpr(spec.cronExpr)
+func specTrigger(spec: ScheduleSpec): Option[Trigger] =
+  let parsed = parseTrigger(spec.cronExpr)
   if parsed.isErr:
-    none(CronExpr)
+    none(Trigger)
   else:
     some(parsed.get())
+
+# ── Interval math ────────────────────────────────────────────────────────────
+
+func intervalAfter(createdAtMs, periodMs, instantMs: int64): int64 =
+  ## First `createdAt + k × period` (k ≥ 1) strictly after `instantMs`.
+  let k = max(floorDiv(instantMs - createdAtMs, periodMs) + 1, 1'i64)
+  createdAtMs + k * periodMs
+
+func intervalAtOrBefore(createdAtMs, periodMs, instantMs: int64): Option[int64] =
+  ## Last `createdAt + k × period` (k ≥ 1) at or before `instantMs`.
+  let k = floorDiv(instantMs - createdAtMs, periodMs)
+  if k < 1: none(int64) else: some(createdAtMs + k * periodMs)
 
 # ── Window and next-run math ─────────────────────────────────────────────────
 
@@ -162,10 +253,12 @@ func nextRunAfterMs*(spec: ScheduleSpec; nowMs: int64): Option[int64] =
   ##
   ## An occurrence exactly at `nowMs` is excluded: it belongs to the closed
   ## right edge of the `(lastRunMs, nowMs]` window, not to the next run.
-  let cron = specCron(spec)
-  if cron.isNone:
+  let trigger = specTrigger(spec)
+  if trigger.isNone:
     return none(int64)
-  let expr = cron.get()
+  if trigger.get().kind == tkInterval:
+    return some(intervalAfter(spec.createdAtMs, trigger.get().periodMs, nowMs))
+  let expr = trigger.get().cron
   let offset = int64(spec.tzOffsetMinutes)
   let startLocal = localMinuteOf(nowMs, offset) + 1
 
@@ -184,10 +277,18 @@ func dueInstants*(spec: ScheduleSpec; lastRunMs, nowMs: int64): seq[int64] =
   result = @[]
   if nowMs < lastRunMs:
     return
-  let cron = specCron(spec)
-  if cron.isNone:
+  let trigger = specTrigger(spec)
+  if trigger.isNone:
     return
-  let expr = cron.get()
+  if trigger.get().kind == tkInterval:
+    let period = trigger.get().periodMs
+    let start = max(lastRunMs, nowMs - int64(HorizonMinutes) * MinuteMs)
+    var instant = intervalAfter(spec.createdAtMs, period, start)
+    while instant <= nowMs:
+      result.add(instant)
+      instant += period
+    return
+  let expr = trigger.get().cron
   let offset = int64(spec.tzOffsetMinutes)
   let lastLocal = localMinuteOf(lastRunMs, offset)
   let nowLocal = localMinuteOf(nowMs, offset)
@@ -218,12 +319,20 @@ func catchUpInstant*(
     return none(int64)
   if maxLookbackMinutes <= 0:
     return none(int64)
-  let cron = specCron(spec)
-  if cron.isNone:
+  let trigger = specTrigger(spec)
+  if trigger.isNone:
     return none(int64)
-  let expr = cron.get()
-  let offset = int64(spec.tzOffsetMinutes)
   let lookback = min(int64(maxLookbackMinutes), int64(HorizonMinutes))
+  if trigger.get().kind == tkInterval:
+    let newest = intervalAtOrBefore(
+      spec.createdAtMs, trigger.get().periodMs, nowMs)
+    if newest.isNone: return none(int64)
+    let at = newest.get()
+    if at <= lastRunMs or nowMs - at >= lookback * MinuteMs:
+      return none(int64)
+    return some(at)
+  let expr = trigger.get().cron
+  let offset = int64(spec.tzOffsetMinutes)
   let lastLocal = localMinuteOf(lastRunMs, offset)
   let nowLocal = localMinuteOf(nowMs, offset)
   let lookbackStart = nowLocal - lookback + 1

@@ -219,5 +219,20 @@ proc runTests*() =
       check decision.missedOccurrenceMs.isNone
       check decision.watermarkMs == now
 
+    test "an interval fires on the tick after each period, once":
+      let spec = makeSpec("@every 30m", catchUp = scSkip, createdAt = at(12, 0))
+      check decideTick(spec, at(12, 0), at(12, 29)).fireAtMs.isNone
+      let due = decideTick(spec, at(12, 29), at(12, 30) + 20_000)
+      check due.fireAtMs == some(at(12, 30))
+      check decideTick(spec, due.watermarkMs, at(12, 31)).fireAtMs.isNone
+
+    test "a stale interval occurrence does not shadow one inside the grace":
+      ## Same rule as cron: the first occurrence still inside the grace fires,
+      ## the older ones are the backlog `scSkip` never replays.
+      let spec = makeSpec("@every 1m", catchUp = scSkip, createdAt = at(12, 0))
+      let decision = decideTick(spec, at(12, 0), at(12, 10) + 10_000)
+      check decision.fireAtMs == some(at(12, 9))
+      check decision.missedOccurrenceMs.isNone
+
 when isMainModule:
   runTests()

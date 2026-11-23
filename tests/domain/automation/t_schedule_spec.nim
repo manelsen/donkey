@@ -559,5 +559,73 @@ proc runTests*() =
       check r.isErr
       check r.error.contains("api:")
 
+  suite "schedule spec — interval and alias triggers":
+
+    test "parseTrigger reads @every with minutes, hours, days and compounds":
+      check parseTrigger("@every 30m").get().periodMs == 30 * MinuteMs
+      check parseTrigger("@every 2h").get().periodMs == 2 * HourMs
+      check parseTrigger("@every 1d").get().periodMs == DayMs
+      check parseTrigger("@every 1h30m").get().periodMs == 90 * MinuteMs
+      check parseTrigger("  @every   45m ").get().periodMs == 45 * MinuteMs
+
+    test "parseTrigger refuses an empty, zero, unitless or too long interval":
+      check parseTrigger("@every").isErr
+      check parseTrigger("@every 0m").isErr
+      check parseTrigger("@every 30").isErr
+      check parseTrigger("@every 30s").isErr
+      check parseTrigger("@every m").isErr
+      check parseTrigger("@every 367d").isErr
+      check parseTrigger("@every 366d").isOk
+      check parseTrigger("@every 99999999999999999999m").isErr
+
+    test "aliases are the cron expressions they name":
+      check parseTrigger("@hourly").get().kind == tkCron
+      check validateScheduleSpec(makeSpec("@hourly")).isOk
+      check nextRunAfterMs(makeSpec("@hourly"), at(12, 10)) == some(at(13, 0))
+      check nextRunAfterMs(makeSpec("@daily"), at(12, 10)) == some(dayAt(1, 0, 0))
+      check nextRunAfterMs(makeSpec("@midnight"), at(12, 10)) == some(dayAt(1, 0, 0))
+      ## 1970-01-01 was a Thursday; the next Sunday is day 3.
+      check nextRunAfterMs(makeSpec("@weekly"), at(12, 10)) == some(dayAt(3, 0, 0))
+      check nextRunAfterMs(makeSpec("@monthly"), at(12, 10)) == some(dayAt(31, 0, 0))
+      check parseTrigger("@yearly").isOk
+      check parseTrigger("@annually").isOk
+      check parseTrigger("@sometimes").isErr
+
+    test "an unknown @ word is refused by the validation":
+      let r = validateScheduleSpec(makeSpec("@fortnightly"))
+      check r.isErr
+      check r.error.contains("@fortnightly")
+
+    test "an interval validates and counts from the creation":
+      let spec = makeSpec("@every 30m", createdAt = at(12, 7))
+      check validateScheduleSpec(spec).isOk
+      check nextRunAfterMs(spec, at(12, 7)) == some(at(12, 37))
+      check nextRunAfterMs(spec, at(12, 36)) == some(at(12, 37))
+      check nextRunAfterMs(spec, at(12, 37)) == some(at(13, 7))
+      ## Before the creation the first occurrence is still one period after it.
+      check nextRunAfterMs(spec, at(0, 0)) == some(at(12, 37))
+
+    test "an interval ignores the timezone offset":
+      let utc = makeSpec("@every 1h", createdAt = at(1, 0))
+      let shifted = makeSpec("@every 1h", createdAt = at(1, 0), tz = -180)
+      check nextRunAfterMs(utc, at(5, 30)) == nextRunAfterMs(shifted, at(5, 30))
+
+    test "dueInstants of an interval lists every occurrence in the window":
+      let spec = makeSpec("@every 30m", createdAt = at(12, 0))
+      check dueInstants(spec, at(12, 0), at(13, 30)) ==
+        @[at(12, 30), at(13, 0), at(13, 30)]
+      check dueInstants(spec, at(12, 30), at(12, 59)).len == 0
+      check dueInstants(spec, at(13, 0), at(12, 0)).len == 0
+
+    test "catch-up of an interval fires the newest missed occurrence once":
+      let spec = makeSpec("@every 1h", catchUp = scOnce, createdAt = at(0, 0))
+      check catchUpInstant(spec, at(1, 0), at(5, 30)) == some(at(5, 0))
+      check catchUpInstant(spec, at(5, 0), at(5, 30)).isNone
+      ## Outside the lookback nothing is caught up.
+      check catchUpInstant(spec, at(1, 0), at(5, 30), maxLookbackMinutes = 20).isNone
+      check catchUpInstant(makeSpec("@every 1h", catchUp = scSkip),
+                           at(1, 0), at(5, 30)).isNone
+
+
 when isMainModule:
   runTests()

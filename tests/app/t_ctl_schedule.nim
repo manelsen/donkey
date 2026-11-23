@@ -164,6 +164,29 @@ proc runTests*() =
       finally:
         cleanup(dir)
 
+    test "an interval schedule is stored and shows its next run one period on":
+      let dir = freshDir("add_interval")
+      try:
+        let added = ctlScheduleAdd(dir, "pulse", "@every 30m", "alice",
+                                   "check the queue", FixedNow)
+        check added.isOk
+        check "@every 30m" in added.get()
+        let shown = ctlScheduleShow(dir, "pulse", nowMs = FixedNow)
+        check shown.isOk
+        check "next_run: 2023-11-14T22:44:00Z" in shown.get()
+      finally:
+        cleanup(dir)
+
+    test "an unknown @ schedule is refused with the forms that exist":
+      let dir = freshDir("add_bad_alias")
+      try:
+        let added = ctlScheduleAdd(dir, "bad", "@fortnightly", "alice",
+                                   "payload", FixedNow)
+        check added.isErr
+        check "@every" in added.error
+      finally:
+        cleanup(dir)
+
     test "duplicate id fails without touching the file":
       let dir = freshDir("add_duplicate")
       try:
