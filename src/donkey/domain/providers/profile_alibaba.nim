@@ -32,7 +32,7 @@ func alibabaCompatProfileAt*(endpoint: string): CompatProfile =
   result = CompatProfile(
     id: "alibaba",
     endpoint: endpoint,
-    supportsImages: AlibabaSupportsImages,
+    supportsImages: true,  ## per-model decision: media_pure.visionSupport
     quirks: defaultOpenAiQuirks(),
   )
   result.quirks.includeReasoningField = false

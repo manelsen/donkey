@@ -205,11 +205,13 @@ proc buildCompleteFn*(preferencesMd: string;
         if routingHook != nil:
           routingHook(selection, prefs, attemptReq)
         let startedAt = nowMs()
-        let bundle = providerRuntimeBuilder(selection.toProviderSpec)
+        let spec = selection.toProviderSpec
+        let bundle = providerRuntimeBuilder(spec)
         if bundle.completeFn == nil:
           continue
         attempted = true
-        let response = bundle.completeFn(attemptReq)
+        let response = bundle.completeFn(requestForVision(
+          attemptReq, visionSupport(spec.providerName, spec.modelName)))
         let elapsedMs = nowMs() - startedAt
         recordLatency(selection.providerName, float(elapsedMs))
         if response.isErr:
@@ -309,7 +311,8 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
           var response: Result[CompletionResponse, string]
           try:
             response = await asyncProviderComplete(
-              providerRuntimeBuilder, spec, attemptReq)
+              providerRuntimeBuilder, spec, requestForVision(
+                attemptReq, visionSupport(spec.providerName, spec.modelName)))
           except CancelledError:
             raise
           except CatchableError as e:

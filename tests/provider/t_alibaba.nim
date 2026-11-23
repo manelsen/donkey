@@ -152,8 +152,9 @@ proc runTests*() =
       check alibabaCompatProfile().id == "alibaba"
       check alibabaCompatProfile().endpoint == providerEndpointFor("alibaba")
       check alibabaCompatProfile().endpoint == descriptorOr("alibaba").baseUrl
-      check alibabaCompatProfile().supportsImages == AlibabaSupportsImages
-      check not alibabaCompatProfile().supportsImages
+      ## Images are decided per model before the call (media_pure.visionSupport);
+      ## the transport sends what it is given, so Qwen-VL keeps its images.
+      check alibabaCompatProfile().supportsImages
 
 when isMainModule:
   runTests()

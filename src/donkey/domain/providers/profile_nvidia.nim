@@ -42,7 +42,7 @@ func nvidiaCompatProfileAt*(endpoint: string): CompatProfile =
   result = CompatProfile(
     id: "nvidia",
     endpoint: endpoint,
-    supportsImages: NvidiaSupportsImages,
+    supportsImages: true,  ## per-model decision: media_pure.visionSupport
     quirks: OpenAiWireQuirks(
       toolResultName: false,
       imageWithToolCalls: true,

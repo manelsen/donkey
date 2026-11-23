@@ -186,28 +186,43 @@ func demoteInlineImagesForTurn*(h: ConversationHistory): ConversationHistory =
       stripped.text = stripped.text.replace(InlineImageRemovedNote, "").strip()
     result.add(stripped)
 
-func filterImagesForCapability*(urls: openArray[string];
-                                supportsImages: bool): seq[string] =
-  ## The images a request may carry for a provider with this vision capability.
-  ## A provider without vision removes the inline `data:` payloads instead of
-  ## letting the transport strip them after the turn text already promised the
-  ## image (review E3). `http(s)` URLs and paths stay: they are cheap and the
-  ## provider may still fetch or ignore them.
-  for url in urls:
-    if supportsImages or not url.startsWith("data:"):
-      result.add(url)
+type
+  VisionSupport* = enum
+    vsUnknown  ## not verified: send the image; a refusal falls back to text
+    vsYes      ## the family reads images
+    vsNo       ## known text only: drop inline images before the call
 
-func inlineImageAccompanies*(supportsImages: bool): bool =
-  ## Whether a marker may claim that the image travels with the message. False
-  ## for a provider without vision, whose request never carries the payload.
-  supportsImages
+func visionSupport*(providerName, model: string): VisionSupport =
+  ## Whether the model a turn is routed to reads images (review E3). Only a
+  ## model known to be text only answers `vsNo`; anything not verified is
+  ## `vsUnknown`, which keeps sending the image and relies on the turn's
+  ## single text retry if the provider refuses it.
+  let id = descriptorOr(providerName).id
+  let m = model.toLowerAscii
+  case id
+  of "anthropic":
+    if m.startsWith("claude-"): vsYes else: vsUnknown
+  of "gemini", "nvidia":
+    vsYes
+  of "deepseek":
+    ## The legacy names of DeepSeek's own API are text only.
+    if m in ["deepseek-chat", "deepseek-reasoner"]: vsNo else: vsUnknown
+  of "zai", "zai-coding", "zai-anthropic":
+    ## GLM's vision models carry a `v` right after the version: glm-4v,
+    ## glm-4.5v, glm-4v-plus. Other glm models are text only.
+    if not m.startsWith("glm-"): vsUnknown
+    else:
+      var i = 4
+      while i < m.len and m[i] in {'0' .. '9', '.'}: inc i
+      if i < m.len and m[i] == 'v': vsYes else: vsNo
+  of "alibaba":
+    if "-vl" in m or m.startsWith("qvq"): vsYes else: vsUnknown
+  else:
+    vsUnknown
 
-func inlineSupportsImagesFor*(providerName: string): bool =
-  ## The vision capability of the provider the turn is addressed to, resolved
-  ## through its descriptor (aliases included). An unknown provider gets no
-  ## promise; a provider without a compat profile reports false.
-  case descriptorOr(providerName).id
-  of "fireworks": FireworksSupportsImages
-  of "alibaba":   AlibabaSupportsImages
-  of "nvidia":    NvidiaSupportsImages
-  else:           false
+func requestForVision*(req: CompletionRequest;
+                       support: VisionSupport): CompletionRequest =
+  ## The request a provider with this support receives: unchanged unless it is
+  ## known to be text only, in which case the inline images go and the turn
+  ## says so (`withoutInlineImages` rewrites the marker and adds the note).
+  if support == vsNo: withoutInlineImages(req) else: req

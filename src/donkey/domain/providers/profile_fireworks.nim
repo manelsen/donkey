@@ -77,7 +77,7 @@ func fireworksCompatProfileAt*(endpoint: string;
       ("User-Agent", FireworksUserAgent),
     ],
     reasoningOffExtras: reasoningOffExtras,
-    supportsImages: FireworksSupportsImages,
+    supportsImages: true,  ## per-model decision: media_pure.visionSupport
     quirks: defaultOpenAiQuirks(),
   )
   result.quirks.includeReasoningField = false

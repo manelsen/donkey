@@ -18,8 +18,11 @@ channel attachment (an album is several updates)
        first 4 data: URLs                    -> inline + "já acompanha esta mensagem"
        data: URL beyond 4, path available    -> path-only marker -> inspect_image
        album bounded at 10 attachments
+  -> routing, per provider attempt (buildCompleteFn / buildAsyncCompleteFn)
+       visionSupport(provider, model) = vsNo -> data: URLs dropped + one note
+       vsYes / vsUnknown                     -> request unchanged
   -> provider profile (CompatProfile / Anthropic / Gemini)
-       image part in the provider envelope
+       image part in the provider envelope (the transport never drops it)
   -> tool loop, on image rejection (once per turn, streaming included)
        demote history + retry without data: URLs + one removal note
   -> orchestrator, after the loop
@@ -42,6 +45,16 @@ channel attachment (an album is several updates)
   BMP, TIFF, …) is saved and never inlined. Its marker points at
   `fs_read`/`text_read`, never at `inspect_image`, because that tool would
   reject the file.
+- Vision is decided per provider **and model** before each attempt
+  (`visionSupport` in `domain/providers/media_pure.nim`, review E3), in three
+  states. Only a model known to be text only (`deepseek-chat`,
+  `deepseek-reasoner`, the GLM models without a `v` after the version) loses
+  its `data:` images, through `withoutInlineImages`, which rewrites the marker
+  and adds the removal note. Claude, Gemini, NVIDIA, the GLM `v` models and
+  Qwen-VL are `vsYes`; anything not verified is `vsUnknown` and gets the image.
+  The compat transport used to drop images itself for profiles with
+  unverified vision, silently, while the marker still promised them; it no
+  longer does.
 - Image rejection is handled inside the turn loop, not inside the provider
   builders: `buildCompleteFn`/`buildAsyncCompleteFn` report the error and the
   retry lives in `runToolLoop`. The flag is part of the loop state, so it is

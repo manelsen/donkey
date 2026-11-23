@@ -76,17 +76,12 @@ proc expectations(): seq[ProfileExpectation] =
       emptyContent: false),
     ProfileExpectation(name: "alibaba", providerIds: @["alibaba"],
       profile: alibabaCompatProfile(),
-      toolChoice: false, toolResultName: true,
-      # images suppressed (supportsImages = false), so the image/tool-call
-      # message serialises as a plain string
-      imageWithToolCalls: false,
+      toolChoice: false, toolResultName: true, imageWithToolCalls: true,
       includeReasoning: false, reasoningSplit: false, streamOptions: false,
       emptyContent: false),
     ProfileExpectation(name: "fireworks", providerIds: @["fireworks"],
       profile: fireworksCompatProfile(),
-      # images suppressed (supportsImages = false), so the image/tool-call
-      # message serialises as a plain string
-      toolChoice: false, toolResultName: true, imageWithToolCalls: false,
+      toolChoice: false, toolResultName: true, imageWithToolCalls: true,
       includeReasoning: false, reasoningSplit: false, streamOptions: false,
       emptyContent: false),
   ]
