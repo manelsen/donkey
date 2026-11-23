@@ -307,6 +307,20 @@ proc runTests*() =
 
   # ── toInbound ─────────────────────────────────────────────────────────────────
 
+  suite "slack_pure — inbound entities":
+    test "the three characters Slack escapes reach the agent as typed":
+      let ev = makeMessageEvent("U1", "C1", "if a &lt; b &amp;&amp; c &gt; d", "1.0")
+      check parseEvent(makeEventCallback("T1", ev)).text == "if a < b && c > d"
+
+    test "decoding is one pass: an escaped entity stays literal (hermes 8e6d1a9a53)":
+      ## "&amp;lt;" is how Slack sends the text "&lt;" typed by the user.
+      check slackUnescape("&amp;lt;b&amp;gt;") == "&lt;b&gt;"
+
+    test "other entities and real mentions are left alone":
+      check slackUnescape("&quot;x&quot; <@U1> &nbsp;") == "&quot;x&quot; <@U1> &nbsp;"
+      check slackUnescape("&") == "&"
+      check slackUnescape("&lt") == "&lt"
+
   suite "slack_pure — broadcast mentions (hermes 38863322a4)":
     test "@everyone, @channel and @here are shown, not fired":
       check neutralizeBroadcastMentions("Broadcast <!everyone> <!channel> <!here|here>") ==
