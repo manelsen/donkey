@@ -838,7 +838,7 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
     let skillCtx = parseManageSkillsContext(j).valueOr:
       return handledError(error)
     let reply = performManageSkills(
-      ctx.memory, ctx.uid, buildManageSkillsValue(skillCtx),
+      ctx.fs, ctx.memory, ctx.uid, buildManageSkillsValue(skillCtx),
       registry = (if skillCtx.registry.len > 0: skillCtx.registry
                   else: skillRegistry(ctx.env)),
     ).valueOr:

@@ -11,6 +11,7 @@ import ../session_state
 import ../skill_runtime
 import ../../domain/message
 import ../../ports/memory
+import ../../ports/fs
 import ../../ports/provider
 
 # ── task (background job) ────────────────────────────────────────────────────
@@ -55,11 +56,11 @@ proc spawnTaskJob*(state: SessionState;
 
 # ── skill management ─────────────────────────────────────────────────────────
 
-proc performManageSkills*(memory: MemoryRuntimePort;
+proc performManageSkills*(fs: FsRuntimePort; memory: MemoryRuntimePort;
                           uid: UserId;
                           value: string;
                           registry = ""): Result[string, string] {.gcsafe, raises: [].} =
   try:
-    applySkillCommand(memory.paddockDir(uid), value, registry = registry)
+    applySkillCommand(fs, memory.paddockDir(uid), value, registry = registry)
   except Exception as e:  ## effect boundary: callee raises are unannotated
     err("Error: " & e.msg)

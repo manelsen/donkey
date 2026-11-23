@@ -12,7 +12,7 @@
 ##   results             |>    countFailed             -- count hard failures
 ##   results             |>->  formatReport("Doctor")  -- full formatted report
 
-import std/[os, osproc, strutils]
+import std/[os, strutils]
 import ../core/pipeops
 import ../core/diagnostics
 import ../config/environment

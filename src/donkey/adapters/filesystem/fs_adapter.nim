@@ -1,12 +1,72 @@
 ## fs_adapter.nim — binds the filesystem port to the concrete implementation.
 
-import std/[os, times]
+import std/[os, strutils, sysrand, times]
+when defined(posix):
+  import std/posix
 import ../../core/pipeops
 import ../../ports/fs
 import ../../infra/fs/copy as fsCopy
 import ./paths as fsPaths
 
 export fs
+
+when defined(posix):
+  proc privateTempName(path: string): string =
+    ## Unpredictable suffix so an existing (possibly attacker-readable) file
+    ## can never be reopened by name.
+    var raw: array[8, byte]
+    if not urandom(raw):
+      raise newException(IOError, "cannot obtain randomness for " & path)
+    var suffix = ""
+    for b in raw:
+      suffix.add(toHex(b, 2))
+    path & ".tmp." & $getCurrentProcessId() & "." & suffix
+
+proc writePrivateResult(path, content: string): Result[void, string] {.gcsafe, raises: [].} =
+  ## Creates the file with 0600 **before** any byte is written, then renames
+  ## it into place: `writeFile` + later `chmod` leaves a 0644 window in which
+  ## another local account can read a key pool. `O_EXCL` makes the mode apply
+  ## to a file this call created, not to a pre-existing one.
+  try:
+    when defined(posix):
+      var tmp = ""
+      var fd: cint = -1
+      for attempt in 0 ..< 3:
+        tmp = privateTempName(path)
+        fd = posix.open(tmp.cstring, O_CREAT or O_WRONLY or O_EXCL, 0o600)
+        if fd >= 0:
+          break
+        if errno != EEXIST:
+          return err("cannot create a temporary file for " & path)
+      if fd < 0:
+        return err("cannot create a temporary file for " & path)
+      var writeError = ""
+      var written = 0
+      while written < content.len:
+        let n = posix.write(fd, content[written].unsafeAddr,
+                            content.len - written)
+        if n <= 0:
+          writeError = "short write"
+          break
+        written += n
+      ## A deferred write error can surface only at close (NFS): never
+      ## publish a temp whose close failed.
+      if posix.close(fd) != 0 and writeError.len == 0:
+        writeError = "close failed"
+      if writeError.len > 0:
+        discard posix.unlink(tmp.cstring)
+        return err("cannot write " & path & ": " & writeError)
+      try:
+        moveFile(tmp, path)   # atomic on POSIX; the mode travels with the inode
+      except CatchableError:
+        discard posix.unlink(tmp.cstring)
+        return err("cannot publish " & path)
+      ok()
+    else:
+      writeFile(path, content)
+      ok()
+  except Exception as e:  ## effect boundary: callee raises are unannotated
+    err("cannot write " & path & ": " & e.msg)
 
 proc readFileResult(path: string): Result[string, string] {.gcsafe, raises: [].} =
   try:
@@ -151,4 +211,5 @@ proc newFsAdapter*(): FsRuntimePort =
     copyTree: copyTreeResult,
     move: moveResult,
     remove: removeResult,
+    writePrivate: writePrivateResult,
   )

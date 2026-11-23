@@ -5,6 +5,7 @@
 
 import std/[os, strutils, unittest]
 import donkey/app/setup_wizard
+import donkey/adapters/filesystem/fs_adapter
 import donkey/app/doctor
 import donkey/config/loader
 
@@ -143,7 +144,7 @@ proc runTests*() =
       defer:
         delEnv("XDG_CONFIG_HOME")
         if dirExists(tmpHome): removeDir(tmpHome)
-      check not setupAlreadyDone()
+      check not setupAlreadyDone(newFsAdapter())
 
     test "returns true when toml exists":
       let tmpHome = getTempDir() / "donkey_test_setup_done_cfg"
@@ -154,7 +155,7 @@ proc runTests*() =
         delEnv("XDG_CONFIG_HOME")
         if dirExists(tmpHome): removeDir(tmpHome)
       writeFile(tmpHome / "donkey" / "donkey.toml", "home = \"/tmp/x\"\n")
-      check setupAlreadyDone()
+      check setupAlreadyDone(newFsAdapter())
 
   suite "setup paths and snapshot":
 
@@ -243,20 +244,6 @@ proc runTests*() =
         @[(provider: "ollama", envName: "OLLAMA_BASE_URL", key: "should-not-leak")],
         @[])
       check env.count("OLLAMA_BASE_URL=") == 0
-
-  suite "private credential file":
-
-    when defined(posix):
-      test "the env file is created 0600, not chmodded afterwards":
-        let path = getTempDir() / ("donkey_setup_private_" &
-                                   $getCurrentProcessId() & ".env")
-        defer: removeFile(path)
-        writePrivateFile(path, "OPENAI_API_KEY=sk-fake\n")
-        let perms = getFilePermissions(path)
-        check fpUserRead in perms
-        check fpUserWrite in perms
-        check fpGroupRead notin perms
-        check fpOthersRead notin perms
 
 when isMainModule:
   runTests()

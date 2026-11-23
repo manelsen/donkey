@@ -21,16 +21,15 @@ const
     "walkDir", "walkDirRec", "walkFiles", "walkDirs",
     "getFileSize", "getLastModificationTime", "getFileInfo",
     "setFilePermissions", "getFilePermissions",
-    "execProcess", "execCmd", "execCmdEx", "startProcess",
+    "execProcess", "execCmd", "execCmdEx", "execShellCmd", "startProcess",
   ]
   PortReceivers = ["fs", "process"]
   FieldLikeNames = ["lines", "open"]
     ## Also names of fields and other procs (`edit.lines`, a channel's
     ## `open`): after a dot they count only on a std module.
   StdModules = ["os", "osproc", "syncio", "posix", "dirs", "files", "paths"]
-  RawIoBudget = 30
-    ## 83 when it started. What is left is file work in the setup wizard, the
-    ## service installer and the skill installer, and the IPC socket.
+  RawIoBudget = 0
+    ## 83 when it started (audit item 8, in three parts); none may come back.
 
 func receiverBefore(line: string; dot: int): string =
   ## The identifier just before the dot at `dot`.

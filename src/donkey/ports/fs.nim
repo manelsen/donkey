@@ -46,6 +46,9 @@ type
       ## A file or a directory.
     remove*:                   proc(path: string; recursive: bool): Result[void, string] {.gcsafe, raises: [].}
       ## A file, or with `recursive` a directory and everything in it.
+    writePrivate*:             proc(path, content: string): Result[void, string] {.gcsafe, raises: [].}
+      ## Replaces the file atomically with one readable by its owner only,
+      ## private from its first byte: for files that hold credentials.
 
 func unavailableFs*(): FsRuntimePort =
   ## Fail-closed default for call sites that do not wire filesystem tools.
@@ -86,6 +89,8 @@ func unavailableFs*(): FsRuntimePort =
       err(Unavailable),
     remove: proc(path: string; recursive: bool): Result[void, string] {.gcsafe, raises: [].} =
       err(Unavailable),
+    writePrivate: proc(path, content: string): Result[void, string] {.gcsafe, raises: [].} =
+      err(Unavailable),
   )
 
 func orUnavailable*(fs: FsRuntimePort): FsRuntimePort =
@@ -112,3 +117,4 @@ func orUnavailable*(fs: FsRuntimePort): FsRuntimePort =
   if result.copyTree == nil: result.copyTree = fallback.copyTree
   if result.move == nil: result.move = fallback.move
   if result.remove == nil: result.remove = fallback.remove
+  if result.writePrivate == nil: result.writePrivate = fallback.writePrivate

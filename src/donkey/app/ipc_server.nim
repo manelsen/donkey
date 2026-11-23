@@ -10,10 +10,11 @@
 ## closes over the two providers: the server runs on the Chronos event loop
 ## of the calling thread, so no global state and no cross-thread access.
 
-import std/[json, os]
+import std/json
 import chronos
 import chronos/transports/stream
 import ../ports/ipc
+import ../ports/fs
 
 type
   StatusProvider* = proc(): DaemonStatus {.gcsafe, raises: [].}
@@ -44,7 +45,8 @@ proc handleConn(statusFn: StatusProvider; logFn: LogProvider;
     discard
   transport.close()
 
-proc startIpcServer*(sockPath:  string;
+proc startIpcServer*(fs:        FsRuntimePort;
+                     sockPath:  string;
                      statusFn:  StatusProvider;
                      logFn:     LogProvider) {.gcsafe.} =
   ## Sets up the Unix socket server synchronously. The accept loop runs
@@ -54,8 +56,9 @@ proc startIpcServer*(sockPath:  string;
     await handleConn(statusFn, logFn, transport)
 
   ## Remove stale socket from a previous run.
-  if fileExists(sockPath):
-    removeFile(sockPath)
+  ## A socket counts as a file for the port; a failure surfaces as the bind's.
+  if fs.entryKind(sockPath) == fekFile:
+    discard fs.remove(sockPath, false)
 
   let server = createStreamServer(initTAddress(sockPath), onConnection)
   server.start()
