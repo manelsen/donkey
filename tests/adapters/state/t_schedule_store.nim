@@ -533,6 +533,29 @@ proc runTests*() =
       check row.toViewRecord.lastStatus == "sent"
       check row.toViewRecord.failures == 2
 
+    test "missed occurrences add up, keep when they were noticed and survive a reload":
+      let dir = freshDir("missed")
+      try:
+        let store = newScheduleStoreRef(dir)
+        check store.upsert(fullRecord()).isOk
+        check store.save(ScheduleWatermark(id: "daily", lastRunAtMs: 3_000,
+          createdAtMs: 1_000, missedDelta: 4, missedAtMs: 3_000)).isOk
+        check store.save(ScheduleWatermark(id: "daily", lastRunAtMs: 4_000,
+          createdAtMs: 1_000)).isOk
+        check store.save(ScheduleWatermark(id: "daily", lastRunAtMs: 5_000,
+          createdAtMs: 1_000, missedDelta: 2, missedAtMs: 5_000)).isOk
+        let record = newScheduleStoreRef(dir).loadRecord("daily").get().get()
+        check record.missed == 6
+        check record.lastMissedAtMs == 5_000
+        let view = record.toViewRecord
+        check view.missed == 6
+        check view.lastMissedAtMs == 5_000
+        ## A ctl edit of the spec keeps them.
+        check store.upsert(fullRecord()).isOk
+        check store.loadRecord("daily").get().get().missed == 6
+      finally:
+        cleanup(dir)
+
     test "a ctl edit of the spec keeps the run history":
       let dir = freshDir("run-status-upsert")
       defer: cleanup(dir)

@@ -370,3 +370,27 @@ func closestGapMs*(spec: ScheduleSpec; fromMs, stopBelowMs: int64): Option[int64
             return best
       previous = localMinute
   best
+func countDueCapped*(spec: ScheduleSpec; lastRunMs, nowMs: int64; cap: int): int =
+  ## How many occurrences fall in `(lastRunMs, nowMs]`, counting no further
+  ## than `cap`. An interval is counted by arithmetic; a cron by walking the
+  ## window's minutes (within the horizon), stopping at the cap.
+  if nowMs <= lastRunMs or cap <= 0:
+    return 0
+  let trigger = specTrigger(spec)
+  if trigger.isNone:
+    return 0
+  if trigger.get().kind == tkInterval:
+    let period = trigger.get().periodMs
+    let first = intervalAfter(spec.createdAtMs, period, lastRunMs)
+    if first > nowMs:
+      return 0
+    return int(min(int64(cap), (nowMs - first) div period + 1))
+  let expr = trigger.get().cron
+  let offset = int64(spec.tzOffsetMinutes)
+  let nowLocal = localMinuteOf(nowMs, offset)
+  var localMinute = max(localMinuteOf(lastRunMs, offset) + 1,
+                        nowLocal - int64(HorizonMinutes) + 1)
+  while localMinute <= nowLocal and result < cap:
+    if matchesCron(expr, localDateTime(localMinute)):
+      inc result
+    inc localMinute

@@ -50,6 +50,8 @@ func makeRow(
   lastError = "";
   failures = 0;
   spec = makeSpec();
+  missed = 0;
+  lastMissedAtMs = 0'i64;
 ): ScheduleViewRecord =
   ScheduleViewRecord(
     spec: spec,
@@ -58,6 +60,8 @@ func makeRow(
     lastStatus: lastStatus,
     lastError: lastError,
     failures: failures,
+    missed: missed,
+    lastMissedAtMs: lastMissedAtMs,
   )
 
 proc runTests*() =
@@ -113,6 +117,23 @@ proc runTests*() =
       let row = formatScheduleRow(makeRow(failures = 2), FixedNow)
       check "failures=2" in row
       check "retention" notin row
+
+    test "shows missed occurrences and when the last was noticed":
+      let row = formatScheduleRow(makeRow(missed = 3,
+        lastMissedAtMs = FixedNow - 3_600_000'i64), FixedNow)
+      check "missed=3" in row
+      check "last_missed=2023-11-14T21:14:00Z" in row
+      check "missed" notin formatScheduleRow(makeRow(), FixedNow)
+      let detail = scheduleDetailLines(makeRow(missed = 3,
+        lastMissedAtMs = FixedNow), FixedNow)
+      check "missed: 3" in detail
+      check "last_missed: 2023-11-14T22:14:00Z" in detail
+      let node = parseJson(formatScheduleJson(@[makeRow(missed = 3,
+        lastMissedAtMs = FixedNow)], FixedNow))[0]
+      check node["missed"].getInt == 3
+      check node["last_missed_at_ms"].getInt == FixedNow
+      let item = scheduleListItem(makeRow(missed = 2, lastMissedAtMs = FixedNow), FixedNow)
+      check "missed 2" in item.status
 
     test "never prints the payload":
       let row = formatScheduleRow(makeRow(), FixedNow)

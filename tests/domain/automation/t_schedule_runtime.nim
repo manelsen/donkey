@@ -234,5 +234,45 @@ proc runTests*() =
       check decision.fireAtMs == some(at(12, 9))
       check decision.missedOccurrenceMs.isNone
 
+  suite "schedule runtime — missed occurrences are counted":
+
+    test "an on-time tick misses nothing":
+      let spec = makeSpec("* * * * *", catchUp = scSkip)
+      check decideTick(spec, at(11, 59), at(12, 0)).missedCount == 0
+
+    test "skip: every occurrence of a long gap that does not run is counted":
+      let spec = makeSpec("0 * * * *", catchUp = scSkip)
+      ## 09:00 .. 12:00 are due; none is inside the grace at 12:30.
+      let decision = decideTick(spec, at(8, 30), at(12, 30))
+      check decision.fireAtMs.isNone
+      check decision.missedCount == 4
+
+    test "skip: the one that runs is not counted":
+      let spec = makeSpec("* * * * *", catchUp = scSkip)
+      let decision = decideTick(spec, at(12, 0), at(12, 10) + 10_000)
+      check decision.fireAtMs == some(at(12, 9))
+      check decision.missedCount == 9
+
+    test "once: the backlog collapsed into one run is counted":
+      let spec = makeSpec("0 9 * * *", catchUp = scOnce)
+      let now = 30 * DayMs + at(12, 0)
+      let decision = decideTick(spec, 0'i64, now)
+      check decision.fireAtMs.isSome
+      check decision.missedCount == 30
+
+    test "an interval counts its missed periods":
+      let spec = makeSpec("@every 1h", catchUp = scSkip, createdAt = at(0, 0))
+      check decideTick(spec, at(1, 30), at(5, 30)).missedCount == 4
+
+    test "paused time and a clock rollback are not misses":
+      let paused = makeSpec("* * * * *", catchUp = scSkip, enabled = false)
+      check decideTick(paused, at(11, 0), at(12, 0)).missedCount == 0
+      let spec = makeSpec("* * * * *", catchUp = scSkip)
+      check decideTick(spec, at(12, 10), at(12, 0)).missedCount == 0
+
+    test "the count stops at a cap instead of walking a year of minutes":
+      let spec = makeSpec("* * * * *", catchUp = scSkip)
+      check decideTick(spec, 0'i64, 30 * DayMs).missedCount == MaxCountedMissed
+
 when isMainModule:
   runTests()

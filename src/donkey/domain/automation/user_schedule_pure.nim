@@ -73,6 +73,9 @@ func formatUserSchedules*(rows: seq[ScheduleViewRecord]; nowMs: int64): string =
                (if r.lastStatus.len > 0: " " & r.lastStatus else: ""))
     if r.lastError.len > 0:
       line.add(" (" & r.lastError & ")")
+    if r.missed > 0:
+      line.add(", missed " & $r.missed & " (last noticed " &
+               formatInstant(r.lastMissedAtMs) & ")")
     line.add("\n  prompt: " & r.spec.payload.replace("\n", " "))
     lines.add(line)
   lines.join("\n")
