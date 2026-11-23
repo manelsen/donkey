@@ -196,5 +196,16 @@ proc runTests*() =
       let r = parseDispatch("INTERACTION_CREATE", d)
       check r.rawId == "guild_user"
 
+  suite "DiscordAdapter message deduplication":
+    test "the second sighting of a message id is a duplicate":
+      let a = newDiscordAdapter("TOK", "/tmp/ids_ds_dedup.tsv")
+      check not a.isDuplicateMessage("123", now = 0.0)
+      check a.isDuplicateMessage("123", now = 1.0)
+      check not a.isDuplicateMessage("124", now = 1.0)
+      check not a.isDuplicateMessage("123", now = DiscordDedupeTtlSec + 2.0)
+
+    test "an adapter built without the cache reports no duplicate":
+      check not DiscordAdapter().isDuplicateMessage("123")
+
 when isMainModule:
   runTests()

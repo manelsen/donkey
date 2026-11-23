@@ -22,6 +22,7 @@ import ../../ports/http
 import ../http/std_http
 import ../identity/identity_resolver
 import ../../infra/event_queue
+import ../../core/channels/recent_ids
 
 export identity_resolver
 
@@ -107,7 +108,7 @@ type
     apiBase*:   string                     ## override for testing
     resolver*:  IdentityResolver
     dmChannels: ref Table[string, string]  ## slackUserId → dm_channel_id (ref = value receiver ok)
-    seenEvents: ref Table[string, float]   ## event_id → first-seen epoch
+    seenEvents: ref RecentIds   ## event ids already handled
     http*:      StdHttpAdapter
     respondHttp*: StdHttpAdapter           ## short-timeout transport for response_url
 
@@ -310,32 +311,7 @@ proc isDuplicate*(a: SlackAdapter; event: SlackRawEvent;
   ## Returns true when this event was already processed. Slack may redeliver
   ## an authenticated event when the HTTP ack is lost; commands and session
   ## turns must not run twice. The cache is bounded and expires by TTL.
-  let key = eventDedupeKey(event)
-  if key.len == 0:
-    return false
-
-  var expired: seq[string]
-  for k, ts in a.seenEvents[]:
-    if now - ts > SlackDedupeTtlSec:
-      expired.add(k)
-  for k in expired:
-    a.seenEvents[].del(k)
-
-  if key in a.seenEvents[]:
-    return true
-
-  if a.seenEvents[].len >= SlackDedupeMaxEvents:
-    var oldestKey = ""
-    var oldestTs = now
-    for k, ts in a.seenEvents[]:
-      if ts <= oldestTs:
-        oldestTs = ts
-        oldestKey = k
-    if oldestKey.len > 0:
-      a.seenEvents[].del(oldestKey)
-
-  a.seenEvents[][key] = now
-  false
+  a.seenEvents[].seenBefore(eventDedupeKey(event), now)
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 
@@ -344,8 +320,8 @@ proc newSlackAdapter*(botToken:     string;
                       apiBase       = ""): SlackAdapter =
   var t = new(Table[string, string])
   t[] = initTable[string, string]()
-  var seen = new(Table[string, float])
-  seen[] = initTable[string, float]()
+  var seen = new(RecentIds)
+  seen[] = initRecentIds(SlackDedupeTtlSec, SlackDedupeMaxEvents)
   SlackAdapter(
     botToken:   botToken,
     apiBase:    apiBase,

@@ -224,6 +224,23 @@ proc runTests*() =
       check callbacks == 1
       check not anyRequest(proc(r: Recorded): bool = "guild-chan" in r.target)
 
+    test "Discord: a message delivered twice is handled once":
+      ## A gateway RESUME replays events, and the startup backfill can overlap
+      ## the live stream: the second copy must not answer again.
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var state = initPresentationState()
+      let dc = newDiscordAdapter("TOK", Tmp / "dc5" / "ids.tsv", apiBase = base())
+      for _ in 0 ..< 2:
+        handleDiscordEvent(sm, DiscordRawEvent(kind: deMessage, discordUserId: "46",
+          content: "/start", channelId: "guild-chan", messageId: "m-dup"),
+          dc, state, env("dc5"), msgSeq, logger, noop, noop, noop)
+      var replies = 0
+      for r in requests():
+        if "/channels/guild-chan/messages" in r.target: inc replies
+      check replies == 1
+
     test "QQ: a group gets the notice, not the link code":
       reset()
       var sm = openSessions()

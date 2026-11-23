@@ -30,6 +30,7 @@ import ../identity/identity_resolver
 import ./ws_client
 import ../../infra/event_queue
 import ../../infra/thread_handle
+import ../../core/channels/recent_ids
 
 const DiscordMaxChars* = 2000
 
@@ -319,6 +320,7 @@ type
     resolver*:  IdentityResolver
     dmChannels: ref Table[string, string]  ## discord_user_id → dm_channel_id (ref allows value receiver)
     statusReactions: ref Table[string, string] ## channel_id:message_id -> emoji
+    seenMessages: ref RecentIds  ## message ids already handled (RESUME replay, backfill overlap)
     http*:      StdHttpAdapter
 
 func authHeader(a: DiscordAdapter): (string, string) =
@@ -756,6 +758,19 @@ proc registerSlashCommands*(a: DiscordAdapter; appId: string; guildId = ""): Res
 
 # ── Constructor ────────────────────────────────────────────────────────────────
 
+const
+  DiscordDedupeTtlSec* = 600.0
+    ## A gateway RESUME replays the events missed while disconnected, and the
+    ## startup backfill can overlap the first live events: minutes, not hours.
+  DiscordDedupeMaxMessages* = 2048
+
+proc isDuplicateMessage*(a: DiscordAdapter; messageId: string;
+                         now = epochTime()): bool =
+  ## True when this message id was already handled: the turn or command must
+  ## not run twice. An adapter built without the cache never reports one.
+  if a.seenMessages == nil: return false
+  a.seenMessages[].seenBefore(messageId, now)
+
 proc newDiscordAdapter*(token:        string;
                         identityPath: string;
                         apiBase       = ""): DiscordAdapter =
@@ -765,6 +780,8 @@ proc newDiscordAdapter*(token:        string;
   sr[] = initTable[string, string]()
   var appId = new(string)
   appId[] = ""
+  var seen = new(RecentIds)
+  seen[] = initRecentIds(DiscordDedupeTtlSec, DiscordDedupeMaxMessages)
   DiscordAdapter(
     token:      token,
     apiBase:    apiBase,
@@ -772,5 +789,6 @@ proc newDiscordAdapter*(token:        string;
     resolver:   newIdentityResolver(identityPath),
     dmChannels: t,
     statusReactions: sr,
+    seenMessages: seen,
     http:       newStdHttpAdapter(),
   )
