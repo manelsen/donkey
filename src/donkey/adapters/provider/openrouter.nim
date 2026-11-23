@@ -38,6 +38,7 @@ type
     id*:        string
     name*:      string
     arguments*: string
+    signature*: string  ## Gemini thought signature (extra_content)
 
   OpenRouterSseChunk* = object
     token*:        string
@@ -128,6 +129,7 @@ func parseOpenRouterResponse*(j: JsonNode): Result[CompletionResponse, string] =
         id:        tc{"id"}.getStr(""),
         name:      fn{"name"}.getStr(""),
         inputJson: fn{"arguments"}.getStr("{}"),
+        signature: extraContentSignature(tc),
       )
   var reasoning = msg{"reasoning"}.getStr("")
   if reasoning.len == 0:
@@ -170,6 +172,7 @@ proc parseOpenRouterSseLine*(line: string): Result[OpenRouterSseChunk, string] =
             id:        tc.getOrDefault("id").getStr(""),
             name:      if fn != nil: fn.getOrDefault("name").getStr("") else: "",
             arguments: if fn != nil: fn.getOrDefault("arguments").getStr("") else: "",
+            signature: extraContentSignature(tc),
           )
   ok(OpenRouterSseChunk(
     token:        token,
@@ -234,12 +237,14 @@ proc makeStreamFn*(a: OpenRouterAdapter): StreamFn =
         for delta in chunk.toolCalls:
           if delta.index notin toolAcc:
             toolAcc[delta.index] = ToolCallRequest(
-              id: delta.id, name: delta.name, inputJson: delta.arguments)
+              id: delta.id, name: delta.name, inputJson: delta.arguments,
+              signature: delta.signature)
             toolOrder.add(delta.index)
           else:
             var current = toolAcc[delta.index]
             if delta.id.len > 0: current.id = delta.id
             if delta.name.len > 0: current.name = delta.name
+            if delta.signature.len > 0: current.signature = delta.signature
             current.inputJson.add(delta.arguments)
             toolAcc[delta.index] = current
 

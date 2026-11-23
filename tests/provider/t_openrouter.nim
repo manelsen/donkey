@@ -167,6 +167,46 @@ proc runTests*() =
       check tcs[0]["id"].getStr()                    == "call_1"
       check tcs[0]["function"]["name"].getStr()      == "bash"
 
+  suite "OpenRouter Gemini thought signatures":
+    ## Gemini 3 behind an OpenAI-compatible gateway returns each tool call's
+    ## signature in `extra_content` and wants it back; only a real one, and
+    ## only to a Gemini/Gemma model (strict providers reject the key) —
+    ## hermes agent/transports/chat_completions.py.
+    proc roundWith(sig: string): CompletionRequest =
+      CompletionRequest(messages: @[
+        ChatMessage(role: roleUser, text: "hora?"),
+        ChatMessage(role: roleAssistant, toolCalls: @[
+          ToolCallRequest(id: "c1", name: "clock", inputJson: "{}", signature: sig)]),
+        ChatMessage(role: roleTool, text: "12:00", toolCallId: "c1")])
+
+    test "the response's signature is kept, in either shape":
+      for extra in [%* {"google": {"thought_signature": "sig-g"}},
+                    %* {"thought_signature": "sig-g"}]:
+        let r = parseOpenRouterResponse(%* {"choices": [{"message": {
+          "content": "", "tool_calls": [{"id": "c1", "type": "function",
+            "function": {"name": "clock", "arguments": "{}"},
+            "extra_content": extra}]}}]})
+        check r.isOk
+        check r.get.toolCalls[0].signature == "sig-g"
+
+    test "the streamed delta keeps it too":
+      let chunk = parseOpenRouterSseLine("""data: {"choices":[{"delta":{"tool_calls":[""" &
+        """{"index":0,"id":"c1","function":{"name":"clock","arguments":"{}"},""" &
+        """"extra_content":{"google":{"thought_signature":"sig-s"}}}]}}]}""")
+      check chunk.isOk
+      check chunk.get.toolCalls[0].signature == "sig-s"
+
+    test "a Gemini model gets the signature back on its tool call":
+      let body = newOpenRouterAdapter("k", model = "google/gemini-3-flash").buildBody(roundWith("sig-g"))
+      check body["messages"][1]["tool_calls"][0]["extra_content"] ==
+        %* {"google": {"thought_signature": "sig-g"}}
+
+    test "no signature, or a non-Gemini model, sends no extra_content":
+      let gemini = newOpenRouterAdapter("k", model = "google/gemini-3-flash")
+      check not ($gemini.buildBody(roundWith(""))).contains("extra_content")
+      let other = newOpenRouterAdapter("k", model = "anthropic/claude-sonnet-5")
+      check not ($other.buildBody(roundWith("sig-g"))).contains("extra_content")
+
   suite "OpenRouterAdapter streaming helpers":
 
     test "buildStreamBody enables stream and usage":

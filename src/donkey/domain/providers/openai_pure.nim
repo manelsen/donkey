@@ -81,6 +81,26 @@ const
 func defaultOpenAiQuirks*(): OpenAiWireQuirks =
   OpenAiWireQuirksDefault
 
+func extraContentSignature*(toolCall: JsonNode): string =
+  ## The Gemini thought signature an OpenAI-compatible gateway puts on a tool
+  ## call (`extra_content.google.thought_signature`, or flat). "" when absent,
+  ## empty or not a string: a bad value replayed is a "Corrupted thought
+  ## signature" error.
+  if toolCall.isNil or toolCall.kind != JObject: return ""
+  let extra = toolCall{"extra_content"}
+  if extra.isNil or extra.kind != JObject: return ""
+  var candidate = extra{"thought_signature"}
+  if candidate.isNil:
+    candidate = extra{"google"}{"thought_signature"}
+  if candidate.isNil or candidate.kind != JString: return ""
+  candidate.getStr.strip
+
+func modelReplaysThoughtSignatures*(model: string): bool =
+  ## Gemini and Gemma read the replayed signature; every other model behind
+  ## the same gateway may reject the key.
+  let m = model.toLowerAscii
+  "gemini" in m or "gemma" in m
+
 const ToolIdAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 func mistralToolId*(id: string): string =
@@ -218,6 +238,22 @@ proc buildRequestBodyWithQuirks*(model: string; req: CompletionRequest;
   for msg in req.messages:
     let om = messageToOpenAIWithQuirks(msg, quirks)
     var node = openaiMessageToJsonWithQuirks(om, quirks)
+    if modelReplaysThoughtSignatures(model) and msg.toolCalls.len > 0 and
+        node.hasKey("tool_calls"):
+      ## Gemini 3 behind an OpenAI-compatible gateway wants each call's
+      ## signature back; only a real one is sent.
+      ## Matched by id, so a serializer that ever filtered or reordered calls
+      ## could not attach a signature to the wrong one; position only for a
+      ## call without an id.
+      for i, wire in node["tool_calls"].getElems:
+        let wireId = wire{"id"}.getStr("")
+        var signature = ""
+        for j, call in msg.toolCalls:
+          if (wireId.len > 0 and call.id == wireId) or (wireId.len == 0 and j == i):
+            signature = call.signature
+            break
+        if signature.len > 0:
+          wire["extra_content"] = %* {"google": {"thought_signature": signature}}
     if quirks.echoReasoningContent and msg.role == roleAssistant:
       ## Must-echo providers answer 400 on a tool round whose assistant turn
       ## lacks the field; " " and not "", which DeepSeek V4 rejects (hermes
@@ -289,6 +325,7 @@ proc parseResponseFrom*(body: JsonNode): Result[CompletionResponse, string] =
           id:        tcNode{"id"}.getStr(""),
           name:      name,
           inputJson: fn{"arguments"}.getStr("{}"),
+          signature: extraContentSignature(tcNode),
         )
 
     let usage = body{"usage"}
