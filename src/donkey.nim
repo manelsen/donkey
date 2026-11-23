@@ -95,6 +95,7 @@ import donkey/domain/gateway/dashboard_pure
 import donkey/domain/gateway/identity_pure
 import donkey/app/heartbeat
 import donkey/app/reminders
+import donkey/app/attachment_retention
 import donkey/app/scheduler_wiring
 import donkey/app/metrics_server
 import donkey/app/outbound_runtime
@@ -1576,6 +1577,20 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     ## within a bounded time even if the main heartbeat runs daily.
     startPeriodicTask(proc() {.gcsafe.} = browserRuntime.evictIdle(),
                       intervalSec = 60, name = "browser-idle")
+  block:
+    ## Off unless the operator sets a number of days.
+    let days = retentionDays(cfg.env.get(AttachmentRetentionEnv))
+    if days > 0:
+      let paddocksDir = cfg.paddocks
+      startPeriodicTask(proc() {.gcsafe.} =
+        let removed = pruneAttachments(newFsAdapter(), paddocksDir,
+                                       getTime().toUnix(), days,
+                                       newLogger("attachments"))
+        if removed > 0:
+          newLogger("attachments").info("retention: removed " & $removed &
+                                        " attachments older than " & $days & " days"),
+        intervalSec = 3600, name = "attachment-retention")
+      log.info("attachment retention: " & $days & " days")
   if ctx.runtime.stateStore != nil:
     let compactionSec = ctx.runtime.stateStore.ledgerCompactIntervalSec()
     if compactionSec > 0:
