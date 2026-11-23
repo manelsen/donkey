@@ -139,6 +139,7 @@ g1	tests/config/t_environment.nim
 g1	tests/config/t_toml.nim
 g1	tests/config/t_loader.nim
 g1	tests/config/t_skills_registry.nim
+g1	tests/config/t_tools_registry.nim
 g1	tests/core/t_native_tool_args.nim
 g1	tests/core/memory/t_blackboard.nim
 g1	tests/core/memory/t_embedder.nim
@@ -283,6 +284,7 @@ g3	tests/state/t_daemon_lease.nim
 g3	tests/t_version.nim
 g3	tests/tool/t_deno_skill.nim
 g3	tests/tool/t_mcp_client.nim
+g3	tests/tool/t_mcp_http.nim
 g3	tests/tui/t_admin_tui.nim
 g0	tests/app/t_reminder_delivery.nim
 g0	tests/app/t_tools_on_fake_fs.nim

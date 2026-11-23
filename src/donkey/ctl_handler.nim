@@ -249,6 +249,31 @@ proc ctlToolInstall*(registryPath: string; command: string; args: seq[string]) =
   saveToolEntry(registryPath, entry)
   echo "Registered MCP server: " & command
 
+proc ctlToolAddHttp*(registryPath: string; args: seq[string]): int =
+  ## `ctl tool add-http <url> [--token-env NAME]`: a remote MCP server over
+  ## Streamable HTTP. Only the variable name is stored, never the token.
+  if args.len == 0:
+    echo "usage: donkey ctl tool add-http <url> [--token-env NAME]"
+    return 1
+  let url = args[0]
+  var tokenEnv = ""
+  var i = 1
+  while i < args.len:
+    if args[i] == "--token-env" and i + 1 < args.len:
+      tokenEnv = args[i + 1]
+      i += 2
+    else:
+      echo "unknown option: " & args[i]
+      return 1
+  let valid = validMcpHttpUrl(url)
+  if valid.isErr:
+    echo valid.error
+    return 1
+  saveToolEntry(registryPath, ToolEntry(kind: tkMcpHttp, url: url, tokenEnv: tokenEnv))
+  echo "Registered MCP server (HTTP): " & url &
+    (if tokenEnv.len > 0: " — bearer from $" & tokenEnv else: "")
+  0
+
 proc ctlSkillInstall*(cfg: DonkeyConfig; skillsPath: string; name, scriptPath: string;
                       permissions: seq[string]): Result[void, string] =
   let valRes = validateSkillPermissions(permissions, cfg.webAllowlist)
@@ -741,6 +766,8 @@ proc dispatchCtl*(cfg: DonkeyConfig;
   # ── tool ──
   if args[1] == "tool" and args.len >= 4 and args[2] == "install":
     ctlToolInstall(registryPath, args[3], args[4 ..^ 1]); return 0
+  if args[1] == "tool" and args.len >= 3 and args[2] == "add-http":
+    return ctlToolAddHttp(registryPath, args[3 ..^ 1])
 
   # ── skill ──
   let skillsPath = cfg.home / "skills.toml"
