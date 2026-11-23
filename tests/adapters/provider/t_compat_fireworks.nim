@@ -149,16 +149,17 @@ proc runTests*() =
       check body["messages"][1]["tool_call_id"].getStr() == "t1"
       check body["messages"][1].hasKey("name")   ## OpenAI default, not the NIM quirk
 
-    test "an image is suppressed because vision is unverified":
+    test "the transport sends the image it is given (the per-model decision is upstream, E3)":
+      ## Unverified vision used to mean the transport dropped the image
+      ## silently while the turn's marker still promised it. Now a model known
+      ## to be text only loses it before the call (media_pure.visionSupport)
+      ## and anything else gets it.
       let url = "data:image/png;base64,QUJD"
       let req = CompletionRequest(
         messages: @[ChatMessage(role: roleUser, text: "o que é?", imageUrl: url)])
       let body = fireworksAdapter().buildBody(req)
-      let content = body["messages"][0]["content"]
-      check content.kind == JString
-      check content.getStr() == "o que é?"
-      check not ($body).contains("image_url")
-      check not ($body).contains(url)
+      check ($body).contains("image_url")
+      check ($body).contains(url)
 
     test "the streaming body flips `stream` and keeps the off extra":
       let body = fireworksAdapter().buildBody(CompletionRequest(), stream = true)

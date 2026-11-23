@@ -124,7 +124,9 @@ proc runTests*() =
       ## The off switch is the per-model one the bundle arm chose, which only the
       ## Fireworks arm produces.
       check parseJson(cap.body)["reasoning_effort"].getStr() == "none"
-      check not ($parseJson(cap.body)).contains("image_url")
+      ## The transport sends the image it is given; whether a model gets it is
+      ## decided per model before the call (media_pure.visionSupport, E3).
+      check ($parseJson(cap.body)).contains("image_url")
 
     test "the off switch is the Fireworks reasoning_effort none":
       ## Only the Fireworks profile carries `reasoning_off` extras, so this is
@@ -159,8 +161,8 @@ proc runTests*() =
       check fireworksCompatProfile().id == "fireworks"
       check fireworksCompatProfile().endpoint == providerEndpointFor("fireworks")
       check fireworksCompatProfile().endpoint == descriptorOr("fireworks").baseUrl
-      check fireworksCompatProfile().supportsImages == FireworksSupportsImages
-      check not fireworksCompatProfile().supportsImages
+      ## Images are decided per model before the call (media_pure.visionSupport).
+      check fireworksCompatProfile().supportsImages
 
   suite "fireworks reasoning_effort allowlist (review E2)":
     ## Review E2: reasoning_effort: "none" is not accepted by every Fireworks

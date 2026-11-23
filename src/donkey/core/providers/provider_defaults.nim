@@ -23,9 +23,3 @@ const
     ## `fallback_models[0]` in the Fireworks profile
     ## (`plugins/model-providers/fireworks/__init__.py:43-45`). Hermes'
     ## `default_aux_model` is `accounts/fireworks/models/glm-5p2`.
-
-  # Vision capability is one fact shared by the compat profile and the model
-  # limits table. False means "not verified", never "verified absent".
-  NvidiaSupportsImages*    = true   ## providers.md:517-518 (text and image inputs)
-  AlibabaSupportsImages*   = false  ## not verified
-  FireworksSupportsImages* = false  ## not verified

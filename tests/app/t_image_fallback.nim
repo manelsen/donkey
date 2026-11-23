@@ -218,6 +218,33 @@ proc runTests*() =
       check res.isErr
       check gCalls.len == 1
 
+    test "a model known to be text only gets the request without the image (E3)":
+      gCalls = @[]
+      let fn = buildCompleteFn("provider = \"deepseek\"\nmodel = \"deepseek-chat\"",
+                               imageRejectingBuilderImpl)
+      let res = fn(imageRequest())
+      check res.isOk
+      check gCalls.len == 1
+      check not hasDataImage(gCalls[0])
+      check Note in gCalls[0].messages[^1].text
+
+    test "a model with vision, or one not verified, still gets the image":
+      for prefs in ["provider = \"anthropic\"\nmodel = \"claude-sonnet-5-5\"",
+                    "provider = \"openai\""]:
+        gCalls = @[]
+        discard buildCompleteFn(prefs, imageRejectingBuilderImpl)(imageRequest())
+        check gCalls.len == 1
+        check hasDataImage(gCalls[0])
+
+    test "the async builder strips it for a text-only model too":
+      gCalls = @[]
+      let fn = buildAsyncCompleteFn("provider = \"zai-coding\"\nmodel = \"glm-4.7\"",
+                                    imageRejectingBuilderImpl)
+      let res = waitFor fn(imageRequest())
+      check res.isOk
+      check gCalls.len == 1
+      check not hasDataImage(gCalls[0])
+
     test "the async builder also leaves the retry to the turn loop":
       gCalls = @[]
       let fn = buildAsyncCompleteFn("provider = \"openai\"",
