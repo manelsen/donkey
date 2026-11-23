@@ -197,5 +197,41 @@ proc runTests*() =
         withoutEnv("MISTRAL_API_KEYS"):
           check not detectProviderAvailability().mistral
 
+  suite "bedrock breadth — two credentials, one region":
+
+    test "a Bedrock API key makes it available":
+      withEnv("AWS_BEARER_TOKEN_BEDROCK", "bdk"):
+        check detectProviderAvailability().bedrock
+        check availableProviderNames(detectProviderAvailability()).has("bedrock")
+
+    test "IAM credentials make it available, and reach the spec":
+      withEnv("AWS_ACCESS_KEY_ID", "AKID"):
+        withEnv("AWS_SECRET_ACCESS_KEY", "secret"):
+          withEnv("AWS_SESSION_TOKEN", "tok"):
+            check detectProviderAvailability().bedrock
+            let spec = buildProviderSpec(ProviderPrefs(providerName: "bedrock"))
+            check spec.awsAccessKeyId == "AKID"
+            check spec.awsSecretAccessKey == "secret"
+            check spec.awsSessionToken == "tok"
+            check spec.modelName == DefaultModelBedrock
+
+    test "an access key without its secret is not a credential":
+      withEnv("AWS_ACCESS_KEY_ID", "AKID"):
+        check not detectProviderAvailability().bedrock
+
+    test "the endpoint follows AWS_REGION, then AWS_DEFAULT_REGION, then us-east-1":
+      check buildProviderSpec(ProviderPrefs(providerName: "bedrock")).baseUrl ==
+        "https://bedrock-runtime.us-east-1.amazonaws.com"
+      withEnv("AWS_DEFAULT_REGION", "sa-east-1"):
+        check buildProviderSpec(ProviderPrefs(providerName: "bedrock")).baseUrl ==
+          "https://bedrock-runtime.sa-east-1.amazonaws.com"
+        withEnv("AWS_REGION", "eu-west-1"):
+          check buildProviderSpec(ProviderPrefs(providerName: "bedrock")).baseUrl ==
+            "https://bedrock-runtime.eu-west-1.amazonaws.com"
+
+    test "IAM credentials never leak into another provider's spec":
+      withEnv("AWS_ACCESS_KEY_ID", "AKID"):
+        check buildProviderSpec(ProviderPrefs(providerName: "openai")).awsAccessKeyId == ""
+
 when isMainModule:
   runTests()

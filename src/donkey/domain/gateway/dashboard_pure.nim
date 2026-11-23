@@ -148,6 +148,7 @@ func descriptorAvailable(availability: ProviderAvailability;
   of "zai-coding": availability.zaiCoding
   of "nvidia": availability.nvidia
   of "mistral": availability.mistral
+  of "bedrock": availability.bedrock
   of "alibaba": availability.alibaba
   of "fireworks": availability.fireworks
   else: false

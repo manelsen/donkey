@@ -208,6 +208,7 @@ const ProviderMenu: seq[ProviderMenuItem] = @[
   (id: "zen",           label: "OpenCode Zen  (agregador)"),
   (id: "nvidia",        label: "NVIDIA NIM    (build.nvidia.com)"),
   (id: "mistral",       label: "Mistral AI    (console.mistral.ai)"),
+  (id: "bedrock",       label: "AWS Bedrock   (Bedrock API key)"),
   (id: "alibaba",       label: "Alibaba DashScope (Qwen)"),
   (id: "fireworks",     label: "Fireworks AI"),
 ]

@@ -145,6 +145,7 @@ g1	tests/core/memory/t_embedder.nim
 g1	tests/core/memory/t_silent_turn.nim
 g1	tests/core/providers/t_credential_pool.nim
 g1	tests/core/security/t_dm_policy.nim
+g1	tests/core/security/t_aws_sigv4.nim
 g1	tests/core/security/t_webhook_auth.nim
 g1	tests/core/t_agent_events.nim
 g1	tests/core/t_approval.nim
@@ -222,6 +223,7 @@ g2	tests/domain/memory/t_rrf.nim
 g2	tests/domain/memory/t_session_search_pure.nim
 g2	tests/domain/memory/t_transcript_pure.nim
 g2	tests/domain/providers/t_compat_conformance.nim
+g2	tests/domain/providers/t_bedrock_pure.nim
 g2	tests/domain/providers/t_compat_minimax.nim
 g2	tests/domain/providers/t_compat_openai.nim
 g2	tests/domain/providers/t_compat_openrouter.nim
@@ -266,6 +268,7 @@ g3	tests/provider/t_fireworks.nim
 g3	tests/provider/t_gemini.nim
 g3	tests/provider/t_minimax.nim
 g3	tests/provider/t_model_catalog.nim
+g3	tests/provider/t_bedrock.nim
 g3	tests/provider/t_mistral.nim
 g3	tests/provider/t_nvidia.nim
 g3	tests/provider/t_ollama.nim

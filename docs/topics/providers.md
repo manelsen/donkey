@@ -395,6 +395,37 @@ Deliberately not supported:
   (`OpenAiWireQuirks.includeReasoningField`). Setting it false only stops Donkey
   from sending the field; it says nothing about what the provider does.
 
+## AWS Bedrock (Converse)
+
+Bedrock has its own adapter (`adapters/provider/bedrock.nim`, transport
+`ptBedrockConverse`); the request and response translation is pure
+(`domain/providers/bedrock_pure.nim`).
+
+```bash
+# either a Bedrock API key …
+export AWS_BEARER_TOKEN_BEDROCK=...
+# … or IAM credentials, signed with SigV4
+export AWS_ACCESS_KEY_ID=...  AWS_SECRET_ACCESS_KEY=...  # AWS_SESSION_TOKEN optional
+export AWS_REGION=us-east-1   # then AWS_DEFAULT_REGION, then us-east-1
+```
+
+- The bearer wins when both are set. SigV4 is hand-written
+  (`core/security/aws_sigv4.nim`, service `bedrock`) and checked against the
+  example AWS publishes; the model id is a path segment, so its `:` is
+  encoded once in the URL and once more in the canonical URI.
+- `BEDROCK_BASE_URL` replaces the regional endpoint (a proxy, a VPC endpoint).
+- Default model `amazon.nova-pro-v1:0`; any Converse model id works, including
+  regional inference profiles (`us.anthropic.claude-…`).
+- Converse is strict about shape: roles alternate and start with a user turn,
+  tool results ride in a user turn, empty text blocks are dropped, tool ids are
+  made valid (`[a-zA-Z0-9_-]{1,64}`, the same way on both sides of a pair), and
+  without tools in the request the history's tool blocks become text (Converse
+  rejects them without `toolConfig`). Images go as bytes; URL images are not
+  sent.
+- Vision: Claude and Nova Pro/Lite/Premier yes, Nova Micro no, others unknown.
+- Not implemented: ConverseStream (AWS binary event-stream framing). The
+  bundle has no `streamFn`, so turns run without streaming.
+
 ## Compat Breadth: NVIDIA, Alibaba, Fireworks, Mistral
 
 Four OpenAI-compatible providers were added through the generic
