@@ -22,8 +22,7 @@ export onboarding
 
 proc safeComplete(fn: CompleteFn; req: CompletionRequest
                  ): Result[CompletionResponse, string] {.gcsafe, raises: [].} =
-  try: fn(req)
-  except Exception as e: err(e.msg)  ## effect boundary: callee raises are unannotated
+  if fn == nil: err("no provider configured") else: fn(req)
 
 proc unwrapOrReplyError*[T](globalOutbox: AsyncQueue[OutboundMessage];
                             uid: UserId;
@@ -137,10 +136,9 @@ proc safeSaveSession*(memory: MemoryRuntimePort;
                      uid: UserId;
                      sessionId: string;
                      history: ConversationHistory) {.gcsafe, raises: [].} =
-  try:
-    memory.saveSession(uid, sessionId, history)
-  except Exception:  ## effect boundary: callee raises are unannotated
-    discard
+  if memory.saveSession == nil: return
+  memory.saveSession(uid, sessionId, history).isOkOr:
+    newLogger("onboarding").warn(string(uid) & " session not saved: " & error)
 
 proc warnNotSaved(what: string; uid: UserId; saved: Result[void, string])
                  {.gcsafe, raises: [].} =
@@ -163,20 +161,15 @@ proc safeSaveUserMd*(memory: MemoryRuntimePort;
 
 proc safeLoadIdentity*(memory: MemoryRuntimePort;
                       uid: UserId): (string, PersonalityTraits) {.gcsafe, raises: [].} =
-  try:
-    memory.loadAgentIdentity(uid)
-  except Exception:  ## effect boundary: callee raises are unannotated
-    ("", PersonalityTraits())
+  memory.loadAgentIdentity(uid)
 
 proc safeHasProfile*(memory: MemoryRuntimePort;
                     uid: UserId): bool {.gcsafe, raises: [].}
 
 proc safeLoadPreferences(memory: MemoryRuntimePort;
                          uid: UserId): string {.gcsafe, raises: [].} =
-  try:
-    memory.loadContext(uid).preferencesMd
-  except Exception:  ## effect boundary: callee raises are unannotated
-    ""
+  if memory.loadContext == nil: return ""
+  memory.loadContext(uid).preferencesMd
 
 proc safeSavePreferences(memory: MemoryRuntimePort;
                          uid: UserId;
@@ -233,17 +226,11 @@ proc safeRestoreOnboardingState*(memory: MemoryRuntimePort;
 
 proc safeHasProfile*(memory: MemoryRuntimePort;
                     uid: UserId): bool {.gcsafe, raises: [].} =
-  try:
-    memory.hasProfile(uid)
-  except Exception:  ## effect boundary: callee raises are unannotated
-    false
+  memory.hasProfile != nil and memory.hasProfile(uid)
 
 proc safeHasCompletedBootstrap*(memory: MemoryRuntimePort;
                                uid: UserId): bool {.gcsafe, raises: [].} =
-  try:
-    memory.loadContext(uid).userMd.strip.len > 0
-  except Exception:  ## effect boundary: callee raises are unannotated
-    false
+  memory.loadContext != nil and memory.loadContext(uid).userMd.strip.len > 0
 
 proc safeAppendMemory*(memory: MemoryRuntimePort;
                       uid: UserId;

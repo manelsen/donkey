@@ -58,7 +58,9 @@ type
   ## CompleteFn — a closure wrapping any adapter's complete() call.
   ## Allows passing providers as values without generics at call sites.
   CompleteFn* = proc(req: CompletionRequest): Result[CompletionResponse, string]
-                     {.gcsafe.}
+                     {.gcsafe, raises: [].}
+    ## Never raises: a failure is an `err`. Built from an adapter by
+    ## `makeFn`, which is where an adapter's exception stops.
 
   ## StreamFn — like CompleteFn but streams tokens via a callback.
   ## nil means streaming is not available for this provider.

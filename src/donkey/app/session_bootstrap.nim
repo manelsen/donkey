@@ -36,8 +36,9 @@ const
 
 type
   CredentialResultHook* = proc(providerName, key: string; ok: bool;
-                               error: string) {.gcsafe.}
-  CredentialNextHook* = proc(providerName, currentKey: string): string {.gcsafe.}
+                               error: string) {.gcsafe, raises: [].}
+  CredentialNextHook* = proc(providerName, currentKey: string): string {.gcsafe, raises: [].}
+    ## Empty when there is no other key.
 
 type
   ProviderDefaults* = object
@@ -163,7 +164,8 @@ proc buildCompleteFn*(preferencesMd: string;
                       routingProviderCooldownHook: RoutingProviderCooldownHook = nil): CompleteFn {.gcsafe.} =
   let prefs = parseSmartRoutingPrefs(preferencesMd)
   let availability = detectProviderAvailability()
-  result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
+  proc routeAndComplete(req: CompletionRequest): Result[CompletionResponse, string]
+                       {.gcsafe.} =
     let baseSelections = smartRouteSelections(prefs, req, availability)
     let rankedSelections =
       if routingFeedbackHook != nil:
@@ -201,8 +203,7 @@ proc buildCompleteFn*(preferencesMd: string;
       var allImageRejections = true
       for selection in costAwareSelections:
         if routingHook != nil:
-          try: routingHook(selection, prefs, attemptReq)
-          except CatchableError: discard
+          routingHook(selection, prefs, attemptReq)
         let startedAt = nowMs()
         let bundle = providerRuntimeBuilder(selection.toProviderSpec)
         if bundle.completeFn == nil:
@@ -214,8 +215,7 @@ proc buildCompleteFn*(preferencesMd: string;
         if response.isErr:
           recordError(selection.providerName)
         if routingResultHook != nil:
-          try: routingResultHook(selection, elapsedMs, response.isOk)
-          except CatchableError: discard
+          routingResultHook(selection, elapsedMs, response.isOk)
         if response.isOk:
           return response
         lastErr = response.error
@@ -229,6 +229,13 @@ proc buildCompleteFn*(preferencesMd: string;
         attemptReq = withoutInlineImages(attemptReq)
         continue
       return err(lastErr)
+
+  result = proc(req: CompletionRequest): Result[CompletionResponse, string]
+               {.gcsafe, raises: [].} =
+    ## Routing reads tables that may raise, and the provider builder has no
+    ## `raises`; a failure is the turn's error, so no caller needs a handler.
+    try: routeAndComplete(req)
+    except Exception as e: err("routing failed: " & e.msg)  ## effect boundary: callee raises are unannotated
 
 func asyncCompleteErr(msg: string): Result[CompletionResponse, string] {.gcsafe.} =
   err(msg)
@@ -252,8 +259,7 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
     let baseSelections = smartRouteSelections(prefs, req, availability)
     var feedback: seq[RouteFeedback] = @[]
     if routingFeedbackHook != nil:
-      try: feedback = routingFeedbackHook()
-      except Exception: feedback = @[]  ## effect boundary: callee raises are unannotated
+      feedback = routingFeedbackHook()
     let rankedSelections =
       if routingFeedbackHook != nil:
         reorderSelectionsWithFeedback(baseSelections, feedback)
@@ -271,8 +277,7 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
         selections
     var cooldowns: seq[ProviderCooldown] = @[]
     if routingProviderCooldownHook != nil:
-      try: cooldowns = routingProviderCooldownHook()
-      except Exception: cooldowns = @[]  ## effect boundary: callee raises are unannotated
+      cooldowns = routingProviderCooldownHook()
     let cooldownFilteredSelections =
       if routingProviderCooldownHook != nil:
         applyProviderCooldowns(providerHealthySelections, cooldowns, nowMs() div 1000)
@@ -280,8 +285,7 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
         providerHealthySelections
     var costs: seq[RouteCostHint] = @[]
     if routingCostHook != nil:
-      try: costs = routingCostHook()
-      except Exception: costs = @[]  ## effect boundary: callee raises are unannotated
+      costs = routingCostHook()
     let costAwareSelections =
       if routingCostHook != nil:
         reorderSelectionsWithCost(cooldownFilteredSelections, costs, prefs.budgetPolicy)
@@ -300,8 +304,7 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
         while true:
           tried.add(spec.apiKey)
           if routingHook != nil:
-            try: routingHook(selection, prefs, attemptReq)
-            except Exception: discard  ## effect boundary: callee raises are unannotated
+            routingHook(selection, prefs, attemptReq)
           let startedAt = nowMs()
           var response: Result[CompletionResponse, string]
           try:
@@ -317,14 +320,11 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
           if response.isErr:
             recordError(selection.providerName)
           if routingResultHook != nil:
-            try: routingResultHook(selection, elapsedMs, response.isOk)
-            except Exception: discard  ## effect boundary: callee raises are unannotated
+            routingResultHook(selection, elapsedMs, response.isOk)
           if credentialResultHook != nil and spec.apiKey.len > 0:
-            try:
-              credentialResultHook(selection.providerName, spec.apiKey,
-                                   response.isOk,
-                                   (if response.isErr: response.error else: ""))
-            except Exception: discard  ## effect boundary: callee raises are unannotated
+            credentialResultHook(selection.providerName, spec.apiKey,
+                                 response.isOk,
+                                 (if response.isErr: response.error else: ""))
           if response.isOk:
             return response
           lastErr = response.error
@@ -336,8 +336,7 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
              not isRetryableCredentialError(response.error):
             break
           let nextKey =
-            try: credentialNextHook(selection.providerName, spec.apiKey)
-            except Exception: ""  ## effect boundary: callee raises are unannotated
+            credentialNextHook(selection.providerName, spec.apiKey)
           if nextKey.len == 0 or nextKey in tried:
             break
           spec = spec.withApiKey(nextKey)
@@ -363,7 +362,8 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
       return err(lastErr)
 
 proc buildFallbackFn*(primary: CompleteFn; fallbacks: seq[CompleteFn]): CompleteFn =
-  result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
+  result = proc(req: CompletionRequest): Result[CompletionResponse, string]
+               {.gcsafe, raises: [].} =
     let r = primary(req)
     if r.isOk: return r
     for fb in fallbacks:

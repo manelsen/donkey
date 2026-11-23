@@ -388,11 +388,7 @@ proc makeBudgetedComplete(rt: SubagentRuntime;
       rt.usage.budgetError = budgetDecisionText(decision)
       rt.lastError = rt.usage.budgetError
       return err(rt.usage.budgetError)
-    let response =
-      try:
-        parentComplete(req)
-      except Exception as e:  ## effect boundary: callee raises are unannotated
-        err("subagent provider error: " & e.msg)
+    let response = parentComplete(req)
     if response.isErr:
       rt.lastError = response.error
       return response

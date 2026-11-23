@@ -378,8 +378,7 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
     result.clients.add(browserPort)
 
 proc makeProviderFn[A](a: A): CompleteFn =
-  result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
-    a.complete(req)
+  makeFn(a)
 
 proc openRouterKey(env: Environment): string =
   let openRouter = descriptorOr("openrouter")
@@ -987,15 +986,15 @@ func buildDaemonSessionServices(ctx: DaemonContext;
     buildProviderBundle,
     buildDenoSkillRuntime,
     buildSkillRuntimePolicyResolver(cfg),
-    routeRecordHook = proc(selection: ProviderSelection) {.gcsafe.} =
+    routeRecordHook = proc(selection: ProviderSelection) {.gcsafe, raises: [].} =
       ctx.runtime.routeHealth.recordChoice(selection),
-    routeResultHook = proc(selection: ProviderSelection; elapsedMs: int64; ok: bool) {.gcsafe.} =
+    routeResultHook = proc(selection: ProviderSelection; elapsedMs: int64; ok: bool) {.gcsafe, raises: [].} =
       ctx.runtime.routeHealth.recordResult(selection, elapsedMs, ok),
-    routeFeedbackHook = proc(): seq[RouteFeedback] {.gcsafe.} =
+    routeFeedbackHook = proc(): seq[RouteFeedback] {.gcsafe, raises: [].} =
       ctx.runtime.routeHealth.feedback(),
-    routeCostHook = proc(): seq[RouteCostHint] {.gcsafe.} =
+    routeCostHook = proc(): seq[RouteCostHint] {.gcsafe, raises: [].} =
       loadRouteCostHints(routeCostProviderIds()),
-    routeProviderCooldownHook = proc(): seq[ProviderCooldown] {.gcsafe.} =
+    routeProviderCooldownHook = proc(): seq[ProviderCooldown] {.gcsafe, raises: [].} =
       ctx.runtime.routeHealth.cooldowns(),
     subagentWorkspace = subagentWorkspacePort(),
     fs = newFsAdapter(),

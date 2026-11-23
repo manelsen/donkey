@@ -325,8 +325,15 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
   ## graph and the files. Only the origin-aware append is specific to the
   ## graph, because MEMORY.md has no place to keep an origin.
   result = MemoryRuntimePort(
-    hasProfile:       proc(userId: UserId): bool {.gcsafe.} = a.hasProfile(userId),
-    loadContext:      proc(userId: UserId): UserContext {.gcsafe.} = a.loadContext(userId),
+    ## The store's reads are not annotated (the graph backends below them
+    ## are not); the port's are, so the exceptions stop here, once, instead
+    ## of at every caller in the application layer.
+    hasProfile:       proc(userId: UserId): bool {.gcsafe, raises: [].} =
+                        try: a.hasProfile(userId)
+                        except Exception: false,  ## effect boundary: callee raises are unannotated
+    loadContext:      proc(userId: UserId): UserContext {.gcsafe, raises: [].} =
+                        try: a.loadContext(userId)
+                        except Exception: UserContext(userId: userId),  ## effect boundary: callee raises are unannotated
     saveUserMd:       proc(userId: UserId; content: string): Result[void, string]
                         {.gcsafe, raises: [].} =
                         a.saveUserMd(userId, content),
@@ -347,8 +354,13 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
                         {.gcsafe, raises: [].} = a.clearMemory(userId),
     resetBootstrap:   proc(userId: UserId): Result[void, string]
                         {.gcsafe, raises: [].} = a.resetBootstrap(userId),
-    saveSession:      proc(userId: UserId; sessionId: string; history: ConversationHistory) {.gcsafe.} =
-                        a.saveSession(userId, sessionId, history),
+    saveSession:      proc(userId: UserId; sessionId: string; history: ConversationHistory):
+                        Result[void, string] {.gcsafe, raises: [].} =
+                        try:
+                          a.saveSession(userId, sessionId, history)
+                          ok()
+                        except Exception as e:  ## effect boundary: callee raises are unannotated
+                          err("save session: " & e.msg),
     storedPreferences: proc(userId: UserId): Result[string, string]
                          {.gcsafe, raises: [].} =
                          a.storedPreferences(userId),
@@ -357,7 +369,7 @@ proc toRuntimePort*(a: MdFileAdapter): MemoryRuntimePort =
                            Result[seq[SessionHit], string]
                            {.gcsafe, raises: [].} =
                         a.searchSessions(userId, query, limit, includeMemory),
-    paddockDir:       proc(userId: UserId): string {.gcsafe.} = a.paddockDir(userId),
+    paddockDir:       proc(userId: UserId): string {.gcsafe, raises: [].} = a.paddockDir(userId),
   )
   when defined(withPostgres) or defined(withSqlite):
     if a.hasMagmaBackend:

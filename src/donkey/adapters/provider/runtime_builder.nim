@@ -96,12 +96,17 @@ func providerDefaultModelFor*(id: string): string =
   ## Default model id for a provider, from the descriptor table.
   descriptorOr(id).defaultModel
 
-proc makeFn[A](a: A): CompleteFn =
-  result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
-    a.complete(req)
+proc makeFn*[A](a: A): CompleteFn =
+  ## The adapter's `complete` as a `CompleteFn`: anything it raises becomes
+  ## an `err` here, so no caller of the function needs a handler.
+  result = proc(req: CompletionRequest): Result[CompletionResponse, string]
+               {.gcsafe, raises: [].} =
+    try: a.complete(req)
+    except Exception as e: err(e.msg)  ## effect boundary: callee raises are unannotated
 
 proc fallbackOnError*(primary: CompleteFn; fallback: CompleteFn): CompleteFn =
-  result = proc(req: CompletionRequest): Result[CompletionResponse, string] =
+  result = proc(req: CompletionRequest): Result[CompletionResponse, string]
+               {.gcsafe, raises: [].} =
     let primaryResp = primary(req)
     if primaryResp.isOk or fallback == nil:
       return primaryResp

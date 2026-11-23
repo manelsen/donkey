@@ -25,8 +25,8 @@ const LiveSourcesPrompt* =
 
 proc safeComplete*(fn: CompleteFn; req: CompletionRequest
                  ): Result[CompletionResponse, string] {.gcsafe, raises: [].} =
-  try: fn(req)
-  except Exception as e: err(e.msg)  ## effect boundary: callee raises are unannotated
+  ## `CompleteFn` does not raise; only a missing function is left to handle.
+  if fn == nil: err("no provider configured") else: fn(req)
 
 type NormalTurnPrep* = object
   history*:        ConversationHistory
