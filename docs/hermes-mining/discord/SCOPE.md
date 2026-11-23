@@ -62,9 +62,20 @@ sobre o gateway:
 ### O que o Donkey tem hoje
 
 `src/donkey/adapters/channel/discord.nim` mantém `session_id`, `seq` e
-`resume_gateway_url` e retoma a sessão no gateway. **Não há** cursor
-persistente, ledger de entrega, backfill nem dedup de mensagem no caminho do
-Discord — uma reconexão pode perder o intervalo ou re-despachar um turno.
+`resume_gateway_url` e retoma a sessão no gateway. Desde esta triagem:
+
+- **Cursor por usuário** (`discord_last_msg_id` nas preferências) e
+  **backfill de DMs no startup** (`checkDiscordOfflineMessages`), que filtra
+  pelo cursor e, sem cursor nem relógio de sessão, marca o histórico como visto
+  em vez de reprocessá-lo.
+- **Dedup de mensagem** (`isDuplicateMessage`, janela de 10 min, até 2048 ids,
+  em `core/channels/recent_ids`, o mesmo tipo do Slack): o replay de um RESUME
+  e a sobreposição do backfill com o tempo real não re-despacham um turno
+  (cobre `cee761ee4a`/`807bdc17f6`).
+
+Ainda **não há**: ledger de entrega, cursor que só avança depois da entrega
+final (hoje avança antes do despacho: at-most-once) e backfill numa reconexão
+que não conseguiu fazer RESUME.
 
 O Slack já tem um precedente interno de dedup com TTL
 (`tests/channel/t_slack.nim`, suíte "SlackAdapter event deduplication"), então

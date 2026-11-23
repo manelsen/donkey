@@ -487,6 +487,9 @@ proc handleDiscordEvent*(sm: var SessionManager;
   let daemonStartMs = env.daemonStartMs
   case event.kind
   of deMessage:
+    if dcAdapter.isDuplicateMessage(event.messageId):
+      logger.debug("discord: message " & event.messageId & " already handled")
+      return
     let userId = dcAdapter.resolver.resolve(ckDiscord, event.discordUserId)
     let inbound = InboundMessage(
       userId:    userId,
