@@ -20,6 +20,7 @@ import std/[os, strutils, tables, unittest]
 import chronos/asyncsync
 import results
 import donkey/app/session_ingress
+import donkey/ports/access
 import donkey/adapters/memory/md_file
 import donkey/app/session_manager
 import donkey/config/types
@@ -59,8 +60,8 @@ func makeSpec(
 proc makeServices(
   baseDir: string;
   outbox: AsyncQueue[OutboundMessage];
-  isRevoked: proc(u: UserId): bool {.gcsafe.} = nil;
-  isDmAllowed: proc(u: UserId): bool {.gcsafe.} = nil;
+  isRevoked: ProfileCheck = nil;
+  isDmAllowed: ProfileCheck = nil;
   dmPolicy: DmPolicy = DmPolicyOpen;
 ): SessionIngressServices =
   let memory = MdFileAdapter(paddocksDir: baseDir / "paddocks")
@@ -81,8 +82,7 @@ proc makeServices(
     sandboxImage = "",
     typingFn = nil,
     searchFn = nil,
-    isRevoked = isRevoked,
-    isDmAllowed = isDmAllowed,
+    access = AccessPort(isRevoked: isRevoked, isDmAllowed: isDmAllowed),
     dmPolicy = dmPolicy,
     http = HttpRuntimePort(),
   )
@@ -241,7 +241,7 @@ proc runTests*() =
       let outbox = newAsyncQueue[OutboundMessage]()
       let services = makeServices(
         base, outbox,
-        isRevoked = proc(u: UserId): bool {.gcsafe.} = u == UserId(UserIdOk),
+        isRevoked = proc(u: UserId): Result[bool, string] {.gcsafe, raises: [].} = ok(u == UserId(UserIdOk)),
       )
       var sm: SessionManager
       sm.init()
@@ -260,7 +260,7 @@ proc runTests*() =
       let outbox = newAsyncQueue[OutboundMessage]()
       let services = makeServices(
         base, outbox,
-        isDmAllowed = proc(u: UserId): bool {.gcsafe.} = false,
+        isDmAllowed = proc(u: UserId): Result[bool, string] {.gcsafe, raises: [].} = ok(false),
         dmPolicy = DmPolicyAllowlist,
       )
       var sm: SessionManager
@@ -282,7 +282,7 @@ proc runTests*() =
       let outbox = newAsyncQueue[OutboundMessage]()
       let services = makeServices(
         base, outbox,
-        isRevoked = proc(u: UserId): bool {.gcsafe.} = true,
+        isRevoked = proc(u: UserId): Result[bool, string] {.gcsafe, raises: [].} = ok(true),
       )
       var sm: SessionManager
       sm.init()

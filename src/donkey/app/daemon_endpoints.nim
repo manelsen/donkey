@@ -9,6 +9,8 @@ import ../core/security/dm_policy
 import ../domain/agent_message
 import ../domain/gateway/identity_pure
 import ../domain/message
+import ../ports/access
+export access
 import ../ports/ipc
 import ./http_gateway
 import ./route_health
@@ -27,9 +29,6 @@ type
     providers*:     seq[string]
     memoryBackend*: string
     memoryStats*:   MemoryStats
-
-  ProfileCheck* = proc(userId: UserId): Result[bool, string] {.gcsafe, raises: [].}
-    ## A question about the user's profile; an Err when it cannot be read.
 
   SessionTaskEnqueue* = proc(msg: InboundMessage; kind: TaskKind; payload: string)
                             {.gcsafe, raises: [CatchableError].}
@@ -81,6 +80,10 @@ proc authorizeUser*(userId: UserId; isRevoked, isDmAllowed: ProfileCheck;
   let allowed = isDmAllowed(userId).valueOr:
     return avRevoked
   if allowed: avAllowed else: avNotAllowed
+
+proc authorizeUser*(userId: UserId; access: AccessPort; dmPolicy: DmPolicy):
+                   AuthVerdict {.raises: [].} =
+  authorizeUser(userId, access.isRevoked, access.isDmAllowed, dmPolicy)
 
 proc runSessionAction*(sm: SessionManager; rawUserId: string; kind: TaskKind;
                        payload: string; authorize: AuthorizeFn;

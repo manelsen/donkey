@@ -16,6 +16,7 @@ import config/clawhub_registry
 import config/dotenv
 import config/loader
 import adapters/memory/md_file
+import adapters/memory/dm_allowlist
 import adapters/identity/identity_resolver
 import adapters/state/pairing_store
 import adapters/state/approval_store
@@ -77,8 +78,8 @@ proc ctlUserRevoke*(memory: MdFileAdapter; uuid: string; revoked: bool): Result[
   # Allowlist first: a failure must not leave Access changed without the
   # corresponding allowlist entry.
   let allowlistResult =
-    if revoked: memory.removeDmAllowed(userId)
-    else: memory.addDmAllowed(userId)
+    if revoked: dmAllowlistOf(memory.paddocksDir).disallow(userId)
+    else: dmAllowlistOf(memory.paddocksDir).allow(userId)
   if allowlistResult.isErr:
     echo "Error: " & allowlistResult.error
     return err(allowlistResult.error)
@@ -117,7 +118,7 @@ proc ctlPairApprove*(cfg: DonkeyConfig; memory: MdFileAdapter;
   let request = requests[idx]
   let resolver = newIdentityResolver(cfg.home / "identities.tsv")
   let userId = resolver.resolve(request.channel, request.rawId)
-  ? memory.addDmAllowed(userId)
+  ? dmAllowlistOf(memory.paddocksDir).allow(userId)
   requests.delete(idx)
   let saved = store.save(requests)
   if saved.isErr:

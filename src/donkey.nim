@@ -28,6 +28,7 @@ import donkey/core/command_registry
 import donkey/core/providers/smart_routing
 import donkey/adapters/memory/md_file
 import donkey/adapters/memory/reminder_store
+import donkey/adapters/memory/dm_allowlist
 when defined(withPostgres) or defined(withSqlite):
   import donkey/adapters/memory/multigraph_runtime
 import donkey/adapters/provider/openrouter
@@ -401,6 +402,10 @@ func routeCostProviderIds(): seq[string] =
     result.add descriptor.id
 
 proc buildGlobalSearchFn(memory: MdFileAdapter): SearchFn {.gcsafe.}
+
+func accessPortOf(memory: MdFileAdapter): AccessPort =
+  ## Revocation from the profile, DM access from the instance allowlist.
+  memory.toAccessPort(dmAllowlistOf(memory.paddocksDir))
 
 func defaultMagmaSqlitePath(home: string): string =
   home / "state" / "magma.sqlite"
@@ -880,21 +885,10 @@ proc setupIpcServer(cfg: DonkeyConfig;
         raise e
       except Exception as e:  ## effect boundary: callee raises are unannotated
         raise newException(CatchableError, "gateway inbound: " & e.msg, e)
-  ## The memory adapter answers with plain booleans and may raise; the
-  ## checks hand the policy a Result.
-  let isRevokedCheck: ProfileCheck =
-    proc(userId: UserId): Result[bool, string] {.gcsafe, raises: [].} =
-      try: ok(gatewayInboundMemory.isRevoked(userId))
-      except Exception as e:  ## effect boundary: callee raises are unannotated
-        err(e.msg)
-  let isDmAllowedCheck: ProfileCheck =
-    proc(userId: UserId): Result[bool, string] {.gcsafe, raises: [].} =
-      try: ok(gatewayInboundMemory.isDmAllowed(userId))
-      except Exception as e:  ## effect boundary: callee raises are unannotated
-        err(e.msg)
+  let gatewayAccess = accessPortOf(gatewayInboundMemory)
   let gwAuthorizeFn: AuthorizeFn =
     proc(userId: UserId): AuthVerdict {.gcsafe, raises: [].} =
-      authorizeUser(userId, isRevokedCheck, isDmAllowedCheck, cfg.dmPolicy)
+      authorizeUser(userId, gatewayAccess, cfg.dmPolicy)
   try:
     startIpcServer(sockPath, ipcStatusFn, ipcLogFn)
     log.info("IPC socket: " & sockPath)
@@ -985,8 +979,7 @@ func buildDaemonSessionServices(ctx: DaemonContext;
     cfg.sandboxImage,
     nil,
     ctx.services.globalSearchFn,
-    proc(userId: UserId): bool = memory.isRevoked(userId),
-    proc(userId: UserId): bool = memory.isDmAllowed(userId),
+    accessPortOf(memory),
     cfg.dmPolicy,
     newStdHttpAdapter(allowlist = cfg.webAllowlist,
                       proxy = cfg.env.get("DONKEY_WEB_PROXY").strip()).toRuntimePort(),
@@ -1544,9 +1537,10 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
                " interrupted deliveries marked failed")
   ## DM authorization is configured once, before any drainer/actor can consume
   ## an inbound message. Service builders stay side-effect free.
+  let access = accessPortOf(memory)
   ctx.runtime.sm.configureDmPolicy(
     cfg.dmPolicy,
-    proc(userId: UserId): bool {.gcsafe.} = memory.isDmAllowed(userId))
+    proc(userId: UserId): bool {.gcsafe.} = access.dmAllowed(userId))
   ctx.runtime.sm.configureGroupGate(GroupGate(
     allowedChats: parseChatIdList(cfg.env.get(EnvTelegramAllowedGroups))))
   let pairingStore = newPairingStore(cfg.home / "state" / "pairings.json")

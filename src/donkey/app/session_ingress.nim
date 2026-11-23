@@ -20,6 +20,7 @@ import ../domain/automation/schedule_pure
 import ../domain/message
 import ../ports/memory
 import ../ports/reminders
+import ../ports/access
 import ../ports/provider
 import ../ports/runtime_state
 import ../ports/tool
@@ -68,8 +69,7 @@ type
     providerRuntimeBuilder*:     ProviderRuntimeBuilder
     skillRuntimeBuilder*:        SkillRuntimeBuilder
     skillRuntimePolicyResolver*: SkillRuntimePolicyResolver
-    isRevoked*:                  proc(userId: UserId): bool {.gcsafe.}
-    isDmAllowed*:                proc(userId: UserId): bool {.gcsafe.}
+    access*:                     AccessPort
     dmPolicy*:                   DmPolicy
     routeRecordHook*:            proc(selection: ProviderSelection) {.gcsafe.}
     routeResultHook*:            proc(selection: ProviderSelection; elapsedMs: int64; ok: bool) {.gcsafe.}
@@ -178,8 +178,7 @@ func buildSessionIngressServices*(memory: MemoryRuntimePort;
                                   sandboxImage: string;
                                   typingFn: TypingFn;
                                   searchFn: SearchFn;
-                                  isRevoked: proc(userId: UserId): bool {.gcsafe.};
-                                  isDmAllowed: proc(userId: UserId): bool {.gcsafe.} = nil;
+                                  access: AccessPort;
                                   dmPolicy: DmPolicy = DmPolicyOpen;
                                   http: HttpRuntimePort;
                                   providerRuntimeBuilder: ProviderRuntimeBuilder = nil;
@@ -214,8 +213,7 @@ func buildSessionIngressServices*(memory: MemoryRuntimePort;
     providerRuntimeBuilder: providerRuntimeBuilder,
     skillRuntimeBuilder: skillRuntimeBuilder,
     skillRuntimePolicyResolver: skillRuntimePolicyResolver,
-    isRevoked: isRevoked,
-    isDmAllowed: isDmAllowed,
+    access: access,
     dmPolicy: dmPolicy,
     routeRecordHook: routeRecordHook,
     routeResultHook: routeResultHook,
@@ -299,7 +297,7 @@ proc startSessionIngress*(sm: var SessionManager;
     return
   if services.dmPolicy != DmPolicyOpen:
     let allowed =
-      services.isDmAllowed != nil and services.isDmAllowed(msg.userId)
+      services.access.dmAllowed(msg.userId)
     if not allowed:
       if taskKind == tkUserMsg and services.globalOutbox != nil:
         services.globalOutbox.putNoWait(OutboundMessage(
@@ -448,10 +446,10 @@ proc enqueueScheduledTask*(sm: var SessionManager;
     ## the HTTP bridge, and a scheduled firing has no turn token to match.
     return err("scheduled task dropped: api: users are request-scoped")
   let uid = UserId(uidText)
-  if services.isRevoked != nil and services.isRevoked(uid):
+  if services.access.revoked(uid):
     return err(ScheduledTaskRevokedError)
   if services.dmPolicy != DmPolicyOpen:
-    let allowed = services.isDmAllowed != nil and services.isDmAllowed(uid)
+    let allowed = services.access.dmAllowed(uid)
     if not allowed:
       return err(ScheduledTaskDroppedError)
 
@@ -495,7 +493,7 @@ proc handleSessionFallback*(sm:           var SessionManager;
                            msg:          InboundMessage;
                            services:     SessionIngressServices) {.gcsafe.} =
   ## Handles fallback message dispatch; rejects if user is revoked.
-  if services.isRevoked != nil and services.isRevoked(msg.userId):
+  if services.access.revoked(msg.userId):
     if services.globalOutbox != nil:
       services.globalOutbox.putNoWait(OutboundMessage(
         userId: msg.userId,
