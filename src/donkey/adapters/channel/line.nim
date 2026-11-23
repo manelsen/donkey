@@ -30,6 +30,7 @@
 import std/[net, json, os, strutils, tables, unicode]
 import ../../core/pipeops
 import ../../core/types
+import ../../core/utf8
 import ../../core/channels/flood_gate
 import ../../domain/message
 import ../../domain/channels/line_pure
@@ -225,7 +226,7 @@ func clipToLineUnits*(text: string; maxUnits: int): string =
     let step = runeLenAt(text, pos)
     if step <= 0:
       break
-    let width = (if int(runeAt(text, pos)) > 0xFFFF: 2 else: 1)
+    let width = utf16Width(runeAt(text, pos))
     if units + width > maxUnits:
       break
     units += width
@@ -261,7 +262,7 @@ func splitForLine*(text: string; maxChars = LineChunkChars): seq[string] =
   ## runes lets a string of emoji exceed the API limit by up to 2x.
   var units = newSeq[int](total + 1)
   for i in 0 ..< total:
-    units[i + 1] = units[i] + (if int(runes[i]) > 0xFFFF: 2 else: 1)
+    units[i + 1] = units[i] + utf16Width(runes[i])
   let totalUnits = units[^1]
   if totalUnits <= maxChars:
     return @[text]
