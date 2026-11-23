@@ -56,6 +56,10 @@ proc schedule*(s: ReminderStore; userId: UserId; channel: string;
   except CatchableError as e:
     err("schedule reminder: " & e.msg)
 
+proc readText(path: string): Result[string, string] {.raises: [].} =
+  try: ok(readFile(path))
+  except CatchableError as e: err(e.msg)
+
 proc parseReminder(text: string): Result[Reminder, string] {.raises: [].} =
   try:
     let j = parseJson(text)
@@ -72,24 +76,40 @@ proc parseReminder(text: string): Result[Reminder, string] {.raises: [].} =
   except CatchableError as e:
     err(e.msg)
 
+proc reminderAt(path: string; owner: UserId): Result[Reminder, string] {.raises: [].} =
+  ## The reminder in `path`, which must belong to the paddock it sits in and
+  ## carry its file's name as id. The paddock is the user's own workspace and
+  ## the file tools write there: a reminder naming another user would message
+  ## them, and one whose id is not its file would never be removed.
+  let reminder = ? parseReminder(? readText(path))
+  if reminder.userId != owner:
+    return err("belongs to " & $reminder.userId & ", not to the paddock owner")
+  if reminder.id != path.splitFile.name:
+    return err("id " & reminder.id & " is not the file name")
+  ok(reminder)
+
 proc due*(s: ReminderStore; now: int64): Result[seq[Reminder], string]
          {.raises: [].} =
+  ## A file that cannot be read or does not hold a valid reminder is logged
+  ## and skipped; only a paddocks directory that cannot be listed is an error.
   var found: seq[Reminder]
   try:
     if not dirExists(s.paddocksDir):
       return ok(found)
-    for _, paddock in walkDir(s.paddocksDir):
+    for kind, paddock in walkDir(s.paddocksDir):
+      if kind != pcDir: continue
+      let owner = UserId(paddock.extractFilename)
       let dir = paddock / "reminders"
       if not dirExists(dir): continue
       for _, path in walkDir(dir):
         if not path.endsWith(".json"): continue
-        let parsed = parseReminder(readFile(path))
-        if parsed.isErr:
-          stderr.writeLine("WARN reminder.parse: skipping " & path &
-                           " reason=" & parsed.error)
+        let reminder = reminderAt(path, owner)
+        if reminder.isErr:
+          stderr.writeLine("WARN reminder: skipping " & path &
+                           " reason=" & reminder.error)
           continue
-        if parsed.get.scheduledAt <= now:
-          found.add parsed.get
+        if reminder.get.scheduledAt <= now:
+          found.add reminder.get
     ok(found)
   except CatchableError as e:
     err("load reminders: " & e.msg)

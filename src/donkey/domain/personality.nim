@@ -292,16 +292,70 @@ func guidedDimensionMsg*(dk: DimensionKind): (string, seq[seq[(string, string)]]
 # The agent's name and traits are stored as `agent_*` keys of PREFERENCES.md,
 # so any memory backend that keeps the preferences keeps the identity too.
 
+func tomlBasicString(value: string): string =
+  ## `value` as a TOML basic string: quotes, backslashes and control
+  ## characters escaped, so PREFERENCES.md stays valid TOML whatever the name.
+  result = "\""
+  for c in value:
+    case c
+    of '"': result.add "\\\""
+    of '\\': result.add "\\\\"
+    of '\n': result.add "\\n"
+    of '\t': result.add "\\t"
+    of '\r': result.add "\\r"
+    of '\0' .. '\x08', '\x0B', '\x0C', '\x0E' .. '\x1F', '\x7F':
+      result.add "\\u" & toHex(ord(c), 4)
+    else: result.add c
+  result.add '"'
+
+func tomlValueText(raw: string): string =
+  ## The text of a `key = value` right-hand side: a basic string unescaped
+  ## (a comment after it ignored), a literal string as is, anything else up to
+  ## a comment. Not a TOML parser: enough for the values written above.
+  let v = raw.strip
+  if v.startsWith('"'):
+    var i = 1
+    while i < v.len:
+      let c = v[i]
+      if c == '"':
+        return
+      if c == '\\' and i + 1 < v.len:
+        inc i
+        case v[i]
+        of 'n': result.add '\n'
+        of 't': result.add '\t'
+        of 'r': result.add '\r'
+        of 'u':
+          if i + 4 < v.len:
+            try:
+              let code = parseHexInt(v[i + 1 .. i + 4])
+              if code < 0x80: result.add chr(code)
+              else: result.add v[i - 1 .. i + 4]
+            except ValueError:
+              result.add v[i - 1 .. i + 4]
+            i += 4
+        else: result.add v[i]
+      else:
+        result.add c
+      inc i
+    return  ## no closing quote: what was read
+  if v.startsWith('\''):
+    let close = v.find('\'', 1)
+    return if close > 0: v[1 ..< close] else: v[1 .. ^1]
+  let hash = v.find('#')
+  (if hash >= 0: v[0 ..< hash] else: v).strip
+
 func withAgentIdentity*(prefs: string; traits: PersonalityTraits;
                         name: string): string =
   ## `prefs` with the identity keys set, every other line kept.
   var lines = prefs.splitLines()
   func setKey(ls: var seq[string]; key, val: string) =
+    let line = key & " = " & tomlBasicString(val)
     for i in 0 ..< ls.len:
       if ls[i].startsWith(key & " ") or ls[i].startsWith(key & "="):
-        ls[i] = key & " = \"" & val & "\""
+        ls[i] = line
         return
-    ls.add(key & " = \"" & val & "\"")
+    ls.add(line)
   lines.setKey("agent_name",       name)
   lines.setKey("agent_energy",     traits.energy)
   lines.setKey("agent_tone",       traits.tone)
@@ -317,7 +371,7 @@ func agentIdentityOf*(prefs: string): (string, PersonalityTraits) =
     let parts = line.split('=', 1)
     if parts.len != 2: continue
     let k = parts[0].strip
-    let v = parts[1].strip.strip(chars = {'"'})
+    let v = tomlValueText(parts[1])
     case k
     of "agent_name":       name              = v
     of "agent_energy":     traits.energy     = v

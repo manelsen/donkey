@@ -81,9 +81,17 @@ proc authorizeUser*(userId: UserId; isRevoked, isDmAllowed: ProfileCheck;
     return avRevoked
   if allowed: avAllowed else: avNotAllowed
 
+proc noProfileFlag(userId: UserId): Result[bool, string] {.gcsafe, raises: [].} =
+  ok(false)
+
 proc authorizeUser*(userId: UserId; access: AccessPort; dmPolicy: DmPolicy):
                    AuthVerdict {.raises: [].} =
-  authorizeUser(userId, access.isRevoked, access.isDmAllowed, dmPolicy)
+  ## A port without a check answers like `revoked` and `dmAllowed` do:
+  ## nobody is revoked, nobody is on the allowlist.
+  authorizeUser(userId,
+                if access.isRevoked != nil: access.isRevoked else: noProfileFlag,
+                if access.isDmAllowed != nil: access.isDmAllowed else: noProfileFlag,
+                dmPolicy)
 
 proc runSessionAction*(sm: SessionManager; rawUserId: string; kind: TaskKind;
                        payload: string; authorize: AuthorizeFn;

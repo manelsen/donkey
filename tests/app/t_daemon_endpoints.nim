@@ -68,6 +68,12 @@ proc runTests*() =
       check authorizeUser(UserId("u"), notRevoked, allowed, DmPolicyAllowlist) == avAllowed
       check authorizeUser(UserId("u"), notRevoked, notAllowed, DmPolicyOpen) == avAllowed
 
+    test "a port without checks revokes nobody and allows nobody":
+      check authorizeUser(UserId("u"), AccessPort(), DmPolicyOpen) == avAllowed
+      check authorizeUser(UserId("u"), AccessPort(), DmPolicyAllowlist) == avNotAllowed
+      check authorizeUser(UserId("u"), AccessPort(isRevoked: revoked),
+                          DmPolicyAllowlist) == avRevoked
+
     test "a profile that cannot be read fails closed":
       check authorizeUser(UserId("u"), unreadable, allowed, DmPolicyOpen) == avRevoked
       check authorizeUser(UserId("u"), notRevoked, unreadable, DmPolicyAllowlist) == avRevoked

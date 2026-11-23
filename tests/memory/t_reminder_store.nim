@@ -68,6 +68,32 @@ proc runTests*() =
       check due.len == 1
       check due[0].message == "ok"
 
+    test "a reminder naming another user, or not named after its id, is skipped":
+      ## A user's file tools write in their own paddock, reminders/ included.
+      let dir = getTempDir() / "donkey_rem_forged"
+      removeDir(dir)
+      let port = newReminderStore(dir).toReminderPort()
+      discard port.schedule(UserId("mallory"), "ckTelegram", Now - 5, "mine").get
+      let remDir = dir / "mallory" / "reminders"
+      writeFile(remDir / "forged.json",
+        """{"id":"forged","userId":"alice","channel":"ckTelegram","scheduledAt":1,"message":"hi"}""")
+      writeFile(remDir / "renamed.json",
+        """{"id":"other","userId":"mallory","channel":"ckTelegram","scheduledAt":1,"message":"again"}""")
+      let due = port.due(Now).get
+      check due.len == 1
+      check due[0].message == "mine"
+
+    when defined(posix):
+      test "a file that cannot be read does not stop the others":
+        let dir = getTempDir() / "donkey_rem_unreadable"
+        removeDir(dir)
+        let port = newReminderStore(dir).toReminderPort()
+        discard port.schedule(UserId("user-a"), "ckTelegram", Now - 5, "ok").get
+        createDir(dir / "user-b" / "reminders" / "dir.json")  ## not a file
+        let due = port.due(Now).get
+        check due.len == 1
+        check due[0].message == "ok"
+
     test "a reminder id cannot leave the reminders directory":
       let port = freshStore("donkey_rem_escape")
       check port.remove(UserId("user-e"), "../USER").isErr

@@ -133,6 +133,17 @@ Quer sugestões de nome?"""
       check traits.tone == "seco"
       check traits.energy == "neutro"
 
+    test "a name with quotes or backslashes stays valid TOML and comes back whole":
+      for name in ["R2\"D2", "a\\d", "ends with \"", "tab\there"]:
+        let merged = "".withAgentIdentity(PersonalityTraits(), name)
+        check agentIdentityOf(merged)[0] == name
+      check "agent_name = \"R2\\\"D2\"" in "".withAgentIdentity(PersonalityTraits(), "R2\"D2")
+
+    test "a comment after the value is not part of it":
+      check agentIdentityOf("agent_name = \"Nova\" # nome")[0] == "Nova"
+      check agentIdentityOf("agent_name = 'Nova' # nome")[0] == "Nova"
+      check agentIdentityOf("agent_tone = seco # bare")[1].tone == "seco"
+
     test "preferences without an identity give an empty one":
       let (name, traits) = agentIdentityOf("language = \"en\"")
       check name == ""
