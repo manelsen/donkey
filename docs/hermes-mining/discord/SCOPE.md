@@ -103,6 +103,13 @@ sobre o gateway:
   download só sai para `cdn.discordapp.com`/`media.discordapp.net` por https
   (`9a177d6f4b`, `53da34a4fc`).
 
+- **Vida do gateway** (`heartbeatStep`, `closeAction`): heartbeat sem ACK até
+  o próximo fecha a conexão e retoma a sessão (antes, um socket meio aberto
+  deixava o bot mudo para sempre); op 1 é respondido na hora; close 4004 e
+  4010–4014 param o gateway em vez de reconectar em laço; 4007/4009 abrem
+  sessão nova. O socket é fechado ao fim de cada sessão (vazava um por
+  reconexão). No hermes isso vem do discord.py; aqui é o contrato do gateway.
+
 Ainda **não há**: ledger de entrega e cursor que só avança depois da entrega
 final (hoje avança antes do despacho: at-most-once).
 
