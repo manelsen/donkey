@@ -110,6 +110,12 @@ sobre o gateway:
   sessão nova. O socket é fechado ao fim de cada sessão (vazava um por
   reconexão). No hermes isso vem do discord.py; aqui é o contrato do gateway.
 
+- **429 e reenvio**: a espera do 429 vem do `Retry-After` ou do
+  `retry_after` do corpo (o do Discord é fracionário e fica na raiz; antes
+  caía sempre nos 5 s padrão); espera acima de 60 s falha em vez de prender
+  quem chamou. Toda criação de mensagem leva `nonce` + `enforce_nonce`, então
+  o POST que a camada HTTP repete depois de um timeout não duplica a mensagem.
+
 Ainda **não há**: ledger de entrega e cursor que só avança depois da entrega
 final (hoje avança antes do despacho: at-most-once).
 

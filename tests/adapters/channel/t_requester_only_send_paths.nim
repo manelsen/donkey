@@ -360,6 +360,43 @@ proc runTests*() =
       check dc.downloadFile("http://cdn.discordapp.com/a.png").isErr
       check dc.downloadFile("https://cdn.discordapp.com.evil.test/a.png").isErr
 
+    test "Discord: a retried message create carries the same nonce, so it is not posted twice":
+      ## A POST that timed out may already have created the message. With
+      ## `nonce` + `enforce_nonce`, Discord answers the retry with the message
+      ## it already has instead of creating a second one.
+      reset(failPaths = @["/channels/chan-n/messages"])
+      let dc = newDiscordAdapter("TOK", Tmp / "dc-n" / "ids.tsv", apiBase = base())
+      let uid = dc.resolver.resolve(ckDiscord, "55")
+      discard dc.send(OutboundMessage(userId: uid, text: "hello",
+                                      replyTo: "channel:chan-n"))
+      var nonces: seq[string]
+      for r in requests():
+        if "/channels/chan-n/messages" notin r.target: continue
+        let j = parseJson(r.body)
+        check j["enforce_nonce"].getBool
+        nonces.add(j["nonce"].getStr)
+      check nonces.len >= 2
+      for n in nonces:
+        check n == nonces[0]
+        check n.len in 1 .. 25
+
+    test "Discord: two different messages get different nonces":
+      reset()
+      let dc = newDiscordAdapter("TOK", Tmp / "dc-n2" / "ids.tsv", apiBase = base())
+      let uid = dc.resolver.resolve(ckDiscord, "56")
+      check dc.send(OutboundMessage(userId: uid, text: "one",
+                                    replyTo: "channel:chan-n2")).isOk
+      check dc.send(OutboundMessage(userId: uid, text: "two",
+                                    replyTo: "channel:chan-n2")).isOk
+      check dc.sendReturnId(OutboundMessage(userId: uid, text: "three",
+                                            replyTo: "channel:chan-n2")).isOk
+      var nonces: seq[string]
+      for r in requests():
+        if "/channels/chan-n2/messages" in r.target:
+          nonces.add(parseJson(r.body)["nonce"].getStr)
+      check nonces.len == 3
+      check nonces[0] != nonces[1] and nonces[1] != nonces[2] and nonces[0] != nonces[2]
+
     test "Discord: a message delivered twice is handled once":
       ## A gateway RESUME replays events, and the startup backfill can overlap
       ## the live stream: the second copy must not answer again.

@@ -15,7 +15,7 @@
 ##   Provider LLM calls (max ~10 s) block the event loop but not this thread.
 ##   Discord heartbeat interval is ~41 s; occasional missed beats are tolerated.
 
-import std/[json, net, os, random, strutils, tables, times, uri]
+import std/[json, net, os, random, strutils, sysrand, tables, times, uri]
 import ../../core/log
 import ../../core/app_meta
 import ../../core/commands/command_catalog
@@ -477,8 +477,33 @@ proc makeComponentRows(buttons: seq[seq[(string, string)]]): seq[JsonNode] =
     if comps.len > 0:
       result.add(%* {"type": 1, "components": comps})
 
+var gNonceCounter {.threadvar.}: uint32
+
+proc messageNonce(): string =
+  ## Unique per message create; reused by the HTTP layer's retries of the
+  ## same request, which is the point. Discord allows up to 25 characters.
+  ## A repeated nonce would make Discord answer with another message, so
+  ## the fallback (no OS randomness) is millisecond + counter + random,
+  ## which cannot repeat within this thread.
+  var bytes: array[10, byte]
+  if urandom(bytes):
+    for b in bytes: result.add(toHex(b, 2))
+  else:
+    inc gNonceCounter
+    result = toHex(epochMs(), 11) & toHex(gNonceCounter, 8) &
+             toHex(rand(int32.high), 6)
+  result = result[0 ..< min(result.len, 25)]
+
+func withNonce(body: JsonNode; nonce: string): JsonNode =
+  ## `enforce_nonce`: a create whose nonce Discord saw in the last minutes
+  ## returns that message instead of posting a duplicate. A POST retried
+  ## after a timeout may already have gone through.
+  result = body.copy()
+  result["nonce"] = %nonce
+  result["enforce_nonce"] = %true
+
 proc sendChunk(a: DiscordAdapter; chId, text: string): Result[void, string] =
-  let body    = %* {"content": text}
+  let body    = withNonce(%* {"content": text}, messageNonce())
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   let resp = ? a.http.post(a.base() & "/channels/" & chId & "/messages", $withSafeMentions(body), headers)
   if resp.status < 200 or resp.status >= 300:
@@ -510,7 +535,8 @@ proc sendKeyboard*(a: DiscordAdapter; userId: UserId;
   if discordId.len == 0:
     return err("DiscordAdapter.sendKeyboard: no Discord ID for " & $userId)
   let chId = ? a.dmChannelFor(discordId)
-  let body = %* {"content": text, "components": makeComponentRows(buttons)}
+  let body = withNonce(%* {"content": text, "components": makeComponentRows(buttons)},
+                       messageNonce())
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   let resp = ? a.http.post(a.base() & "/channels/" & chId & "/messages", $withSafeMentions(body), headers)
   if resp.status < 200 or resp.status >= 300:
@@ -690,7 +716,7 @@ proc sendReturnId*(a: DiscordAdapter; msg: OutboundMessage): Result[string, stri
   let shown = discordText(msg.text)
   let txt  = if shown.len > DiscordMaxChars: shown[0 ..< DiscordMaxChars]
              else: shown
-  var body    = %* {"content": txt}
+  var body    = withNonce(%* {"content": txt}, messageNonce())
   if msg.keyboard.len > 0:
     body.add("components", %makeComponentRows(msg.keyboard))
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
