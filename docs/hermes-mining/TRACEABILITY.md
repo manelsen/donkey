@@ -41,3 +41,4 @@ Casos portados avulsos; o Slack ainda não tem extração nem triagem própria.
 |---|---|---|---|---|
 | SL-001 | `38863322a4` | `tests/domain/channels/t_slack_pure.nim`, `tests/adapters/channel/t_requester_only_send_paths.nim` | `src/donkey/domain/channels/slack_pure.nim` (`neutralizeBroadcastMentions`, `withoutBroadcastMentions`), `src/donkey/adapters/channel/slack.nim` (`postJson`, `respondToUrl`) | portado |
 | SL-002 | `cac288a0c3`, `a019976430`, `e31466bc5d` | `tests/domain/channels/t_slack_pure.nim` | `src/donkey/domain/channels/slack_pure.nim` (`parseMessageEvent`) | portado |
+| SL-003 | `708f84c477`, `34e8d088c2` | `tests/channel/t_slack.nim` | `src/donkey/adapters/channel/slack.nim` (`eventDedupeKey`) | portado |
