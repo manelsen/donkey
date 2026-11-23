@@ -564,6 +564,35 @@ const
     "\"text\":{\"type\":\"string\",\"description\":\"Note to append for action=note\"}" &
     "},\"required\":[\"action\"]}"
 
+# ── ask_agent / convene_agents ────────────────────────────────────────────────
+const
+  AskAgentToolName* = "ask_agent"
+  AskAgentToolDescription* =
+    "Ask one of the user's named agents a question and get its answer back. " &
+    "The agent answers with its own role, notes and model, in one reply, " &
+    "without tools. Put what it needs to know in `context`: it does not see " &
+    "this turn."
+  AskAgentToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"name\":{\"type\":\"string\",\"description\":\"The agent's name\"}," &
+    "\"question\":{\"type\":\"string\"}," &
+    "\"context\":{\"type\":\"string\",\"description\":\"What the agent needs to know\"}" &
+    "},\"required\":[\"name\",\"question\"]}"
+
+  ConveneAgentsToolName* = "convene_agents"
+  ConveneAgentsToolDescription* =
+    "Put a question to several of the user's named agents and let them " &
+    "deliberate: each answers on its own, then, in each further round, reads " &
+    "the others' answers and revises. Returns the transcript; you are the " &
+    "lead and write the synthesis for the user. 2-5 agents, 1-3 rounds."
+  ConveneAgentsToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"agents\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}," &
+    "\"question\":{\"type\":\"string\"}," &
+    "\"context\":{\"type\":\"string\"}," &
+    "\"rounds\":{\"type\":\"integer\",\"description\":\"1-3, default 2\"}" &
+    "},\"required\":[\"agents\",\"question\"]}"
+
 # ── task ──────────────────────────────────────────────────────────────────────
 const
   TaskToolName* = "task"

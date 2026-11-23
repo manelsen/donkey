@@ -6,8 +6,11 @@
 ## memory.
 
 import std/[algorithm, os, strutils]
+import chronos
 import ../core/pipeops
 import ../core/tooling/native_tool_args
+import ../domain/message
+import ./provider_executor
 import ../domain/agents/named_agent_pure
 import ../ports/fs
 
@@ -99,3 +102,87 @@ proc performManageAgents*(fs: FsRuntimePort; paddockDir: string;
     return ok("Noted for @" & ctx.name & ".")
   else:
     err("Error: unknown action " & ctx.action)
+
+# ── Agents talking to each other ──────────────────────────────────────────────
+
+const
+  MinRoomAgents* = 2
+  MaxRoomAgents* = 5
+  MaxRoomRounds* = 3
+
+proc agentRequest(loaded: LoadedAgent; text: string): CompletionRequest =
+  ## One reply from the agent, without tools: no recursion through a room.
+  var h = newHistory()
+  h.addUser(text)
+  result = CompletionRequest(
+    system: namedAgentSystem(loaded.agent, loaded.notes, ""),
+    messages: h,
+    providerOverride: loaded.agent.provider,
+    modelOverride: loaded.agent.model)
+
+proc askOnce(callModel: AsyncCompleteFn; loaded: LoadedAgent;
+             text: string): Future[Result[string, string]] {.async.} =
+  if callModel == nil:
+    return err(Result[string, string], "no model available for agent calls")
+  var resp: Result[CompletionResponse, string]
+  try:
+    resp = await callModel(agentRequest(loaded, text))
+  except CancelledError as e:
+    raise e
+  except Exception as e:  ## effect boundary: callee raises are unannotated
+    return err(Result[string, string], "@" & loaded.agent.name & ": " & e.msg)
+  if resp.isErr:
+    return err(Result[string, string], "@" & loaded.agent.name & ": " & resp.error)
+  return ok(Result[string, string], resp.get.text)
+
+proc askNamedAgent*(fs: FsRuntimePort; paddockDir: string; callModel: AsyncCompleteFn;
+                    name, question, context: string): Future[Result[string, string]] {.async.} =
+  ## `ask_agent`: one question to one named agent, answered in its persona.
+  let loaded = loadNamedAgent(fs, paddockDir, name)
+  if loaded.isErr:
+    return err(Result[string, string], "Error: no agent @" & name & " (" & loaded.error & ")")
+  let text = (if context.strip.len > 0: "Context from the user's main assistant:\n" &
+                context.strip & "\n\n" else: "") & question
+  return await askOnce(callModel, loaded.get, text)
+
+proc conveneNamedAgents*(fs: FsRuntimePort; paddockDir: string; callModel: AsyncCompleteFn;
+                         names: seq[string]; question, context: string;
+                         rounds: int): Future[Result[string, string]] {.async.} =
+  ## `convene_agents`: each agent answers alone; in each further round each
+  ## reads the others' latest answers and revises. The caller is the lead and
+  ## writes the synthesis from the returned transcript.
+  if names.len < MinRoomAgents or names.len > MaxRoomAgents:
+    return err(Result[string, string], "Error: a room takes " & $MinRoomAgents & "-" & $MaxRoomAgents & " agents")
+  var agents: seq[LoadedAgent]
+  for name in names:
+    let loaded = loadNamedAgent(fs, paddockDir, name)
+    if loaded.isErr:
+      return err(Result[string, string], "Error: no agent @" & name)
+    agents.add(loaded.get)
+  let roundCount = max(1, min(rounds, MaxRoomRounds))
+  let opening = (if context.strip.len > 0: "Context:\n" & context.strip & "\n\n" else: "") &
+                "Question for the group: " & question
+  var latest = newSeq[string](agents.len)
+  var transcript = "# Room: " & question & "\n"
+  for round in 1 .. roundCount:
+    var futures: seq[Future[Result[string, string]]]
+    for i, agent in agents:
+      var prompt = opening
+      if round > 1:
+        prompt.add("\n\nThe other agents answered:\n")
+        for j, other in agents:
+          if j != i:
+            prompt.add("\n@" & other.agent.name & ":\n" & latest[j] & "\n")
+        prompt.add("\nReply briefly: where you agree, where you disagree, and " &
+                   "your revised answer.")
+      futures.add(askOnce(callModel, agent, prompt))
+    ## Every call of the round has started (an async proc runs up to its first
+    ## await, where the provider job goes to a worker); wait for all of them
+    ## before reading any, so none is left pending if one fails.
+    await allFutures(futures)
+    transcript.add("\n## Round " & $round & "\n")
+    for i, fut in futures:
+      let answer = fut.read()
+      latest[i] = if answer.isOk: answer.get else: "(no answer: " & answer.error & ")"
+      transcript.add("\n### @" & agents[i].agent.name & "\n" & latest[i] & "\n")
+  return ok(Result[string, string], transcript)
