@@ -661,6 +661,37 @@ proc runTests*() =
       check not isDiscordCdnUrl("https://user@cdn.discordapp.com/a.png")
       check not isDiscordCdnUrl("")
 
+  suite "discord_pure — gateway liveness":
+    test "no heartbeat is due before the interval":
+      check heartbeatStep(nowMs = 1_000, lastBeatMs = 0, intervalMs = 41_250,
+                          awaitingAck = true) == hbWait
+
+    test "a due heartbeat whose predecessor was acknowledged is sent":
+      check heartbeatStep(50_000, 0, 41_250, awaitingAck = false) == hbSend
+
+    test "a due heartbeat whose predecessor was never acknowledged means a dead link":
+      ## Discord: no ACK between two heartbeats is a zombie connection; close
+      ## it and resume, instead of reading timeouts forever.
+      check heartbeatStep(50_000, 0, 41_250, awaitingAck = true) == hbZombie
+
+    test "the close code is the first two bytes of the close payload":
+      check closeCodeOf("\x0F\xA4reason") == 4004
+      check closeCodeOf("\x03\xE8") == 1000
+      check closeCodeOf("") == 0
+      check closeCodeOf("x") == 0
+
+    test "auth and intent failures stop the gateway instead of reconnecting forever":
+      for code in [4004, 4010, 4011, 4012, 4013, 4014]:
+        check closeAction(code) == caStop
+
+    test "an invalid sequence or a timed-out session starts a new session":
+      check closeAction(4007) == caNewSession
+      check closeAction(4009) == caNewSession
+
+    test "anything else resumes":
+      for code in [0, 1000, 1001, 1006, 4000, 4001, 4002, 4003, 4005, 4008]:
+        check closeAction(code) == caResume
+
   suite "discord_pure.toInbound — conversion":
 
     test "message converts with correct fields":

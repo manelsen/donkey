@@ -247,6 +247,43 @@ func isDiscordCdnUrl*(url: string): bool =
     parsed.password.len == 0 and parsed.port in ["", "443"] and
     parsed.hostname.toLowerAscii() in ["cdn.discordapp.com", "media.discordapp.net"]
 
+# ── Gateway liveness ──────────────────────────────────────────────────────────
+
+type
+  HeartbeatStep* = enum
+    hbWait    ## not due yet
+    hbSend    ## due, and the previous heartbeat was acknowledged
+    hbZombie  ## due, and the previous one never was: the link is dead
+
+  CloseAction* = enum
+    caResume      ## reconnect and RESUME the same session
+    caNewSession  ## reconnect with a fresh IDENTIFY (the session is gone)
+    caStop        ## reconnecting cannot help (bad token, disallowed intents)
+
+func heartbeatStep*(nowMs, lastBeatMs: int64; intervalMs: int;
+                    awaitingAck: bool): HeartbeatStep =
+  ## Discord: a heartbeat not ACKed by the time the next one is due means a
+  ## zombie connection, to be closed and resumed. Without this a half-open
+  ## socket only ever times out its reads and the bot goes silent.
+  if nowMs - lastBeatMs < intervalMs: hbWait
+  elif awaitingAck: hbZombie
+  else: hbSend
+
+func closeCodeOf*(payload: string): int =
+  ## A WebSocket close frame starts with a big-endian status code.
+  if payload.len < 2: return 0
+  (ord(payload[0]) shl 8) or ord(payload[1])
+
+func closeAction*(code: int): CloseAction =
+  ## Gateway close codes: 4004 is a bad token and 4010-4014 bad shard or
+  ## intents settings; retrying only hammers the gateway. 4007 (invalid seq)
+  ## and 4009 (session timed out) end the session, so the next one must
+  ## IDENTIFY. Everything else, including network drops, may resume.
+  case code
+  of 4004, 4010, 4011, 4012, 4013, 4014: caStop
+  of 4007, 4009: caNewSession
+  else: caResume
+
 # ── Mentions ──────────────────────────────────────────────────────────────────
 
 func mentionForms(botId: string): array[2, string] =

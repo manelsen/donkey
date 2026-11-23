@@ -103,6 +103,8 @@ type
     lastSeq:      int     ## last dispatch sequence number
     sessionId:    string
     resumeUrl:    string  ## provided in READY for resume
+    awaitingAck:  bool    ## a heartbeat was sent and not yet ACKed (op 11)
+    stopped:      bool    ## a close code reconnecting cannot fix (bad token, intents)
   DiscordReconnect = object of IOError  ## OP=7 is normal, not an error
 
 proc epochMs(): int64 =
@@ -113,6 +115,7 @@ proc sendHeartbeat(state: var GatewayState) =
   let payload = if state.lastSeq > 0: $state.lastSeq else: "null"
   state.ws.sendFrame("{\"op\":1,\"d\":" & payload & "}")
   state.lastBeatMs = epochMs()
+  state.awaitingAck = true
 
 func messageEventOf*(r: DsParseResult): DiscordRawEvent =
   ## The event of a parsed MESSAGE_CREATE: live (gateway) and recovered
@@ -215,6 +218,7 @@ proc runGatewaySession(token: string; state: var GatewayState; logger: Logger) =
     raise newException(IOError, "Discord hello failed: " & helloRes.error)
   let hello = parseJson(helloRes.get().data)
   state.heartbeatMs = hello["d"]["heartbeat_interval"].getInt(41250)
+  state.awaitingAck = false
   logger.debug("discord: hello, heartbeat=" & $state.heartbeatMs)
 
   ## 2. Send first heartbeat with random jitter (Discord requirement).
@@ -246,8 +250,13 @@ proc runGatewaySession(token: string; state: var GatewayState; logger: Logger) =
 
   ## 4. Main receive loop.
   while true:
-    if epochMs() - state.lastBeatMs >= state.heartbeatMs:
-      state.sendHeartbeat()
+    case heartbeatStep(epochMs(), state.lastBeatMs, state.heartbeatMs,
+                       state.awaitingAck)
+    of hbWait: discard
+    of hbSend: state.sendHeartbeat()
+    of hbZombie:
+      logger.warn("discord: heartbeat not acknowledged; reconnecting to resume")
+      break
 
     try:
       let frameRes = state.ws.recvFrame()
@@ -301,20 +310,46 @@ proc runGatewaySession(token: string; state: var GatewayState; logger: Logger) =
           sleep(1000 + rand(4000))
           break
 
-        of 11: discard  ## Heartbeat ACK
+        of 1:  ## The gateway asks for a heartbeat now
+          state.sendHeartbeat()
+        of 11:  ## Heartbeat ACK
+          state.awaitingAck = false
         else:  discard
 
       of WsOpcodePing:
         state.ws.sendFrame(frame.data, WsOpcodePong)
 
       of WsOpcodeClose:
-        logger.warn("discord: websocket closed")
+        let code = closeCodeOf(frame.data)
+        case closeAction(code)
+        of caStop:
+          logger.error("discord: gateway closed with " & $code &
+                       " (token or intents rejected); not reconnecting")
+          state.stopped = true
+        of caNewSession:
+          logger.warn("discord: gateway closed with " & $code &
+                      "; starting a new session")
+          state.sessionId = ""; state.resumeUrl = ""
+        of caResume:
+          logger.warn("discord: websocket closed (" & $code & ")")
         break
 
       else: discard
 
     except TimeoutError:
       discard  ## no data — loop back to heartbeat check
+
+proc runGatewaySessionClosing(token: string; state: var GatewayState;
+                              logger: Logger) =
+  ## The socket is closed however the session ends; before, every reconnect
+  ## left the previous one open.
+  try:
+    runGatewaySession(token, state, logger)
+  finally:
+    ## `wsConnect` may have failed before a socket existed.
+    if not state.ws.sock.isNil:
+      state.ws.wsClose()
+      state.ws = WsClient()
 
 type GatewayArgs = object
   token:  string
@@ -327,8 +362,11 @@ proc discordGatewayThread(arg: GatewayArgs) {.thread.} =
   var backoffMs = 1000
   while true:
     try:
-      runGatewaySession(arg.token, state, arg.logger)
+      runGatewaySessionClosing(arg.token, state, arg.logger)
+      if state.stopped:
+        return
       backoffMs = 1000 # Reset backoff on successful session
+      sleep(1000)  # a session the gateway keeps closing must not spin
     except DiscordReconnect:
       # OP=7 is normal - Discord requests reconnect for load balancing
       arg.logger.info("discord: reconnecting…")
