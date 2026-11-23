@@ -27,11 +27,16 @@ proc readCappedResult(path: string; maxBytes: int): Result[string, string]
     if not open(f, path, fmRead):
       return err("cannot read file: " & path)
     defer: close(f)
-    var data = newString(maxBytes + 1)
-    let got = if data.len > 0: readBuffer(f, addr data[0], data.len) else: 0
-    if got > maxBytes:
+    ## In chunks, so the buffer grows with the file, not with the cap.
+    var data = ""
+    var chunk = newString(64 * 1024)
+    while data.len <= maxBytes:
+      let want = min(chunk.len, maxBytes + 1 - data.len)
+      let got = readBuffer(f, addr chunk[0], want)
+      if got <= 0: break
+      data.add chunk[0 ..< got]
+    if data.len > maxBytes:
       return err("file exceeds " & $maxBytes & " bytes")
-    data.setLen(got)
     ok(data)
   except CatchableError as e:
     err("cannot read file: " & e.msg)
@@ -51,7 +56,7 @@ proc isSymlinkAt(path: string): bool {.gcsafe, raises: [].} =
 proc listDirResult(path: string): Result[seq[FsEntry], string] {.gcsafe, raises: [].} =
   var entries: seq[FsEntry]
   try:
-    for kind, entry in walkDir(path):
+    for kind, entry in walkDir(path, checkDir = true):  ## an unreadable directory is an error, not empty
       var item = FsEntry(path: entry)
       item.kind = case kind
         of pcDir: fekDir

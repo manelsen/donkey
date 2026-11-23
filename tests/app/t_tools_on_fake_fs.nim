@@ -28,6 +28,10 @@ proc fakeFs(d: Disk): FsRuntimePort =
     if path in d.files: ok(d.files.getOrDefault(path).len.int64) else: err("no file")
   result.readFile = proc(path: string): Result[string, string] {.gcsafe, raises: [].} =
     if path in d.files: ok(d.files.getOrDefault(path)) else: err("no file")
+  result.readCapped = proc(path: string; maxBytes: int): Result[string, string] {.gcsafe, raises: [].} =
+    if path notin d.files: return err("no file")
+    let text = d.files.getOrDefault(path)
+    if text.len > maxBytes: err("too big") else: ok(text)
   result.listDir = proc(path: string): Result[seq[FsEntry], string] {.gcsafe, raises: [].} =
     var entries: seq[FsEntry]
     for f in d.files.keys:

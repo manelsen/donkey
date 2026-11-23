@@ -74,7 +74,8 @@ proc performTranscribe*(fs: FsRuntimePort; path: string; http: HttpRuntimePort;
   if size > maxBytes:
     return errorText("transcribe_audio", "file too large (" & $size &
                      " bytes, limit " & $maxBytes & ")")
-  let data = fs.readFile(path).valueOr:
+  ## Capped too: the file may have grown since its size was read.
+  let data = fs.readCapped(path, maxBytes).valueOr:
     return errorText("transcribe_audio", error)
 
   var fields: seq[(string, string)] = @[("model", model)]

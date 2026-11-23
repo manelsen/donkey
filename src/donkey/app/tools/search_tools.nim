@@ -139,7 +139,7 @@ proc grepFile(fs: FsRuntimePort; path, pattern: string; max: int;
   if size > GrepMaxFileBytes:
     searchLog().warn("grep: skipping " & path & " (" & $size & " bytes)")
     return
-  let text = fs.readFile(path).valueOr:
+  let text = fs.readCapped(path, GrepMaxFileBytes).valueOr:  ## it may have grown
     searchLog().warn("grep: cannot read " & path & ": " & error)
     return
   var lineNum = 0
