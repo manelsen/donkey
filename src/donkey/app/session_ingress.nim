@@ -21,6 +21,7 @@ import ../domain/message
 import ../ports/memory
 import ../ports/reminders
 import ../ports/process
+import ../ports/attachment_store
 import ../ports/access
 import ../ports/provider
 import ../ports/runtime_state
@@ -55,6 +56,7 @@ type
     memory*:                     MemoryRuntimePort
     reminders*:                  ReminderPort
     process*:                    ProcessRuntimePort
+    attachments*:                AttachmentStorePort
     completeFn*:                 CompleteFn
     streamFactory*:                   StreamFactory
     toolClients*:                seq[ToolRuntimePort]
@@ -194,13 +196,15 @@ func buildSessionIngressServices*(memory: MemoryRuntimePort;
                                   subagentWorkspace: SubagentWorkspacePort = SubagentWorkspacePort();
                                   fs: FsRuntimePort = unavailableFs();
                                   reminders: ReminderPort = ReminderPort();
-                                  process: ProcessRuntimePort = unavailableProcess()): SessionIngressServices =
+                                  process: ProcessRuntimePort = unavailableProcess();
+                                  attachments: AttachmentStorePort = unavailableAttachments()): SessionIngressServices =
   ## Constructs SessionIngressServices.
   SessionIngressServices(
     cfg: cfg,
     memory: memory,
     reminders: reminders,
     process: process,
+    attachments: attachments,
     completeFn: completeFn,
     streamFactory: streamFactory,
     toolClients: toolClients,
@@ -248,7 +252,8 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                                http: HttpRuntimePort;
                                fs: FsRuntimePort = unavailableFs();
                                reminders: ReminderPort = ReminderPort();
-                               process: ProcessRuntimePort = unavailableProcess()) {.gcsafe.} =
+                               process: ProcessRuntimePort = unavailableProcess();
+                               attachments: AttachmentStorePort = unavailableAttachments()) {.gcsafe.} =
   ## Spawns an orchestrator actor if the ingress decision requires starting a session runtime.
   if not plan.decision.startsSessionRuntime:
     return
@@ -270,7 +275,7 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                              asyncCompleteFn = bootstrap.asyncCompleteFn,
                              subagentWorkspace = bootstrap.subagentWorkspace,
                              fs = fs, env = cfg.env, reminders = reminders,
-                             process = process)
+                             process = process, attachments = attachments)
 
 func sessionTaskMsg(msg: InboundMessage; msgId: string;
                      recentContext = ""): AgentMessage =
@@ -384,7 +389,7 @@ proc startSessionIngress*(sm: var SessionManager;
                            services.sandboxMode, services.sandboxRuntimeCmd, services.sandboxImage,
                            services.typingFn, services.searchFn,
                            services.http, services.fs, services.reminders,
-                           services.process)
+                           services.process, services.attachments)
   if result.plan.decision.startsNewSession:
     services.log.info("new session: " & result.plan.uid)
   elif result.plan.decision.rebuildsSessionRuntime:

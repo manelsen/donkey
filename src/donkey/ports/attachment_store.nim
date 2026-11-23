@@ -15,3 +15,12 @@ type
   AttachmentStorePort* = object
     save*: proc(directory, fileName: string; data: seq[byte]):
             Result[SavedAttachment, string] {.gcsafe, raises: [].}
+
+func unavailableAttachments*(): AttachmentStorePort =
+  ## Fail-closed default: a zeroed proc field would crash.
+  AttachmentStorePort(save: proc(directory, fileName: string; data: seq[byte]):
+      Result[SavedAttachment, string] {.gcsafe, raises: [].} =
+    err("attachment store unavailable"))
+
+func orUnavailable*(p: AttachmentStorePort): AttachmentStorePort =
+  if p.save == nil: unavailableAttachments() else: p

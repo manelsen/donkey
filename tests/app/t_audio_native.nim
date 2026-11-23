@@ -4,6 +4,7 @@ import std/[json, os, sequtils, strutils, unittest]
 import chronos
 import donkey/config/environment
 import donkey/adapters/filesystem/fs_adapter
+import donkey/adapters/filesystem/attachment_store
 import donkey/adapters/memory/md_file
 import donkey/app/native_tools
 import donkey/app/session_bootstrap
@@ -44,6 +45,7 @@ proc baseCtx(paddock: string; http: HttpRuntimePort): NativeCtx =
     log:        newLogger("test.audio", lvlError),
     paddockDir: paddock,
     fs:         newFsAdapter(),
+    attachments: newAttachmentStore(),
   )
 
 proc freshDir(tag: string): string =

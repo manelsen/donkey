@@ -1000,6 +1000,7 @@ func buildDaemonSessionServices(ctx: DaemonContext;
     fs = newFsAdapter(),
     reminders = newReminderStore(memory.paddocksDir).toReminderPort(),
     process = newProcessAdapter(),
+    attachments = newAttachmentStore(),
   )
 
 proc handleDaemonSessionFallback(runtime:  var DaemonRuntime;
