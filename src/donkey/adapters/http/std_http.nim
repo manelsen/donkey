@@ -5,7 +5,7 @@
 ## std/httpclient bounded each read only, so a server that dripped bytes held
 ## the caller forever.
 
-import std/[httpcore, strutils, os, json]
+import std/[httpcore, strutils, os, json, options]
 import ../../ports/http
 import ../../core/pipeops
 import ./circuit_breakers
@@ -66,6 +66,48 @@ func maxAttempts*(a: StdHttpAdapter; kind: RetryKind): int =
   else:
     a.maxRetries
 
+const
+  RateLimitDefaultWaitMs* = 5_000
+  RateLimitMaxWaitMs*     = 60_000
+    ## Longer waits (a global ban can ask for hours) are not slept: the call
+    ## fails with the 429 instead of holding its caller.
+  RateLimitMinWaitMs      = 100
+
+func secondsToMs(node: JsonNode): Option[int] =
+  case node.kind
+  of JInt: some(node.getInt * 1000)
+  of JFloat: some(int(node.getFloat * 1000))
+  else: none(int)
+
+proc rateLimitWaitMs*(resp: HttpResponse): Option[int] =
+  ## How long a 429 asks the caller to wait: the `Retry-After` header, else
+  ## Telegram's `parameters.retry_after` or Discord's top-level (fractional)
+  ## `retry_after`, all in seconds; 5 s without a hint. `none` when the wait
+  ## exceeds `RateLimitMaxWaitMs`.
+  var waitMs = none(int)
+  for (name, value) in resp.headers:
+    if name.toLowerAscii == "retry-after":
+      try:
+        waitMs = some(int(parseFloat(value.strip) * 1000))
+      except ValueError:
+        discard
+      break
+  if waitMs.isNone:
+    try:
+      let j = parseJson(resp.body)
+      if j.kind == JObject:
+        let params = j.getOrDefault("parameters")
+        if params != nil and params.kind == JObject and
+            params.hasKey("retry_after"):
+          waitMs = secondsToMs(params["retry_after"])
+        elif j.hasKey("retry_after"):
+          waitMs = secondsToMs(j["retry_after"])
+    except JsonParsingError, ValueError:
+      discard
+  let ms = waitMs.get(RateLimitDefaultWaitMs)
+  if ms > RateLimitMaxWaitMs: none(int)
+  else: some(max(ms, RateLimitMinWaitMs))
+
 proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
                       headers: seq[HttpHeader];
                       redirectLimit = 5;
@@ -102,16 +144,13 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
           ## Flood control is not a transport failure, so it must not open the
           ## circuit breaker for the host.
           return ok(val)
-        var retryAfterMs = 5000 # default 5s
-        try:
-          let j = parseJson(val.body)
-          if j.hasKey("parameters") and j["parameters"].hasKey("retry_after"):
-            retryAfterMs = j["parameters"]["retry_after"].getInt(5) * 1000
-        except JsonParsingError:
-          discard # usa default
+        let wait = rateLimitWaitMs(val)
         lastError = "HTTP 429 (rate limited)"
+        if wait.isNone:
+          return err("HTTP 429 rate limited for longer than " &
+                     $(RateLimitMaxWaitMs div 1000) & " s")
         if attempt < attemptLimit:
-          sleep(retryAfterMs)
+          sleep(wait.get)
           continue
         ## Rate limiting is not a host failure: keep the breaker closed.
         return err("HTTP 429 rate limited after " & $attemptLimit & " attempts. Last error: " & lastError)
