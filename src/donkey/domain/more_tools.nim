@@ -694,15 +694,30 @@ const
 const
   SessionSearchToolName* = "session_search"
   SessionSearchToolDescription* =
-    "Search your own past session transcripts and MEMORY.md for decisions, preferences and " &
-    "facts. Results are isolated per user, read-only and ranked by lexical relevance and recency. " &
-    "Use this instead of loading the entire history into context."
+    "Search the user's whole conversation history (every past session and " &
+    "what was compacted out of this one), plus MEMORY.md. Three ways in: " &
+    "`phrase` finds every message holding an exact string, with neighbouring " &
+    "messages, newest first and paginated (use `count` first to see how many); " &
+    "best for strings you have already seen: names, numbers, dates, IDs, " &
+    "error text. `query` ranks conversations by its terms when you have no " &
+    "exact string. `session_id` with `around` reads the messages around a hit. " &
+    "Narrow with `since`/`until` (7d, 24h, 2w or YYYY-MM-DD). Case and accents " &
+    "are ignored. Results are this user's only and read-only."
   SessionSearchToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
-    "\"query\":{\"type\":\"string\",\"description\":\"Terms or phrase to search for\"}," &
-    "\"limit\":{\"type\":\"integer\",\"description\":\"Max results (default: 10, max: 50)\"}," &
-    "\"include_memory\":{\"type\":\"boolean\",\"description\":\"Include MEMORY.md (default: true)\"}" &
-    "},\"required\":[\"query\"]}"
+    "\"phrase\":{\"type\":\"string\",\"description\":\"Exact string to find in every message\"}," &
+    "\"query\":{\"type\":\"string\",\"description\":\"Terms to rank conversations by\"}," &
+    "\"session_id\":{\"type\":\"string\",\"description\":\"Read this session\"}," &
+    "\"around\":{\"type\":\"integer\",\"description\":\"With session_id: the message # to read around (default: the last)\"}," &
+    "\"since\":{\"type\":\"string\",\"description\":\"7d, 24h, 2w or YYYY-MM-DD\"}," &
+    "\"until\":{\"type\":\"string\",\"description\":\"7d, 24h, 2w or YYYY-MM-DD\"}," &
+    "\"limit\":{\"type\":\"integer\",\"description\":\"phrase: matches per page (10, max 30); query: conversations (8, max 20)\"}," &
+    "\"offset\":{\"type\":\"integer\",\"description\":\"phrase: continue from this match\"}," &
+    "\"context\":{\"type\":\"integer\",\"description\":\"phrase: neighbouring messages per side (0-3); session_id: radius (default 5, max 20)\"}," &
+    "\"count\":{\"type\":\"boolean\",\"description\":\"phrase: only count matches per session\"}," &
+    "\"order\":{\"type\":\"string\",\"enum\":[\"newest\",\"oldest\"]}," &
+    "\"include_memory\":{\"type\":\"boolean\",\"description\":\"query: also search MEMORY.md (default true)\"}" &
+    "}}"
 
 # ── memory_ingest ─────────────────────────────────────────────────────────────
 const

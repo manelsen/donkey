@@ -14,8 +14,17 @@ type
     question*: string
 
   SessionSearchContext* = object
-    query*:         string
-    limit*:         int
+    query*:         string   ## ranked terms
+    phrase*:        string   ## exact phrase
+    sessionId*:     string   ## read around a message of this session
+    around*:        int64
+    since*:         string
+    until*:         string
+    limit*:         int      ## 0 = the mode's default
+    offset*:        int
+    context*:       int      ## -1 = the mode's default
+    countOnly*:     bool
+    oldestFirst*:   bool
     includeMemory*: bool
 
   MemoryIngestContext* = object
@@ -218,28 +227,33 @@ func stringArrayField*(j: JsonNode; key: string): Result[seq[string], string] =
 # ── memory, subagents, session ────────────────────────────────────────────────
 
 func parseSessionSearchContext*(j: JsonNode): Result[SessionSearchContext, string] =
-  let queryNode = j.getOrDefault("query")
-  let query =
-    if queryNode != nil and queryNode.kind == JString:
-      queryNode.getStr("").strip()
-    else:
-      ""
-  if query.len == 0:
-    return err("'query' is required")
-  if query.len > SessionSearchMaxQueryChars:
-    return err("query exceeds " & $SessionSearchMaxQueryChars & " characters")
-  let limitNode = j.getOrDefault("limit")
-  let limit =
-    if limitNode != nil and limitNode.kind == JInt:
-      clampSessionSearchLimit(limitNode.getInt())
-    else:
-      SessionSearchDefaultLimit
-  let memoryNode = j.getOrDefault("include_memory")
-  let includeMemory =
-    if memoryNode != nil and memoryNode.kind == JBool: memoryNode.getBool()
-    else: true
-  ok(SessionSearchContext(query: query, limit: limit,
-                          includeMemory: includeMemory))
+  func str(key: string): string =
+    let n = j.getOrDefault(key)
+    if n != nil and n.kind == JString: n.getStr("").strip() else: ""
+  func int64Of(key: string): int64 =
+    let n = j.getOrDefault(key)
+    if n != nil and n.kind == JInt: n.getBiggestInt().int64 else: 0
+  func boolOf(key: string; fallback: bool): bool =
+    let n = j.getOrDefault(key)
+    if n != nil and n.kind == JBool: n.getBool() else: fallback
+  let query = str("query")
+  let phrase = str("phrase")
+  let sessionId = str("session_id")
+  if query.len == 0 and phrase.len == 0 and sessionId.len == 0:
+    return err("'query' is required (or 'phrase' for an exact string, or " &
+               "'session_id' to read a session)")
+  for (name, value) in [("query", query), ("phrase", phrase)]:
+    if value.len > SessionSearchMaxQueryChars:
+      return err(name & " exceeds " & $SessionSearchMaxQueryChars & " characters")
+  let order = str("order").toLowerAscii
+  if order notin ["", "newest", "oldest"]:
+    return err("order must be newest or oldest")
+  ok(SessionSearchContext(query: query, phrase: phrase, sessionId: sessionId,
+    around: int64Of("around"), since: str("since"), until: str("until"),
+    limit: max(0, int(int64Of("limit"))), offset: max(0, int(int64Of("offset"))),
+    context: (if j.getOrDefault("context") != nil and j["context"].kind == JInt:
+                max(0, int(int64Of("context"))) else: -1), countOnly: boolOf("count", false),
+    oldestFirst: order == "oldest", includeMemory: boolOf("include_memory", true)))
 
 func parseMemoryIngestContext*(j: JsonNode): Result[MemoryIngestContext, string] =
   let path = j.getOrDefault("path").getStr("").strip()

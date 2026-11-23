@@ -69,6 +69,7 @@ import ../ports/memory
 import ../ports/reminders
 import ../ports/schedules
 import ./user_schedules
+import ./conversation_search
 import ../ports/process
 import ../ports/attachment_store
 import ../core/tooling/native_tool_args
@@ -793,30 +794,36 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
     return rewindResult.valueOr:
       handledError(error)
   of SessionSearchToolName:
+    ## The main agent searches its own session too (compaction removed part
+    ## of it from the context); a subagent never sees its parent's.
     let searchCtx = parseSessionSearchContext(j).valueOr:
       return handledError(error)
-    if ctx.memory.searchSessions == nil:
-      return handledError("Error: session search is unavailable for this backend.")
-    let hitsRes = ctx.memory.searchSessions(
-      ctx.uid, searchCtx.query, searchCtx.limit, searchCtx.includeMemory)
-    if hitsRes.isErr:
-      return handledError("Error: " & hitsRes.error)
-    var hits = hitsRes.get()
-    if ctx.scopeSessionId.len > 0:
-      hits = hits.filterIt(it.sessionId != ctx.scopeSessionId)
-    if hits.len == 0:
-      return handledText("No session matches for '" & searchCtx.query & "'.")
-    var arr = newJArray()
-    for hit in hits:
-      arr.add(%*{
-        "session_id": hit.sessionId,
-        "kind": $hit.kind,
-        "role": hit.role,
-        "score": hit.score,
-        "timestamp_ms": hit.timestampMs,
-        "snippet": hit.snippet,
-      })
-    return handledText($arr)
+    let found = await searchConversations(ctx.fs, ctx.paddockDir,
+      ConversationSearchRequest(
+        query: searchCtx.query, phrase: searchCtx.phrase,
+        sessionId: searchCtx.sessionId, around: searchCtx.around,
+        since: searchCtx.since, until: searchCtx.until, limit: searchCtx.limit,
+        offset: searchCtx.offset, context: searchCtx.context,
+        countOnly: searchCtx.countOnly, oldestFirst: searchCtx.oldestFirst,
+        excludeSessionId: (if ctx.subagentId.len > 0: ctx.scopeSessionId else: "")),
+      int64(epochTime() * 1000))
+    if found.isErr:
+      return handledError("Error: " & found.error)
+    var text = found.get()
+    ## Ranked terms also look in long-term memory (MEMORY.md or the graph).
+    if searchCtx.query.len > 0 and searchCtx.phrase.len == 0 and
+       searchCtx.sessionId.len == 0 and searchCtx.includeMemory and
+       ctx.memory.searchSessions != nil:
+      let memoryHits = ctx.memory.searchSessions(
+        ctx.uid, searchCtx.query, SessionSearchDefaultLimit, true)
+      if memoryHits.isOk:
+        var lines: seq[string]
+        for hit in memoryHits.get():
+          if hit.kind == shkMemory:
+            lines.add("- " & hit.snippet.replace("\n", " "))
+        if lines.len > 0:
+          text.add("\n\nFrom long-term memory:\n" & lines.join("\n"))
+    return handledText(text)
   of MemoryIngestToolName:
     let ingestCtx = parseMemoryIngestContext(j).valueOr:
       return handledError(error)

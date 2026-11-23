@@ -357,6 +357,11 @@ proc runTests*() =
       let base = subagentBase / "session-scope"
       removeDir(base)
       defer: removeDir(base)
+      createDir(base / "paddock" / "sessions")
+      writeFile(base / "paddock" / "sessions" / "parent-session.jsonl",
+        $(%*{"role": "user", "text": "parent secret", "ts": 1}) & "\n")
+      writeFile(base / "paddock" / "sessions" / "older.jsonl",
+        $(%*{"role": "user", "text": "older secret", "ts": 1}) & "\n")
       let fakeSearch = MemoryRuntimePort(
         searchSessions: proc(userId: UserId; query: string; limit: int;
                              includeMemory: bool): Result[seq[SessionHit], string]
@@ -377,7 +382,13 @@ proc runTests*() =
         child, SessionState(), @[])
       check res.handled
       check "parent-session" notin res.text
-      check "No session matches" in res.text
+      check "parent secret" notin res.text
+      check "older secret" in res.text
+      let read = waitFor executeNativeTool(
+        ToolCallRequest(id: "search-2", name: "session_search",
+                        inputJson: "{\"session_id\":\"parent-session\"}"),
+        child, SessionState(), @[])
+      check "parent secret" notin read.text
 
     test "children cannot spawn children":
       let base = subagentBase / "nested"

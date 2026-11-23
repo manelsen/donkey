@@ -3,6 +3,7 @@
 import std/[json, os, strutils, unittest]
 import chronos
 import chronos/asyncsync
+import donkey/adapters/filesystem/fs_adapter
 import donkey/adapters/memory/md_file
 import donkey/app/native_tools
 import donkey/app/session_state
@@ -34,6 +35,7 @@ proc runTests*() =
         channel: ckCli,
         outbox: outbox,
         memory: memory,
+        fs: newFsAdapter(),
         log: toolLog,
         paddockDir: paddock,
       )
@@ -70,7 +72,7 @@ proc runTests*() =
       check res.handled
       check res.text.contains("'query' is required")
 
-    test "backend without session search fails closed":
+    test "without a filesystem the search fails closed, not empty":
       let outbox = newAsyncQueue[OutboundMessage](4)
       var ctx = NativeCtx(
         uid: UserId("user-a"),
@@ -111,6 +113,7 @@ proc runTests*() =
           channel: ckCli,
           outbox: outbox,
           memory: memory,
+          fs: newFsAdapter(),
           log: toolLog,
           paddockDir: adapter.paddockDir(uid),
         )

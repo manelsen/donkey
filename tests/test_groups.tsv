@@ -301,3 +301,5 @@ g1	tests/core/t_recent_ids.nim
 g2	tests/domain/automation/t_user_schedule.nim
 g0	tests/app/t_user_schedules.nim
 g0	tests/app/t_metrics_wiring.nim
+g2	tests/domain/memory/t_conversation_search_pure.nim
+g1	tests/app/t_conversation_search.nim
