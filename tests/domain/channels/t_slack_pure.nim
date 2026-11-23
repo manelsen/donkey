@@ -292,6 +292,30 @@ proc runTests*() =
 
   # ── toInbound ─────────────────────────────────────────────────────────────────
 
+  suite "slack_pure — broadcast mentions (hermes 38863322a4)":
+    test "@everyone, @channel and @here are shown, not fired":
+      check neutralizeBroadcastMentions("Broadcast <!everyone> <!channel> <!here|here>") ==
+        "Broadcast &lt;!everyone> &lt;!channel> &lt;!here|here>"
+      check neutralizeBroadcastMentions("<!HERE> now") == "&lt;!HERE> now"
+
+    test "user mentions, groups and links are kept":
+      let text = "Hey <@U123>, see <https://example.com|example> and <!subteam^S1|team>"
+      check neutralizeBroadcastMentions(text) == text
+
+    test "an unclosed or multi-line sequence is not a mention":
+      check neutralizeBroadcastMentions("<!channel") == "<!channel"
+      check neutralizeBroadcastMentions("<!here|a\nb>") == "<!here|a\nb>"
+      check neutralizeBroadcastMentions("<!channelx>") == "<!channelx>"
+
+    test "every text field of a request body is covered, blocks included":
+      let body = withoutBroadcastMentions(%* {
+        "channel": "C1", "text": "<!channel> hi",
+        "blocks": [{"type": "section",
+                    "text": {"type": "mrkdwn", "text": "<!everyone> x"}}]})
+      check body["text"].getStr == "&lt;!channel> hi"
+      check body["blocks"][0]["text"]["text"].getStr == "&lt;!everyone> x"
+      check body["channel"].getStr == "C1"
+
   suite "slack_pure.toInbound":
 
     test "converts SlkParseResult to InboundMessage":

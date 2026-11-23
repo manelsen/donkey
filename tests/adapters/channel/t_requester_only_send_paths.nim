@@ -572,6 +572,26 @@ proc runTests*() =
       check not anyRequest(proc(r: Recorded): bool =
         "chat.postMessage" in r.target and "C_public" in r.body)
 
+    test "Slack: no reply, edit or keyboard message can ping the whole channel":
+      reset()
+      var sl = newSlackAdapter("token", Tmp / "sl-b" / "ids.tsv", apiBase = base())
+      let uid = sl.resolver.resolve(ckSlack, "U9")
+      let ping = "<!channel> heads up"
+      check sl.send(OutboundMessage(userId: uid, text: ping)).isOk
+      ## The canned reply has no `ts`, so only the request matters here.
+      discard sl.sendReturnId(OutboundMessage(userId: uid, text: ping))
+      check sl.editMessage(uid, "1.2", ping).isOk
+      check sl.sendKeyboard(uid, ping, @[@[("ok", "ok")]]).isOk
+      check sl.editKeyboard(uid, "1.2", ping, @[@[("ok", "ok")]]).isOk
+      check sl.sendToChannel("C9", ping).isOk
+      var carriers = 0
+      for r in requests():
+        if "heads up" notin r.body: continue
+        inc carriers
+        check "<!channel>" notin r.body
+        check "&lt;!channel>" in r.body
+      check carriers >= 6
+
     test "WhatsApp: the link code goes to the sender's number":
       reset()
       var sm = openSessions()

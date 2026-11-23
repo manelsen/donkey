@@ -216,3 +216,53 @@ func blockActionCommand*(data: string): string =
   if data.startsWith("help:page:"):
     return "/help"
   ""
+
+# ── Outbound broadcast mentions ───────────────────────────────────────────────
+
+const BroadcastNames = ["everyone", "channel", "here"]
+
+func broadcastAt(text: string; i: int): bool =
+  ## `<!everyone>`, `<!channel>`, `<!here>`, optionally `|label`, on one line.
+  if i + 2 >= text.len or text[i] != '<' or text[i + 1] != '!':
+    return false
+  for name in BroadcastNames:
+    let stop = i + 2 + name.len
+    if stop <= text.len and text[i + 2 ..< stop].toLowerAscii == name:
+      if stop < text.len and text[stop] == '>':
+        return true
+      if stop < text.len and text[stop] == '|':
+        var j = stop + 1
+        while j < text.len and text[j] notin {'>', '\n'}:
+          inc j
+        return j < text.len and text[j] == '>'
+  false
+
+func neutralizeBroadcastMentions*(text: string): string =
+  ## Slack fires `<!everyone>`, `<!channel>` and `<!here>` even when a bot
+  ## posts them, so the model's text (or a prompt injection in it) could
+  ## notify a whole workspace. Only the leading `<` is escaped: the token is
+  ## shown as written. User mentions, user groups and links are untouched
+  ## (hermes 38863322a4).
+  result = newStringOfCap(text.len)
+  for i, c in text:
+    if c == '<' and broadcastAt(text, i):
+      result.add("&lt;")
+    else:
+      result.add(c)
+
+func withoutBroadcastMentions*(body: JsonNode): JsonNode =
+  ## Every `text` field of a Web API body, `blocks` included.
+  case body.kind
+  of JObject:
+    result = newJObject()
+    for key, value in body:
+      if key == "text" and value.kind == JString:
+        result[key] = %neutralizeBroadcastMentions(value.getStr)
+      else:
+        result[key] = withoutBroadcastMentions(value)
+  of JArray:
+    result = newJArray()
+    for item in body:
+      result.add(withoutBroadcastMentions(item))
+  else:
+    result = body.copy()
