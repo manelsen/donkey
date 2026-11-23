@@ -3,7 +3,7 @@
 
 import std/[json, strutils, unittest]
 import chronos
-import donkey/app/http_gateway
+import donkey/adapters/http/gateway_server
 import donkey/app/chat_bridge
 import donkey/app/agent_chat_runtime
 import donkey/core/agent_events

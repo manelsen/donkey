@@ -1,6 +1,7 @@
 g0	tests/adapters/channel/t_common_runtime.nim
 g0	tests/adapters/channel/t_dm_gate_runtimes.nim
 g0	tests/adapters/channel/t_embedded_webhooks.nim
+g0	tests/app/t_gateway_connection.nim
 g0	tests/infra/t_event_queue.nim
 g0	tests/infra/t_thread_handle.nim
 g0	tests/infra/t_thread_owner.nim

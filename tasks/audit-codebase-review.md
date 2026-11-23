@@ -57,6 +57,14 @@ They cover memory/profile, the DM allowlist (`isDmAllowed`/`addDmAllowed`), remi
 It contains bearer auth, routing, the dashboard HTML, SSE, connection admission and limits, request parsing and the thread pool.
 **Fix:** move auth and routing into pure modules (some already exist in `domain/gateway/`), keep socket I/O in an adapter, and keep use-case orchestration in `app`.
 
+**Status (0.3.x): done.** `app/http_gateway.nim` went from 1196 to about 710 lines:
+- `domain/gateway/auth_pure`: Bearer check, bind policy, origin rules, the auth verdict per route;
+- `domain/gateway/routing_pure`: request line to route, status lines, response and SSE heads, the port/deadline/query parsers and the web UI chat body;
+- `domain/gateway/dashboard_html`: the static dashboard shell;
+- `ports/gateway_connection`: one client connection (read a line, read some bytes, write) under the request deadline;
+- `adapters/http/gateway_server`: bind, accept and the port over a Chronos stream (a read that misses the deadline is now cancelled instead of left writing into a buffer the handler dropped);
+- `app/http_gateway`: admission, the request handler and the agent turns, served through the port, so a test drives it with strings (`tests/app/t_gateway_connection`).
+
 ### 7. `app/native_tools.nim` calls itself a "thin dispatch layer" but is not
 It holds about 25 `parse*Context` functions (argument parsing and validation) and the `execute*NativeTool` procs.
 **Fix:** move the parsers to `domain/tools/` as `func`s, and keep only dispatch in `app`.
