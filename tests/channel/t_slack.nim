@@ -318,6 +318,22 @@ proc runTests*() =
       check not a.isDuplicate(asMessage, now = 1000.0)
       check a.isDuplicate(asMention, now = 1000.5)
 
+    test "the real message and app_mention payloads of one mention dedupe":
+      ## Through `pushEvent`, so the app_mention payload really is parsed as
+      ## the same kind as the message one.
+      let a = newSlackAdapter("token", getTempDir() / "donkey_slack_dedupe8.tsv")
+      while a.tryRecvEvent()[0]: discard
+      for (evType, evId) in [("message", "EvM"), ("app_mention", "EvN")]:
+        pushEvent(%* {"type": "event_callback", "team_id": "T1", "event_id": evId,
+          "event": {"type": evType, "user": "U1", "text": "<@B1> hi",
+                    "channel": "C1", "ts": "1700.0002"}})
+      let (gotFirst, first) = a.tryRecvEvent()
+      let (gotSecond, second) = a.tryRecvEvent()
+      check gotFirst and gotSecond
+      check first.kind == srMessage and second.kind == srMessage
+      check not a.isDuplicate(first, now = 1000.0)
+      check a.isDuplicate(second, now = 1000.0)
+
     test "the same ts in another channel is another message":
       let a = newSlackAdapter("token", getTempDir() / "donkey_slack_dedupe7.tsv")
       check not a.isDuplicate(SlackRawEvent(kind: srMessage, eventId: "E1",
