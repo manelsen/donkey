@@ -15,10 +15,12 @@ jobs:
   pr_agent_job:
     # Skip events raised by bots (including PR-Agent itself). Comment commands
     # spend the OpenRouter key, so only PR comments from people with write
-    # access to the repo run them.
+    # access to the repo run them. Fork PRs get no secrets, so they are skipped
+    # rather than failing.
     if: >-
       ${{ github.event.sender.type != 'Bot' && (
-        github.event_name == 'pull_request' || (
+        (github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository) || (
           github.event.issue.pull_request &&
           contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
         )
