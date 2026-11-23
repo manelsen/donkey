@@ -29,11 +29,16 @@ type
     initialized: bool
     nextId:      int
 
+  McpHttpTokenFn* = proc(forceRefresh: bool): Result[string, string] {.gcsafe.}
+    ## An OAuth token source (`mcp_oauth.mcpTokenSource`); `forceRefresh`
+    ## after the server refused the current token.
+
   McpHttpClient* = object
-    url*:    string
-    bearer*: string
-    http*:   HttpRuntimePort
-    state:   ref McpHttpState
+    url*:     string
+    bearer*:  string           ## a static token; ignored when tokenFn is set
+    tokenFn*: McpHttpTokenFn
+    http*:    HttpRuntimePort
+    state:    ref McpHttpState
 
 proc productionPort(): HttpRuntimePort =
   newStdHttpAdapter(timeout = McpHttpTimeoutSec, maxRetries = 1,
@@ -41,25 +46,35 @@ proc productionPort(): HttpRuntimePort =
                     returnServerError = true).toRuntimePort()
 
 proc newMcpHttpClient*(url: string; bearer = "";
-                       http = HttpRuntimePort()): McpHttpClient =
+                       http = HttpRuntimePort();
+                       tokenFn: McpHttpTokenFn = nil): McpHttpClient =
   var state = new(McpHttpState)
   state.nextId = 1
-  McpHttpClient(url: url, bearer: bearer,
+  McpHttpClient(url: url, bearer: bearer, tokenFn: tokenFn,
                 http: if http.postNoRedirect != nil: http else: productionPort(),
                 state: state)
 
-proc post(c: McpHttpClient; message: JsonNode): Result[HttpResponse, string] =
+proc currentBearer(c: McpHttpClient; forceRefresh = false): Result[string, string] =
+  if c.tokenFn != nil: c.tokenFn(forceRefresh) else: ok(c.bearer)
+
+proc post(c: McpHttpClient; message: JsonNode;
+          forceRefresh = false): Result[HttpResponse, string] =
+  let bearer = ? c.currentBearer(forceRefresh)
   let headers = mcpRequestHeaders(
     c.state.sessionId,
     (if c.state.initialized: McpProtocolVersion else: ""),
-    c.bearer)
+    bearer)
   let post = if c.http.postNoRedirect != nil: c.http.postNoRedirect else: c.http.post
   post(c.url, $message, headers)
 
 proc call(c: McpHttpClient; meth: string; params: JsonNode): Result[JsonNode, string] =
   let id = c.state.nextId
   inc c.state.nextId
-  let resp = ? c.post(%* {"jsonrpc": "2.0", "id": id, "method": meth, "params": params})
+  let message = %* {"jsonrpc": "2.0", "id": id, "method": meth, "params": params}
+  var resp = ? c.post(message)
+  if resp.status == 401 and c.tokenFn != nil:
+    ## The server refused the token: refresh it once and send again.
+    resp = ? c.post(message, forceRefresh = true)
   if meth == "initialize":
     let session = headerValue(resp.headers, "Mcp-Session-Id")
     if session.len > 0:

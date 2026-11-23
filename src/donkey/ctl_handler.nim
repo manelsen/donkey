@@ -10,6 +10,7 @@ import core/pipeops
 import core/app_meta
 import config/types
 import config/tools_registry
+import adapters/tool/mcp_oauth
 import config/skills_registry
 import config/clawhub_registry
 import config/dotenv
@@ -249,29 +250,72 @@ proc ctlToolInstall*(registryPath: string; command: string; args: seq[string]) =
   saveToolEntry(registryPath, entry)
   echo "Registered MCP server: " & command
 
-proc ctlToolAddHttp*(registryPath: string; args: seq[string]): int =
-  ## `ctl tool add-http <url> [--token-env NAME]`: a remote MCP server over
-  ## Streamable HTTP. Only the variable name is stored, never the token.
+const McpOAuthRedirect* = "http://127.0.0.1:8976/callback"
+  ## Nothing listens there: the browser fails to load it, and the operator
+  ## copies the URL (with the code) from the address bar back into the CLI.
+
+proc ctlMcpLogin*(home, url: string): int =
+  ## `ctl mcp login <url>`: OAuth for a remote MCP server, browser-less.
+  let http = productionOAuthPort()
+  let pending = beginMcpLogin(url, McpOAuthRedirect, http)
+  if pending.isErr:
+    echo pending.error
+    return 1
+  echo "Open this URL in a browser and authorize " & AppName & ":"
+  echo ""
+  echo "  " & pending.get.authorizationUrl
+  echo ""
+  echo "The browser then goes to " & McpOAuthRedirect & " and shows an error page;"
+  echo "that is expected. Copy the full URL from the address bar and paste it here:"
+  stdout.write("> ")
+  stdout.flushFile()
+  let pasted = try: stdin.readLine() except IOError: ""
+  let rec = completeMcpLogin(pending.get, pasted, http, getTime().toUnix)
+  if rec.isErr:
+    echo rec.error
+    return 1
+  let saved = saveMcpOAuth(home / "state" / McpOAuthDirName, rec.get)
+  if saved.isErr:
+    echo "could not store the tokens: " & saved.error
+    return 1
+  echo "Logged in to " & url & "."
+  0
+
+proc ctlToolAddHttp*(home, registryPath: string; args: seq[string]): int =
+  ## `ctl tool add-http <url> [--token-env NAME | --oauth]`: a remote MCP
+  ## server over Streamable HTTP. Only the variable name is stored, never the
+  ## token; `--oauth` logs in right away.
   if args.len == 0:
-    echo "usage: donkey ctl tool add-http <url> [--token-env NAME]"
+    echo "usage: donkey ctl tool add-http <url> [--token-env NAME | --oauth]"
     return 1
   let url = args[0]
   var tokenEnv = ""
+  var oauth = false
   var i = 1
   while i < args.len:
     if args[i] == "--token-env" and i + 1 < args.len:
       tokenEnv = args[i + 1]
       i += 2
+    elif args[i] == "--oauth":
+      oauth = true
+      inc i
     else:
       echo "unknown option: " & args[i]
       return 1
+  if oauth and tokenEnv.len > 0:
+    echo "--oauth and --token-env are exclusive"
+    return 1
   let valid = validMcpHttpUrl(url)
   if valid.isErr:
     echo valid.error
     return 1
-  saveToolEntry(registryPath, ToolEntry(kind: tkMcpHttp, url: url, tokenEnv: tokenEnv))
+  saveToolEntry(registryPath, ToolEntry(kind: tkMcpHttp, url: url,
+                                        tokenEnv: tokenEnv, oauth: oauth))
   echo "Registered MCP server (HTTP): " & url &
-    (if tokenEnv.len > 0: " — bearer from $" & tokenEnv else: "")
+    (if tokenEnv.len > 0: " — bearer from $" & tokenEnv
+     elif oauth: " — OAuth" else: "")
+  if oauth:
+    return ctlMcpLogin(home, url)
   0
 
 proc ctlSkillInstall*(cfg: DonkeyConfig; skillsPath: string; name, scriptPath: string;
@@ -767,7 +811,9 @@ proc dispatchCtl*(cfg: DonkeyConfig;
   if args[1] == "tool" and args.len >= 4 and args[2] == "install":
     ctlToolInstall(registryPath, args[3], args[4 ..^ 1]); return 0
   if args[1] == "tool" and args.len >= 3 and args[2] == "add-http":
-    return ctlToolAddHttp(registryPath, args[3 ..^ 1])
+    return ctlToolAddHttp(cfg.home, registryPath, args[3 ..^ 1])
+  if args[1] == "mcp" and args.len >= 4 and args[2] == "login":
+    return ctlMcpLogin(cfg.home, args[3])
 
   # ── skill ──
   let skillsPath = cfg.home / "skills.toml"

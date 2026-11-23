@@ -71,6 +71,7 @@ import donkey/adapters/webhook/webhook_receiver
 import donkey/domain/channels/line_policy
 import donkey/adapters/tool/mcp_client
 import donkey/adapters/tool/mcp_http_client
+import donkey/adapters/tool/mcp_oauth
 import donkey/adapters/tools/browser_executor
 import donkey/domain/tools/browser_pure
 import donkey/adapters/state/runtime_store
@@ -326,7 +327,11 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
       ## The bearer comes from the variable the entry names, read from the
       ## environment snapshot; the registry holds only the name.
       let bearer = if entry.tokenEnv.len > 0: cfg.env.get(entry.tokenEnv) else: ""
-      var client = newMcpHttpClient(entry.url, bearer = bearer)
+      let tokenFn: McpHttpTokenFn =
+        if entry.oauth:
+          mcpTokenSource(cfg.home / "state" / McpOAuthDirName, entry.url)
+        else: nil
+      var client = newMcpHttpClient(entry.url, bearer = bearer, tokenFn = tokenFn)
       schemasRes = client.listTools()
       port = client.toRuntimePort()
     if schemasRes.isOk:

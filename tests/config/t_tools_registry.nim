@@ -43,6 +43,12 @@ proc runTests*() =
       check entries[0].args == @["a \"b\"", "c\\d"]
       check entries[1].kind == tkMcpHttp and entries[1].tokenEnv == ""
 
+    test "an OAuth server round-trips its auth mode":
+      let path = fresh("oauth.toml")
+      saveToolEntry(path, ToolEntry(kind: tkMcpHttp, url: "https://h.test/mcp", oauth: true))
+      let entries = loadToolRegistry(path)
+      check entries[0].oauth and entries[0].tokenEnv == ""
+
     test "an HTTP server must use https, except on the local machine":
       check validMcpHttpUrl("https://mcp.example.test/mcp").isOk
       check validMcpHttpUrl("http://127.0.0.1:8080/mcp").isOk

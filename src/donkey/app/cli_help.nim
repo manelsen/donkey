@@ -41,8 +41,9 @@ Commands:
   ctl secret import-env [path]  Encrypt KEY=VALUE pairs from donkey.env
   ctl session list <uuid>        List active sessions for a user
   ctl tool install <command>            Register an MCP server (stdio)
-  ctl tool add-http <url> [--token-env NAME]
+  ctl tool add-http <url> [--token-env NAME | --oauth]
                                         Register an MCP server over HTTP
+  ctl mcp login <url>                   OAuth login for an HTTP MCP server
   ctl skill search <query>              Search remote skills on ClawHub
   ctl skill install <name> <script>     Register a local Deno skill
   ctl skill install <slug>              Download/install remote skill bundle
