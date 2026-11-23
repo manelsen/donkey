@@ -74,7 +74,44 @@ func slackUnescape*(text: string): string =
     result.add(text[i])
     inc i
 
-func parseMessageEvent(teamId, eventId: string; event: JsonNode): SlkParseResult =
+func stripUserMention*(text, userId: string): string =
+  ## Removes `<@U…>` and `<@U…|name>` for `userId`, each with one space next
+  ## to it; the rest of the spacing is kept.
+  if userId.len == 0: return text
+  result = text
+  let open = "<@" & userId
+  var at = result.find(open)
+  while at >= 0:
+    let after = at + open.len
+    var stop = -1
+    if after < result.len and result[after] == '>':
+      stop = after
+    elif after < result.len and result[after] == '|':
+      stop = result.find('>', after)
+    if stop < 0:
+      at = result.find(open, after)
+      continue
+    var first = at
+    var last = stop
+    if last + 1 < result.len and result[last + 1] == ' ':
+      inc last
+    elif first > 0 and result[first - 1] == ' ':
+      dec first
+    result = result[0 ..< first] & result[last + 1 .. ^1]
+    at = result.find(open, first)
+  result = result.strip()
+
+func botUserIdOf(payload: JsonNode): string =
+  ## The installed bot user, from the event's `authorizations`.
+  let auths = payload.getOrDefault("authorizations")
+  if auths == nil or auths.kind != JArray: return ""
+  for auth in auths:
+    if auth.getOrDefault("is_bot").getBool(false):
+      return auth.getOrDefault("user_id").getStr("")
+  ""
+
+func parseMessageEvent(teamId, eventId: string; event: JsonNode;
+                       botUserId = ""): SlkParseResult =
   ## Parses a "message" or "app_mention" event sub-object.
   ## Designed for  event |>-> parseMessageEvent(teamId)  (piped value is last arg).
   let userId = event |> extractUserId
@@ -91,10 +128,13 @@ func parseMessageEvent(teamId, eventId: string; event: JsonNode): SlkParseResult
   let subtype = event |>-> extractField("subtype")
   if subtype notin ["", "file_share", "thread_broadcast", "me_message"]:
     return SlkParseResult(kind: sekUnknown)
+  ## "<@bot> /help" is the command "/help"; only the mention is nothing.
+  let spoken = stripUserMention(slackUnescape(text), botUserId)
+  if spoken.len == 0: return SlkParseResult(kind: sekUnknown)
   SlkParseResult(
     kind:      sekMessage,
     rawId:     userId,
-    text:      slackUnescape(text),
+    text:      spoken,
     channelId: event |>-> extractField("channel"),
     teamId:    teamId,
     eventId:   eventId,
@@ -174,7 +214,7 @@ func parseEvent*(payload: JsonNode): SlkParseResult =
     let teamId  = payload |>-> extractField("team_id")
     let eventId = payload |>-> extractField("event_id")
     if evType in ["message", "app_mention"]:
-      event |>-> parseMessageEvent(teamId, eventId)
+      parseMessageEvent(teamId, eventId, event, botUserIdOf(payload))
     else:
       SlkParseResult(kind: sekUnknown)
   of "slash_command":
