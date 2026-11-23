@@ -26,3 +26,4 @@ completa dos 407 commits ainda não foi feita (ver `discord/SCOPE.md`).
 | DS-003 | `efa6c9f715` | `tests/domain/channels/t_discord_pure.nim`, `tests/adapters/channel/t_requester_only_send_paths.nim` | `src/donkey/domain/channels/discord_pure.nim` (`withSafeMentions`) | portado |
 | DS-004 | `68276773cf` | `tests/domain/channels/t_discord_pure.nim` | `src/donkey/domain/channels/discord_pure.nim` (`isBotAuthored`) | portado |
 | DS-005 | `93ea9b04af` | `tests/domain/channels/t_discord_pure.nim` | `src/donkey/domain/channels/discord_pure.nim` (`DiscordMaxInboundAttachmentBytes`) | portado |
+| DS-006 | `cf7bf5bdc9` | `tests/domain/channels/t_discord_pure.nim`, `tests/adapters/channel/t_requester_only_send_paths.nim` | `src/donkey/domain/channels/discord_pure.nim` (`discordText`) | portado |

@@ -561,6 +561,49 @@ proc runTests*() =
         "allowed_mentions": {"parse": ["everyone", "roles", "users"]}})
       check body["allowed_mentions"] == %* {"parse": ["users"]}
 
+  suite "discord_pure.discordText — tables (hermes cf7bf5bdc9)":
+    test "a pipe table becomes a bold heading and bullets per row":
+      let text = "Results:\n\n| Name | Score |\n|------|-------|\n" &
+                 "| Alice | 95   |\n| Bob   | 80   |\n\nDone."
+      let rendered = discordText(text)
+      check "**Alice**\n• Score: 95" in rendered
+      check "**Bob**\n• Score: 80" in rendered
+      check rendered.startsWith("Results:")
+      check rendered.endsWith("Done.")
+      check "|" notin rendered
+
+    test "alignment markers and missing outer pipes are tables too":
+      let rendered = discordText("A | B | C\n:--|:-:|--:\nx | 1 | 2")
+      check rendered == "**x**\n• B: 1\n• C: 2"
+
+    test "an empty cell is left rendered of the row":
+      check discordText("| k | v | w |\n|---|---|---|\n| a |  | z |") ==
+        "**a**\n• w: z"
+
+    test "plain text, and pipes outside a table, are unchanged":
+      check discordText("Hello world, no tables here.") ==
+        "Hello world, no tables here."
+      check discordText("a | b without a separator line") ==
+        "a | b without a separator line"
+      check discordText("") == ""
+
+    test "a header-only table leaves no stray blank line":
+      check discordText("before\n| a | b |\n|---|---|\nafter") ==
+        "before\nafter"
+
+    test "a second table right below the first is its own table":
+      let rendered = discordText("| k | v |\n|---|---|\n| a | 1 |\n" &
+                                 "| x | y |\n|---|---|\n| b | 2 |")
+      check rendered == "**a**\n• v: 1\n**b**\n• y: 2"
+
+    test "a fence opened and closed on one line does not swallow a table":
+      check discordText("```inline```\n| a | b |\n|---|---|\n| 1 | 2 |") ==
+        "```inline```\n**1**\n• b: 2"
+
+    test "a table inside a code block is unchanged":
+      let text = "```\n| a | b |\n|---|---|\n| 1 | 2 |\n```"
+      check discordText(text) == text
+
   suite "discord_pure.toInbound — conversion":
 
     test "message converts with correct fields":
