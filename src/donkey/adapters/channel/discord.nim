@@ -56,6 +56,10 @@ type
     interactionId*:    string
     interactionToken*: string
     guildId*:          string   ## server id; empty for a DM or an interaction
+    attachmentUrl*:    string   ## first attachment (the turn downloads one)
+    attachmentName*:   string
+    attachmentMime*:   string
+    extraAttachments*: seq[string]  ## names of the attachments after the first
     referencedAuthorId*: string ## author of the message this one replies to
 
 # ── Gateway thread ─────────────────────────────────────────────────────────────
@@ -110,6 +114,24 @@ proc sendHeartbeat(state: var GatewayState) =
   state.ws.sendFrame("{\"op\":1,\"d\":" & payload & "}")
   state.lastBeatMs = epochMs()
 
+func messageEventOf*(r: DsParseResult): DiscordRawEvent =
+  ## The event of a parsed MESSAGE_CREATE: live (gateway) and recovered
+  ## (REST backfill) messages take the same shape, attachments included.
+  DiscordRawEvent(
+    kind:          deMessage,
+    discordUserId: r.rawId,
+    content:       r.content,
+    channelId:     r.channelId,
+    messageId:     r.messageId,
+    guildId:       r.guildId,
+    referencedAuthorId: r.referencedAuthorId,
+    attachmentUrl:  (if r.attachmentUrls.len > 0: r.attachmentUrls[0] else: ""),
+    attachmentName: (if r.attachmentNames.len > 0: r.attachmentNames[0] else: ""),
+    attachmentMime: (if r.attachmentMimes.len > 0: r.attachmentMimes[0] else: ""),
+    extraAttachments: (if r.attachmentNames.len > 1: r.attachmentNames[1 .. ^1]
+                       else: @[]),
+  )
+
 proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
   ## Routes op=0 dispatch events to gDiscordEvents via discord_pure parser.
   ## Messages received before gateway is ready are buffered.
@@ -125,16 +147,7 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
   of dekUnknown: return
   of dekMessage:
     logger.debug("discord: message from " & r.rawId)
-    let event = DiscordRawEvent(
-      kind:          deMessage,
-      discordUserId: r.rawId,
-      content:       r.content,
-      channelId:     r.channelId,
-      messageId:     r.messageId,
-      guildId:       r.guildId,
-      referencedAuthorId: r.referencedAuthorId,
-    )
-    bufferOrPush(event)
+    bufferOrPush(messageEventOf(r))
   of dekSlashCommand:
     logger.debug("discord: slash command from " & r.rawId)
     let event =
@@ -406,12 +419,9 @@ proc fetchUnreadMessages*(a: DiscordAdapter; chId: string; limit = 10): Result[s
       return err("Discord messages response is not an array")
     var filtered: seq[JsonNode] = @[]
     for msg in msgs:
-      # Skip bots (including our own messages) and webhook posts
+      # Skip bots (including our own messages) and webhook posts; a message
+      # with neither text nor attachment is dropped by the parser.
       if isBotAuthored(msg):
-        continue
-      # Skip messages without content
-      let content = msg.getOrDefault("content").getStr("")
-      if content.len == 0:
         continue
       filtered.add(msg)
     ok(filtered)
@@ -705,6 +715,8 @@ proc downloadFile*(a: DiscordAdapter; fileId: string): Result[FileDownload, stri
   ## fileId is the attachment URL (proxy_url or url from gateway event).
   if fileId.len == 0:
     return err("Discord downloadFile: empty fileId")
+  if not isDiscordCdnUrl(fileId):
+    return err("Discord downloadFile: not a Discord CDN URL")
   try:
     let headers: seq[(string, string)] = @[]
     let resp = ? a.http.get(fileId, headers)

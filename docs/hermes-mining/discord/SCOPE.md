@@ -96,6 +96,13 @@ sobre o gateway:
   é atendida; DM não muda. O array `mentions` não conta: um reply ping põe o
   autor ali sem menção no texto (`608e8a6062`, `e9bceb5ae0`).
 
+- **Anexos recebidos chegam ao turno**: o primeiro anexo (URL, nome e tipo)
+  vai no `InboundMessage` e é baixado como nos outros canais; os demais são
+  nomeados no texto. O backfill monta o evento pelo mesmo parser, então anexo
+  enviado com o bot offline (inclusive sem texto) também é recuperado. O
+  download só sai para `cdn.discordapp.com`/`media.discordapp.net` por https
+  (`9a177d6f4b`, `53da34a4fc`).
+
 Ainda **não há**: ledger de entrega e cursor que só avança depois da entrega
 final (hoje avança antes do despacho: at-most-once).
 

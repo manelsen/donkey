@@ -207,5 +207,29 @@ proc runTests*() =
     test "an adapter built without the cache reports no duplicate":
       check not DiscordAdapter().isDuplicateMessage("123")
 
+  suite "DiscordAdapter message events":
+    test "a recovered (REST) message keeps its attachments, even without text":
+      ## The backfill used to rebuild the event from the text alone and to
+      ## drop messages without text, so a file sent while the bot was
+      ## offline never reached the agent.
+      let rest = %* {
+        "id": "900", "channel_id": "dm-1", "content": "",
+        "author": {"id": "77"},
+        "attachments": [
+          {"filename": "r.pdf", "size": 10, "content_type": "application/pdf",
+           "url": "https://cdn.discordapp.com/attachments/1/2/r.pdf"},
+          {"filename": "s.txt", "size": 5,
+           "url": "https://cdn.discordapp.com/attachments/1/2/s.txt"}]}
+      let parsed = parseDispatch("MESSAGE_CREATE", rest)
+      check parsed.kind == dekMessage
+      let event = messageEventOf(parsed)
+      check event.kind == deMessage
+      check event.discordUserId == "77"
+      check event.messageId == "900"
+      check event.attachmentUrl == "https://cdn.discordapp.com/attachments/1/2/r.pdf"
+      check event.attachmentName == "r.pdf"
+      check event.attachmentMime == "application/pdf"
+      check event.extraAttachments == @["s.txt"]
+
 when isMainModule:
   runTests()

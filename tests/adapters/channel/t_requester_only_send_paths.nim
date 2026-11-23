@@ -159,6 +159,8 @@ proc openSessions(): SessionManager =
   result.dmPolicy = DmPolicyOpen
 
 let noop = proc(msg: InboundMessage) {.gcsafe.} = discard
+var gFallbacks {.threadvar.}: seq[InboundMessage]
+let captureFallback = proc(msg: InboundMessage) {.gcsafe.} = gFallbacks.add(msg)
 
 proc carriesLinkCode(r: Recorded): bool = "link code" in r.body
 
@@ -326,6 +328,37 @@ proc runTests*() =
         messageId: "z", guildId: "g1"),
         dc, state, env("dc-rm3"), msgSeq, logger, noop, noop, noop)
       check anyRequest(proc(r: Recorded): bool = "/channels/chan-z/messages" in r.target)
+
+    test "Discord: an attachment reaches the turn for download":
+      ## The event carried the attachment URL but the turn was built from the
+      ## text alone: a file sent on Discord never reached the agent.
+      reset()
+      gFallbacks = @[]
+      var sm = openSessions()
+      var msgSeq = 0
+      var state = initPresentationState()
+      let dc = newDiscordAdapter("TOK", Tmp / "dc-att" / "ids.tsv", apiBase = base())
+      dc.appId[] = "BOT"
+      discard sm.getOrCreate(dc.resolver.resolve(ckDiscord, "54"))
+      handleDiscordEvent(sm, DiscordRawEvent(kind: deMessage,
+        discordUserId: "54", content: "", channelId: "chan-att",
+        messageId: "att1", guildId: "g1",
+        attachmentUrl: "https://cdn.discordapp.com/attachments/1/2/a.png",
+        attachmentName: "a.png", attachmentMime: "image/png",
+        extraAttachments: @["b.pdf"]),
+        dc, state, env("dc-att"), msgSeq, logger, noop, noop, captureFallback)
+      check gFallbacks.len == 1
+      let msg = gFallbacks[0]
+      check msg.mediaUrl == "https://cdn.discordapp.com/attachments/1/2/a.png"
+      check msg.mediaFileName == "a.png"
+      check msg.mediaMimeType == "image/png"
+      check "b.pdf" in msg.text
+
+    test "Discord: attachments are only downloaded from Discord's CDN":
+      let dc = newDiscordAdapter("TOK", Tmp / "dc-cdn" / "ids.tsv", apiBase = base())
+      check dc.downloadFile(base() & "/x.png").isErr
+      check dc.downloadFile("http://cdn.discordapp.com/a.png").isErr
+      check dc.downloadFile("https://cdn.discordapp.com.evil.test/a.png").isErr
 
     test "Discord: a message delivered twice is handled once":
       ## A gateway RESUME replays events, and the startup backfill can overlap
