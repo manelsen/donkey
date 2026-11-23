@@ -724,6 +724,14 @@ proc runTests*() =
       d["guild_id"] = %"g1"
       check parseDispatch("MESSAGE_CREATE", d).originChannelId == "c3"
 
+  suite "discord_pure — snowflake order":
+    test "the later of two message ids, numerically":
+      check laterSnowflake("", "5") == "5"
+      check laterSnowflake("5", "") == "5"
+      check laterSnowflake("99", "100") == "100"   ## not string order
+      check laterSnowflake("100", "99") == "100"
+      check laterSnowflake("x", "7") == "7"
+
   suite "discord_pure.toInbound — conversion":
 
     test "message converts with correct fields":

@@ -207,6 +207,19 @@ proc runTests*() =
     test "an adapter built without the cache reports no duplicate":
       check not DiscordAdapter().isDuplicateMessage("123")
 
+  suite "DiscordAdapter delivery cursor":
+    test "a pending cursor keeps the latest id and is saved once on settle":
+      let a = newDiscordAdapter("TOK", getTempDir() / "donkey_dc_cursor.tsv")
+      var saved: seq[(string, string)]
+      a.cursor.save = proc(userId: UserId; msgId: string) {.gcsafe.} =
+        {.cast(gcsafe).}: saved.add(($userId, msgId))
+      a.notePendingCursor(UserId("u"), "100")
+      a.notePendingCursor(UserId("u"), "99")
+      a.settleCursor(UserId("u"))
+      check saved == @[("u", "100")]
+      a.settleCursor(UserId("u"))
+      check saved.len == 1   ## nothing pending any more
+
   suite "DiscordAdapter message events":
     test "a recovered (REST) message keeps its attachments, even without text":
       ## The backfill used to rebuild the event from the text alone and to

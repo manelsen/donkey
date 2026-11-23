@@ -525,25 +525,38 @@ proc handleDiscordEvent*(sm: var SessionManager;
       sendDiscordReply(event, dcAdapter, userId, approvalReply.get, logger)
       return
     handleInboundStatus(inbound)
-    ## Save last processed message_id for offline recovery
-    if event.messageId.len > 0:
-      memory.saveChannelPreference(userId, "discord_last_msg_id", event.messageId)
+    ## The DM recovery cursor: a message answered here moves it now; one handed
+    ## to a turn moves it after that turn's final reply
+    ## (`settleDiscordCursorOnReply`). A server message never moves it: the
+    ## cursor only recovers DMs.
+    let tracksCursor = event.messageId.len > 0 and event.guildId.len == 0 and
+                       event.interactionId.len == 0
+    proc answeredNow() =
+      if tracksCursor:
+        discard memory.saveChannelPreference(userId, "discord_last_msg_id",
+          laterSnowflake(memory.loadChannelPreference(userId, "discord_last_msg_id").get(""),
+                         event.messageId))
     let command = decideCommandRequest(CommandRequest(channel: ckDiscord, text: event.content))
     if command.route == crUi and
        handleDiscordUiCommand(event, dcAdapter, presentationState, memory, userId,
                               command, modelCatalogLoader, toolsCount,
                               toolClientsCount, daemonStartMs, msgSeq, logger):
+      answeredNow()
       completeInboundStatus(inbound)
     elif handleDiscordLocalExtra(event, dcAdapter, presentationState,
                                  userId, command, logger):
+      answeredNow()
       completeInboundStatus(inbound)
     else:
       let outcome = dispatchCommand(env.commands, sm, msgSeq,
         discordCommandRequest(dcAdapter, event, command, userId))
       presentDiscordOutcome(discordReplySink(dcAdapter), event, userId, outcome, logger)
       if outcome.kind == cokFallback:
+        if tracksCursor:
+          dcAdapter.notePendingCursor(userId, event.messageId)
         handleSessionFallback(inbound)
       else:
+        answeredNow()
         completeInboundStatus(inbound)
 
   of deInteraction:
@@ -671,7 +684,9 @@ proc checkDiscordOfflineMessages*(sm: var SessionManager;
       ## messages are recovered too. The REST payload has no guild_id for a DM.
       let parsed = parseDispatch("MESSAGE_CREATE", msg)
       if parsed.kind != dekMessage:
-        memory.saveChannelPreference(userId, "discord_last_msg_id", msgId)
+        ## Nothing to answer (a bot, an empty message): it settles with the
+        ## rest, so it cannot jump the cursor past a message still in a turn.
+        dcAdapter.notePendingCursor(userId, msgId)
         continue
       newMsgCount.inc
       var event = messageEventOf(parsed)
@@ -681,7 +696,6 @@ proc checkDiscordOfflineMessages*(sm: var SessionManager;
       handleDiscordEvent(sm, event, dcAdapter, presentationState, env, msgSeq, logger,
          handleInboundStatus, completeInboundStatus,
          handleSessionFallback)
-      memory.saveChannelPreference(userId, "discord_last_msg_id", msgId)
     if newMsgCount > 0:
       logger.info("discord: processed " & $newMsgCount & " offline message(s) for " & userIdStr)
 
@@ -736,3 +750,18 @@ proc drainDiscordEvents*(sm: var SessionManager;
                        completeInboundStatus,
                        handleSessionFallback)
     (hasEvent, event) = dcAdapter.tryRecvEvent()
+
+proc settleDiscordCursorOnReply*(dcAdapter: DiscordAdapter; sm: var SessionManager;
+                                 reply: OutboundMessage) =
+  ## Called for every outbound message. A turn's final reply (answer or
+  ## error) on Discord settles the user's pending DM cursor — but only when
+  ## nothing else of theirs is queued: a merged or later message may still be
+  ## in a turn, and the cursor must not pass it.
+  if reply.channel != ckDiscord or reply.isPartial or
+      reply.replyKind notin {rkFinalAnswer, rkTurnError}:
+    return
+  if sm.hasSession(reply.userId):
+    let entry = sm.get(reply.userId)
+    if not entry.inbox.isNil and entry.inbox.len > 0:
+      return
+  dcAdapter.settleCursor(reply.userId)

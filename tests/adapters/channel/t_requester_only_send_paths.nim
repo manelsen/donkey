@@ -36,6 +36,7 @@ import donkey/core/commands/command_routing
 import donkey/app/command_dispatch
 import donkey/app/session_manager
 import donkey/infra/event_queue
+import donkey/domain/agent_message
 
 # ── Recording HTTP server ─────────────────────────────────────────────────────
 
@@ -396,6 +397,75 @@ proc runTests*() =
           nonces.add(parseJson(r.body)["nonce"].getStr)
       check nonces.len == 3
       check nonces[0] != nonces[1] and nonces[1] != nonces[2] and nonces[0] != nonces[2]
+
+    test "Discord: the DM cursor moves only after the turn's final reply":
+      ## At-least-once: a crash during the turn leaves the cursor before the
+      ## message, so the startup backfill handles it again; the dedup keeps a
+      ## live replay from answering twice.
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var state = initPresentationState()
+      let e = env("dc-cur")
+      let dc = newDiscordAdapter("TOK", Tmp / "dc-cur" / "ids.tsv", apiBase = base())
+      dc.appId[] = "BOT"
+      let mem = e.memory
+      dc.cursor.save = proc(userId: UserId; msgId: string) {.gcsafe.} =
+        discard mem.saveChannelPreference(userId, "discord_last_msg_id", msgId)
+      let uid = dc.resolver.resolve(ckDiscord, "60")
+      discard sm.getOrCreate(uid)
+      handleDiscordEvent(sm, DiscordRawEvent(kind: deMessage, discordUserId: "60",
+        content: "uma pergunta", messageId: "1000"),
+        dc, state, e, msgSeq, logger, noop, noop, captureFallback)
+      check mem.loadChannelPreference(uid, "discord_last_msg_id").get("") == ""
+      ## a tool notice does not close the turn
+      settleDiscordCursorOnReply(dc, sm, OutboundMessage(userId: uid,
+        channel: ckDiscord, replyKind: rkToolNotice))
+      check mem.loadChannelPreference(uid, "discord_last_msg_id").get("") == ""
+      ## the final answer, with nothing else queued, does
+      settleDiscordCursorOnReply(dc, sm, OutboundMessage(userId: uid,
+        channel: ckDiscord, replyKind: rkFinalAnswer, text: "resposta"))
+      check mem.loadChannelPreference(uid, "discord_last_msg_id").get("") == "1000"
+
+    test "Discord: a final reply with more of the user's messages queued keeps the cursor":
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var state = initPresentationState()
+      let e = env("dc-cur2")
+      let dc = newDiscordAdapter("TOK", Tmp / "dc-cur2" / "ids.tsv", apiBase = base())
+      dc.appId[] = "BOT"
+      let mem = e.memory
+      dc.cursor.save = proc(userId: UserId; msgId: string) {.gcsafe.} =
+        discard mem.saveChannelPreference(userId, "discord_last_msg_id", msgId)
+      let uid = dc.resolver.resolve(ckDiscord, "61")
+      let entry = sm.getOrCreate(uid)
+      handleDiscordEvent(sm, DiscordRawEvent(kind: deMessage, discordUserId: "61",
+        content: "primeira", messageId: "2000"),
+        dc, state, e, msgSeq, logger, noop, noop, captureFallback)
+      entry.inbox.putNoWait(newTaskMsg("m2", tkUserMsg, $uid, "segunda"))
+      settleDiscordCursorOnReply(dc, sm, OutboundMessage(userId: uid,
+        channel: ckDiscord, replyKind: rkFinalAnswer))
+      check mem.loadChannelPreference(uid, "discord_last_msg_id").get("") == ""
+
+    test "Discord: a command answered at once moves the cursor at once; a server message never does":
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var state = initPresentationState()
+      let e = env("dc-cur3")
+      let dc = newDiscordAdapter("TOK", Tmp / "dc-cur3" / "ids.tsv", apiBase = base())
+      dc.appId[] = "BOT"
+      let mem = e.memory
+      let uid = dc.resolver.resolve(ckDiscord, "62")
+      handleDiscordEvent(sm, DiscordRawEvent(kind: deMessage, discordUserId: "62",
+        content: "/help", messageId: "3000"),
+        dc, state, e, msgSeq, logger, noop, noop, noop)
+      check mem.loadChannelPreference(uid, "discord_last_msg_id").get("") == "3000"
+      handleDiscordEvent(sm, DiscordRawEvent(kind: deMessage, discordUserId: "62",
+        content: "/help", messageId: "4000", channelId: "guild-chan", guildId: "g1"),
+        dc, state, e, msgSeq, logger, noop, noop, noop)
+      check mem.loadChannelPreference(uid, "discord_last_msg_id").get("") == "3000"
 
     test "Discord: a message delivered twice is handled once":
       ## A gateway RESUME replays events, and the startup backfill can overlap

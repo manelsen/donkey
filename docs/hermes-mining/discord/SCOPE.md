@@ -122,8 +122,12 @@ sobre o gateway:
   mantém o comportamento anterior; DM segue a política de DM
   (`8598746e86`, `f6d4b6a319`).
 
-Ainda **não há**: ledger de entrega e cursor que só avança depois da entrega
-final (hoje avança antes do despacho: at-most-once).
+- **Cursor depois da entrega** (decisão do mantenedor, 23/11: at-least-once):
+  a DM entregue a um turno só move o cursor quando a resposta final daquele
+  turno sai e não há outra mensagem do usuário na fila; um crash no meio deixa
+  a mensagem para o backfill do startup, e o dedup segura o replay ao vivo.
+  Mensagem respondida na hora (comando) move na hora; mensagem de servidor
+  nunca move (o cursor só recupera DMs) (`2b2203e3a7`).
 
 O Slack já tem um precedente interno de dedup com TTL
 (`tests/channel/t_slack.nim`, suíte "SlackAdapter event deduplication"), então

@@ -258,6 +258,16 @@ func isDiscordCdnUrl*(url: string): bool =
     parsed.password.len == 0 and parsed.port in ["", "443"] and
     parsed.hostname.toLowerAscii() in ["cdn.discordapp.com", "media.discordapp.net"]
 
+func laterSnowflake*(a, b: string): string =
+  ## The later of two Discord ids. Snowflakes are 64-bit numbers, so "100" is
+  ## after "99"; an id that does not parse loses to one that does.
+  var x, y: BiggestInt
+  let okA = (try: (x = parseBiggestInt(a); true) except ValueError: false)
+  let okB = (try: (y = parseBiggestInt(b); true) except ValueError: false)
+  if not okA: return (if okB: b else: a)
+  if not okB: return a
+  if y > x: b else: a
+
 # ── Gateway liveness ──────────────────────────────────────────────────────────
 
 type
