@@ -19,6 +19,9 @@ type
     apiKey*:       string
     baseUrl*:      string   ## the descriptor's `baseUrlEnv` override, read
                             ## on the loop; empty means the descriptor's URL
+    awsAccessKeyId*:     string  ## Bedrock IAM credentials (SigV4); empty
+    awsSecretAccessKey*: string  ## for every other provider
+    awsSessionToken*:    string
 
   ModelCatalogEntry* = object
     providerName*: string

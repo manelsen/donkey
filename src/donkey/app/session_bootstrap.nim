@@ -117,6 +117,12 @@ proc buildProviderSpec*(prefs: ProviderPrefs): ProviderSpec {.gcsafe, raises: []
                else: descriptor.defaultModel,
     apiKey: descriptorApiKey(descriptor),
     baseUrl: descriptorBaseUrl(descriptor),
+    awsAccessKeyId:
+      if descriptor.id == "bedrock": awsCredentialValue("AWS_ACCESS_KEY_ID") else: "",
+    awsSecretAccessKey:
+      if descriptor.id == "bedrock": awsCredentialValue("AWS_SECRET_ACCESS_KEY") else: "",
+    awsSessionToken:
+      if descriptor.id == "bedrock": awsCredentialValue("AWS_SESSION_TOKEN") else: "",
   )
 
 proc buildProviderBundle*(preferencesMd: string;
@@ -147,6 +153,7 @@ func availableProviderNames*(av: ProviderAvailability): seq[string] =
   if av.ollama: result.add("ollama")
   if av.nvidia: result.add("nvidia")
   if av.mistral: result.add("mistral")
+  if av.bedrock: result.add("bedrock")
   if av.alibaba: result.add("alibaba")
   if av.fireworks: result.add("fireworks")
 

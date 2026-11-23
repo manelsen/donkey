@@ -48,6 +48,7 @@ type
     zen*: bool
     nvidia*: bool
     mistral*: bool
+    bedrock*: bool
     alibaba*: bool
     fireworks*: bool
 
@@ -210,6 +211,7 @@ func defaultModelForProvider*(providerName: string;
     of "zen", "opencode-zen": ZenDefaultModel
     of "nvidia", "nvidia-nim", "nim", "build-nvidia": DefaultModelNvidia
     of "mistral", "mistralai", "mistral-ai": DefaultModelMistral
+    of "bedrock", "aws-bedrock", "amazon-bedrock", "aws": DefaultModelBedrock
     of "alibaba", "dashscope", "alibaba-cloud", "aliyun": DefaultModelAlibaba
     of "fireworks", "fireworks-ai", "fw": DefaultModelFireworks
     else: "glm-4.7"
@@ -264,6 +266,7 @@ func isAvailable(availability: ProviderAvailability; providerName: string): bool
   of "zen", "opencode-zen": availability.zen
   of "nvidia", "nvidia-nim", "nim", "build-nvidia": availability.nvidia
   of "mistral", "mistralai", "mistral-ai": availability.mistral
+  of "bedrock", "aws-bedrock", "amazon-bedrock", "aws": availability.bedrock
   of "alibaba", "dashscope", "alibaba-cloud", "aliyun": availability.alibaba
   of "fireworks", "fireworks-ai", "fw": availability.fireworks
   else: false
@@ -288,6 +291,7 @@ func availableProviders(rc: RoutingCatalog): seq[string] {.used.} =
   if avail.zen: result.add("zen")
   if avail.nvidia: result.add("nvidia")
   if avail.mistral: result.add("mistral")
+  if avail.bedrock: result.add("bedrock")
   if avail.alibaba: result.add("alibaba")
   if avail.fireworks: result.add("fireworks")
 

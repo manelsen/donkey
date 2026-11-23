@@ -697,6 +697,17 @@ proc buildDefaultCatalog*(): ProviderCatalog =
     contextWindow = 0,
   ))
 
+  # ── AWS Bedrock ──
+  # Nova Pro reads images and calls tools; context is not set here.
+  result.register(makeEntry(
+    DefaultModelBedrock, "bedrock",
+    aliases = @[],
+    capabilities = {mcTools, mcImage},
+    costTier = ctModerate,
+    budgetPriority = bpDefault,
+    contextWindow = 0,
+  ))
+
   # ── Mistral AI ──
   # Context is not verified, so 0; vision is per model (Pixtral), not here.
   result.register(makeEntry(

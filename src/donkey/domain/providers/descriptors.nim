@@ -16,6 +16,7 @@ type
     ptGemini            ## Google generateContent
     ptOllama            ## native Ollama /api/chat
     ptMulti             ## a gateway that routes per model (Zen)
+    ptBedrockConverse   ## AWS Bedrock Converse (SigV4 or Bedrock API key)
 
   ProviderAuthType* = enum
     atApiKey            ## static key from the env names below
@@ -127,6 +128,16 @@ const ProviderDescriptors*: seq[ProviderDescriptor] = @[
     baseUrlEnv: "MISTRAL_BASE_URL",
     defaultModel: DefaultModelMistral,
     aliases: @["mistralai", "mistral-ai"]),
+  ProviderDescriptor(
+    ## Converse API. The bearer is a Bedrock API key; IAM credentials
+    ## (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN) are read
+    ## separately into the spec, and the region from AWS_REGION.
+    id: "bedrock", transport: ptBedrockConverse, authType: atApiKey,
+    envNames: @["AWS_BEARER_TOKEN_BEDROCK"],
+    baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+    baseUrlEnv: "BEDROCK_BASE_URL",
+    defaultModel: DefaultModelBedrock,
+    aliases: @["aws-bedrock", "amazon-bedrock", "aws"]),
 ]
 
 func providerDescriptors*(): seq[ProviderDescriptor] =

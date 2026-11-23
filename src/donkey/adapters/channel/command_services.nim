@@ -216,6 +216,7 @@ proc buildDoctorReport*(memory: MdFileAdapter;
     ("MINIMAX_API_KEY", "MiniMax"),
     ("NVIDIA_API_KEY", "NVIDIA NIM"),
     ("MISTRAL_API_KEY", "Mistral AI"),
+    ("AWS_BEARER_TOKEN_BEDROCK", "AWS Bedrock"),
     ("DASHSCOPE_API_KEY", "Alibaba DashScope"),
     ("FIREWORKS_API_KEY", "Fireworks AI"),
   ]

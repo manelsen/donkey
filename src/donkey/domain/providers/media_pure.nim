@@ -223,6 +223,13 @@ func visionSupport*(providerName, model: string): VisionSupport =
     if "-vl" in m or m.startsWith("qvq"): vsYes else: vsUnknown
   of "mistral":
     if m.startsWith("pixtral"): vsYes else: vsUnknown
+  of "bedrock":
+    ## Model ids may carry a regional inference-profile prefix (us., eu., …).
+    if "anthropic.claude" in m: vsYes
+    elif "amazon.nova-micro" in m: vsNo
+    elif "amazon.nova-pro" in m or "amazon.nova-lite" in m or
+        "amazon.nova-premier" in m: vsYes
+    else: vsUnknown
   else:
     vsUnknown
 

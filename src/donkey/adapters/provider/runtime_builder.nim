@@ -13,6 +13,7 @@ import ../../domain/providers/profile_nvidia
 import ../../domain/providers/profile_alibaba
 import ../../domain/providers/profile_fireworks
 import ../../domain/providers/profile_mistral
+import ./bedrock
 import ../../core/pipeops
 import ../../ports/http
 import ../../ports/provider
@@ -294,6 +295,19 @@ proc buildProviderBundle*(spec: ProviderSpec; http: HttpRuntimePort
       completeFn: makeFn(adapter),
       streamFn:   adapter.makeStreamFn(),
     )
+  of "bedrock":
+    ## Converse with a Bedrock API key or SigV4; no streaming yet.
+    let adapter = newBedrockAdapter(
+      model = if spec.modelName.len > 0: spec.modelName
+              else: providerDefaultModelFor("bedrock"),
+      baseUrl = spec.baseUrl,
+      bearer = spec.apiKey,
+      accessKeyId = spec.awsAccessKeyId,
+      secretAccessKey = spec.awsSecretAccessKey,
+      sessionToken = spec.awsSessionToken,
+      http = http,
+    )
+    ProviderBundle(completeFn: makeFn(adapter))
   of "mistral":
     ## Mistral speaks the OpenAI dialect strictly; the deviations are data in
     ## `mistralCompatProfile`, so there is no Mistral adapter file.

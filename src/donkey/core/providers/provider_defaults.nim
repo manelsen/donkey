@@ -18,6 +18,9 @@ const
   DefaultModelMiniMax*     = "MiniMax-M2"
   DefaultModelNvidia*      = "nvidia/nemotron-3.5-super-vl-120b-a12b"
   DefaultModelMistral*     = "mistral-large-latest"
+  DefaultModelBedrock*     = "amazon.nova-pro-v1:0"
+    ## AWS's own model: on-demand in us-east-1, tools and images, no
+    ## third-party model access form to fill in.
     ## Mistral's own moving alias for its flagship chat model.
   DefaultModelAlibaba*     = "qwen3.8-max"  ## first of the curated DashScope list
   DefaultModelFireworks*   = "accounts/fireworks/models/kimi-k2p6"

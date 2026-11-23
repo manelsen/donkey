@@ -133,6 +133,10 @@ Keep this disabled unless you explicitly want the PostgreSQL runtime.
 | `GEMINI_API_KEY` | Gemini provider key |
 | `MINIMAX_API_KEY` | MiniMax provider key |
 | `MISTRAL_API_KEY` | Mistral AI provider key |
+| `AWS_BEARER_TOKEN_BEDROCK` | AWS Bedrock API key (sent as a bearer) |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | AWS Bedrock IAM credentials, signed with SigV4 (used when no Bedrock API key is set) |
+| `AWS_REGION` / `AWS_DEFAULT_REGION` | Bedrock region (default `us-east-1`) |
+| `BEDROCK_BASE_URL` | Override the Bedrock runtime endpoint |
 | `MISTRAL_BASE_URL` | Override the Mistral endpoint (base URL; `/chat/completions` is appended) |
 | `BRAVE_API_KEY` | Enables `web_search` via Brave Search |
 

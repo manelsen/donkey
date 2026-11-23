@@ -17,6 +17,7 @@ import ../core/pipeops
 import ../core/providers/credential_pool
 import ../core/providers/smart_routing
 import ../config/environment
+import ../domain/providers/bedrock_pure
 import ../domain/providers/descriptors
 import ../infra/thread_owner
 
@@ -82,6 +83,9 @@ func configuredIn*(env: Environment; id: string): bool =
   let d = descriptorOr(id)
   if d.authType == atNone:
     return d.envNames.len > 0 and env.has(d.envNames[0])
+  if d.id == "bedrock" and env.stripped("AWS_ACCESS_KEY_ID").len > 0 and
+      env.stripped("AWS_SECRET_ACCESS_KEY").len > 0:
+    return true  ## IAM credentials, signed with SigV4
   firstCredential(env, d.envNames).len > 0
 
 proc installedCredentials(): Environment {.gcsafe, raises: [].} =
@@ -138,7 +142,19 @@ proc descriptorApiKey*(d: ProviderDescriptor; nowMs = nowMs()): string
 
 proc descriptorBaseUrl*(d: ProviderDescriptor): string {.gcsafe, raises: [].} =
   ## The descriptor's `baseUrlEnv` override from the installed snapshot.
+  ## Bedrock without an override is the runtime URL of `AWS_REGION`
+  ## (then `AWS_DEFAULT_REGION`, then us-east-1).
+  if d.id == "bedrock":
+    let explicit = credentialValue(d.baseUrlEnv)
+    if explicit.len > 0: return explicit
+    var region = credentialValue("AWS_REGION")
+    if region.len == 0: region = credentialValue("AWS_DEFAULT_REGION")
+    return bedrockRuntimeUrl(region)
   if d.baseUrlEnv.len == 0: "" else: credentialValue(d.baseUrlEnv)
+
+proc awsCredentialValue*(name: string): string {.gcsafe, raises: [].} =
+  ## Bedrock's IAM credentials, read from the installed snapshot.
+  credentialValue(name)
 
 proc nextCredentialKey*(providerName, currentKey: string;
                         nowMs = nowMs()): string {.gcsafe, raises: [].} =
@@ -194,6 +210,7 @@ proc detectProviderAvailability*(): ProviderAvailability {.gcsafe, raises: [].} 
     zen: providerConfigured("zen"),
     nvidia: providerConfigured("nvidia"),
     mistral: providerConfigured("mistral"),
+    bedrock: providerConfigured("bedrock"),
     alibaba: providerConfigured("alibaba"),
     fireworks: providerConfigured("fireworks"),
   )
