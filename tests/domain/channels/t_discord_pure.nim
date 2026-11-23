@@ -692,6 +692,38 @@ proc runTests*() =
       for code in [0, 1000, 1001, 1006, 4000, 4001, 4002, 4003, 4005, 4008]:
         check closeAction(code) == caResume
 
+  suite "discord_pure — server allowlist (like TG-016)":
+    test "an empty list allows every server, and a DM is never filtered":
+      check discordChannelAllowed(@[], "g1", "c1")
+      check discordChannelAllowed(@["g9"], "", "dm-1")
+
+    test "a listed server or channel is allowed, anything else is not":
+      check discordChannelAllowed(@["g1"], "g1", "c1")
+      check discordChannelAllowed(@["c1"], "g1", "c1")
+      check not discordChannelAllowed(@["g2", "c2"], "g1", "c1")
+
+    test "the wildcard allows every server":
+      check discordChannelAllowed(@["*"], "g1", "c1")
+
+    test "slash commands and buttons carry their server and channel":
+      var slash = makeSlashCommand("u1", "i1", "t1", "help")
+      slash["guild_id"] = %"g1"
+      slash["channel_id"] = %"c1"
+      let r = parseDispatch("INTERACTION_CREATE", slash)
+      check r.guildId == "g1"
+      check r.originChannelId == "c1"
+      var click = makeButtonClick("u1", "i2", "t2", "ok")
+      click["guild_id"] = %"g1"
+      click["channel_id"] = %"c2"
+      let b = parseDispatch("INTERACTION_CREATE", click)
+      check b.guildId == "g1"
+      check b.originChannelId == "c2"
+
+    test "a message's origin is its channel":
+      var d = makeMessageCreate("u1", "c3", "m1", "hi")
+      d["guild_id"] = %"g1"
+      check parseDispatch("MESSAGE_CREATE", d).originChannelId == "c3"
+
   suite "discord_pure.toInbound — conversion":
 
     test "message converts with correct fields":
