@@ -76,6 +76,7 @@ import donkey/adapters/tools/browser_executor
 import donkey/domain/tools/browser_pure
 import donkey/adapters/state/runtime_store
 import donkey/adapters/state/schedule_store
+import donkey/ports/schedules
 import donkey/adapters/state/pairing_store
 import donkey/adapters/state/approval_store
 import donkey/adapters/secrets/vault
@@ -860,6 +861,15 @@ func buildDaemonSessionServices(ctx: DaemonContext; cfg: DonkeyConfig;
                                 memory: MdFileAdapter;
                                 log: Logger): SessionIngressServices
 
+proc userSchedulePort(cfg: DonkeyConfig): SchedulePort =
+  ## The store `manage_schedules` writes to; none when the scheduler is off,
+  ## so the tool does not accept jobs that would never run.
+  let lookup: EnvLookup = proc(name: string): string {.
+      gcsafe, raises: [], noSideEffect.} = cfg.env.get(name)
+  if not parseSchedulerConfig(lookup).enabled:
+    return SchedulePort()
+  newScheduleStoreRef(cfg.home / "state").toSchedulePort()
+
 proc setupIpcServer(cfg: DonkeyConfig;
                     runtime: DaemonRuntime;
                     toolsCount: int;
@@ -1023,6 +1033,7 @@ func buildDaemonSessionServices(ctx: DaemonContext;
     subagentWorkspace = subagentWorkspacePort(),
     fs = newFsAdapter(),
     reminders = newReminderStore(memory.paddocksDir).toReminderPort(),
+    schedules = userSchedulePort(cfg),
     process = newProcessAdapter(),
     attachments = newAttachmentStore(),
   )

@@ -564,6 +564,29 @@ const
     "\"text\":{\"type\":\"string\",\"description\":\"Note to append for action=note\"}" &
     "},\"required\":[\"action\"]}"
 
+# ── manage_schedules ──────────────────────────────────────────────────────────
+const
+  ManageSchedulesToolName* = "manage_schedules"
+  ManageSchedulesToolDescription* =
+    "Create, list, pause, resume or delete the user's recurring jobs. At each " &
+    "run the prompt is given to you as a task in this channel, with your tools, " &
+    "and your answer goes to the user: use it for 'every weekday at 9 send me " &
+    "the news', 'check the build every 2 hours'. For a one-time reminder use " &
+    "schedule_reminder instead. `schedule` is a 5-field cron (minute hour " &
+    "day month weekday, '0 9 * * 1-5'), @hourly, @daily, @weekly, @monthly, " &
+    "or '@every 30m' (m/h/d, counted from now). A cron runs on the clock of " &
+    "`timezone` (UTC±HH:MM, the user's offset; default UTC). At most one run " &
+    "every 5 minutes, 20 jobs per user."
+  ManageSchedulesToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"action\":{\"type\":\"string\",\"enum\":[\"list\",\"create\",\"delete\",\"pause\",\"resume\"]}," &
+    "\"name\":{\"type\":\"string\",\"description\":\"Job name: 1-32 of a-z, 0-9, '-'\"}," &
+    "\"schedule\":{\"type\":\"string\",\"description\":\"Cron, alias or @every <n><m|h|d>\"}," &
+    "\"prompt\":{\"type\":\"string\",\"description\":\"What to do at each run, written as a task for yourself\"}," &
+    "\"timezone\":{\"type\":\"string\",\"description\":\"UTC±HH:MM for a cron; default UTC+00:00\"}," &
+    "\"catch_up\":{\"type\":\"string\",\"enum\":[\"skip\",\"once\"],\"description\":\"After downtime: skip missed runs (default) or run the latest once\"}" &
+    "},\"required\":[\"action\"]}"
+
 # ── ask_agent / convene_agents ────────────────────────────────────────────────
 const
   AskAgentToolName* = "ask_agent"

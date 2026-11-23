@@ -515,6 +515,7 @@ proc nativeSessionTools*(): seq[ToolDescription] {.gcsafe, raises: [].} =
     (RewindToolName,        RewindToolDescription,        RewindToolSchema),
     (ManageSkillsToolName,  ManageSkillsToolDescription,  ManageSkillsToolSchema),
     (ManageAgentsToolName,  ManageAgentsToolDescription,  ManageAgentsToolSchema),
+    (ManageSchedulesToolName, ManageSchedulesToolDescription, ManageSchedulesToolSchema),
     (AskAgentToolName,      AskAgentToolDescription,      AskAgentToolSchema),
     (ConveneAgentsToolName, ConveneAgentsToolDescription, ConveneAgentsToolSchema),
     (SessionSearchToolName, SessionSearchToolDescription, SessionSearchToolSchema),

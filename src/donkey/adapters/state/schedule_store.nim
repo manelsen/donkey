@@ -75,6 +75,7 @@ import ../../app/automation_runtime
 import ../../domain/automation/schedule_pure
 import ./durable_file
 import ../../domain/automation/schedule_view
+import ../../ports/schedules
 
 const
   ScheduleFileName* = "schedules.json"
@@ -562,3 +563,22 @@ proc scheduleStorePort*(store: ScheduleStore): ScheduleStorePort =
 proc newScheduleStore*(stateDir: string): ScheduleStorePort =
   ## Daemon-facing constructor: a store bound to `{stateDir}/schedules.json`.
   scheduleStorePort(newScheduleStoreRef(stateDir))
+
+proc toSchedulePort*(store: ScheduleStore): SchedulePort =
+  ## What the `manage_schedules` tool reaches the store through.
+  SchedulePort(
+    all: proc(): Result[seq[ScheduleViewRecord], string] {.gcsafe, raises: [].} =
+      let records = ? store.loadAllRecords()
+      var rows: seq[ScheduleViewRecord]
+      for record in records:
+        rows.add(record.toViewRecord)
+      ok(rows),
+    insert: proc(spec: ScheduleSpec): Result[bool, string] {.gcsafe, raises: [].} =
+      store.insertIfAbsent(ScheduleRecord(spec: spec,
+                                          lastRunAtMs: spec.createdAtMs)),
+    remove: proc(id: string): Result[void, string] {.gcsafe, raises: [].} =
+      store.remove(id),
+    setEnabled: proc(id: string; enabled: bool; nowMs: int64
+                    ): Result[bool, string] {.gcsafe, raises: [].} =
+      store.setEnabled(id, enabled, nowMs),
+  )

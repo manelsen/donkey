@@ -187,6 +187,7 @@ const
   ## part of the policy: parent tools cannot be escalated through spawn.
   SubagentHardDeniedTools* = [
     "manage_agents",
+    "manage_schedules",
     "ask_agent",
     "convene_agents",
     "bash",
