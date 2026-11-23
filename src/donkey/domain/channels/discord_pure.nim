@@ -12,7 +12,7 @@
 ##   2. toInbound(r, userId)        → InboundMessage
 ##   3. hasInteraction(r)           → bool             (interaction needs ack)
 
-import std/[json, strutils]
+import std/[json, strutils, uri]
 import ../../core/pipeops
 import ../../domain/message
 
@@ -42,6 +42,8 @@ type
     needsModal*:       bool     ## /continue without code → caller must send modal
     hasMedia*:         bool     ## true when message has attachments
     attachmentUrls*:   seq[string]  ## list of attachment URLs (proxy_url or url)
+    attachmentNames*:  seq[string]  ## file names, parallel to attachmentUrls
+    attachmentMimes*:  seq[string]  ## content types ("" when Discord gave none)
     guildId*:          string   ## server id; empty for a DM
     referencedAuthorId*: string ## author of the message this one replies to
 
@@ -107,6 +109,8 @@ func parseMessageCreate(d: JsonNode): DsParseResult =
 
   # Extract attachments if present; an oversize one is named, not fetched.
   var attachmentUrls: seq[string] = @[]
+  var attachmentNames: seq[string] = @[]
+  var attachmentMimes: seq[string] = @[]
   var notes: seq[string] = @[]
   let attachments = d.getOrDefault("attachments")
   if attachments != nil and attachments.kind == JArray:
@@ -119,6 +123,8 @@ func parseMessageCreate(d: JsonNode): DsParseResult =
       let url = att.getOrDefault("proxy_url").getStr(att.getOrDefault("url").getStr(""))
       if url.len > 0:
         attachmentUrls.add(url)
+        attachmentNames.add(att.getOrDefault("filename").getStr(""))
+        attachmentMimes.add(att.getOrDefault("content_type").getStr(""))
   let hasMedia = attachmentUrls.len > 0
   if notes.len > 0:
     if content.len > 0: content.add("\n\n")
@@ -136,6 +142,8 @@ func parseMessageCreate(d: JsonNode): DsParseResult =
     messageId: d.getOrDefault("id").getStr(""),
     hasMedia:  hasMedia,
     attachmentUrls: attachmentUrls,
+    attachmentNames: attachmentNames,
+    attachmentMimes: attachmentMimes,
     guildId:   d.getOrDefault("guild_id").getStr(""),
     referencedAuthorId:
       d.getOrDefault("referenced_message").getOrDefault("author")
@@ -229,6 +237,15 @@ func parseInteractionCreate(d: JsonNode): DsParseResult =
     )
 
   DsParseResult(kind: dekUnknown)
+
+func isDiscordCdnUrl*(url: string): bool =
+  ## Attachments are fetched only from Discord's own CDN over https. The URL
+  ## comes from the gateway, but the download is an outbound request from
+  ## the daemon and must not reach any other host.
+  let parsed = try: parseUri(url) except CatchableError: return false
+  parsed.scheme == "https" and parsed.username.len == 0 and
+    parsed.password.len == 0 and parsed.port in ["", "443"] and
+    parsed.hostname.toLowerAscii() in ["cdn.discordapp.com", "media.discordapp.net"]
 
 # ── Mentions ──────────────────────────────────────────────────────────────────
 

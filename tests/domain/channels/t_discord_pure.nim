@@ -641,6 +641,26 @@ proc runTests*() =
       check stripBotMention("<@B> /ask\n    indented code", "B") ==
         "/ask\n    indented code"
 
+  suite "discord_pure — inbound attachments":
+    test "names and types are parsed next to the URLs":
+      var d = makeMessageCreate("u1", "ch1", "m1", "")
+      d["attachments"] = %* [
+        {"filename": "a.png", "size": 10, "content_type": "image/png",
+         "url": "https://cdn.discordapp.com/a.png"},
+        {"filename": "b.pdf", "size": 10, "url": "https://cdn.discordapp.com/b.pdf"}]
+      let r = parseDispatch("MESSAGE_CREATE", d)
+      check r.attachmentNames == @["a.png", "b.pdf"]
+      check r.attachmentMimes == @["image/png", ""]
+
+    test "only Discord's CDN over https is a download source":
+      check isDiscordCdnUrl("https://cdn.discordapp.com/attachments/1/2/a.png")
+      check isDiscordCdnUrl("https://media.discordapp.net/attachments/1/2/a.png?x=1")
+      check not isDiscordCdnUrl("http://cdn.discordapp.com/a.png")
+      check not isDiscordCdnUrl("https://cdn.discordapp.com.evil.test/a.png")
+      check not isDiscordCdnUrl("https://evil.test/cdn.discordapp.com/a.png")
+      check not isDiscordCdnUrl("https://user@cdn.discordapp.com/a.png")
+      check not isDiscordCdnUrl("")
+
   suite "discord_pure.toInbound — conversion":
 
     test "message converts with correct fields":

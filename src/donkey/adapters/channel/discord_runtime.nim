@@ -501,16 +501,24 @@ proc handleDiscordEvent*(sm: var SessionManager;
         logger.debug("discord: message " & event.messageId & " not addressed to the bot")
         return
       event.content = stripBotMention(event.content, botId)
-      if event.content.len == 0:
+      if event.content.len == 0 and event.attachmentUrl.len == 0:
         return  ## a bare ping carries nothing to answer
     let userId = dcAdapter.resolver.resolve(ckDiscord, event.discordUserId)
-    let inbound = InboundMessage(
+    var inbound = InboundMessage(
       userId:    userId,
       channel:   ckDiscord,
       channelId: event.channelId,
       messageId: event.messageId,
       text:      event.content,
+      mediaUrl:  event.attachmentUrl,
+      mediaFileName: event.attachmentName,
+      mediaMimeType: event.attachmentMime,
     )
+    if event.extraAttachments.len > 0:
+      ## One attachment per turn is downloaded; say which ones were not.
+      if inbound.text.len > 0: inbound.text.add("\n\n")
+      inbound.text.add("[Outros anexos não lidos: " &
+                       event.extraAttachments.join(", ") & "]")
     let approvalReply = tryHandleApprovalInput(userId, event.content)
     if approvalReply.isSome:
       sendDiscordReply(event, dcAdapter, userId, approvalReply.get, logger)
@@ -658,16 +666,18 @@ proc checkDiscordOfflineMessages*(sm: var SessionManager;
       let msgId = msg.getOrDefault("id").getStr("")
       if not discordMessageAfterCursor(msgId, lastMsgId, floorId):
         continue
+      ## Same parse as the gateway, so attachments and attachment-only
+      ## messages are recovered too. The REST payload has no guild_id for a DM.
+      let parsed = parseDispatch("MESSAGE_CREATE", msg)
+      if parsed.kind != dekMessage:
+        memory.saveChannelPreference(userId, "discord_last_msg_id", msgId)
+        continue
       newMsgCount.inc
-      let content = msg.getOrDefault("content").getStr("")
+      var event = messageEventOf(parsed)
+      event.discordUserId = discordId
+      event.channelId = chId
       logger.info("discord offline: processing message " & msgId & " from " & discordId)
-      handleDiscordEvent(sm, DiscordRawEvent(
-        kind:          deMessage,
-        discordUserId: discordId,
-        content:       content,
-        channelId:     chId,
-        messageId:     msgId,
-      ), dcAdapter, presentationState, env, msgSeq, logger,
+      handleDiscordEvent(sm, event, dcAdapter, presentationState, env, msgSeq, logger,
          handleInboundStatus, completeInboundStatus,
          handleSessionFallback)
       memory.saveChannelPreference(userId, "discord_last_msg_id", msgId)
