@@ -396,6 +396,15 @@ var gGatewayThread: ThreadHandle[GatewayArgs]  ## shared memory: a global pointe
 # ── DiscordAdapter ─────────────────────────────────────────────────────────────
 
 type
+  DiscordCursorState* = ref object
+    ## The DM recovery cursor (`discord_last_msg_id`) moves only after the
+    ## turn that handled a message has delivered its final reply: a crash in
+    ## between leaves the message to the startup backfill (at-least-once; the
+    ## message dedup keeps a live replay from answering twice).
+    pending*: Table[string, string]   ## userId → latest DM id not yet settled
+    save*: proc(userId: UserId; msgId: string) {.gcsafe.}
+      ## Set by the daemon wiring (it owns the memory); nil saves nothing.
+
   DiscordAdapter* = object
     token*:     string
     apiBase*:   string       ## override for testing
@@ -405,6 +414,7 @@ type
     statusReactions: ref Table[string, string] ## channel_id:message_id -> emoji
     seenMessages: ref RecentIds  ## message ids already handled (RESUME replay, backfill overlap)
     requireMention*: bool  ## in a server, answer only when mentioned or replied to
+    cursor*: DiscordCursorState  ## DM recovery cursor, moved after delivery
     allowedChannels*: seq[string]  ## servers/channels served; empty = all
     http*:      StdHttpAdapter
 
@@ -814,6 +824,25 @@ proc downloadFile*(a: DiscordAdapter; fileId: string): Result[FileDownload, stri
   except CatchableError as e:
     err(e.msg)
 
+proc notePendingCursor*(a: DiscordAdapter; userId: UserId; msgId: string) =
+  ## A DM handed to a turn: the cursor may move to it once the turn is done.
+  if a.cursor.isNil or msgId.len == 0: return
+  let key = $userId
+  a.cursor.pending[key] = laterSnowflake(a.cursor.pending.getOrDefault(key, ""), msgId)
+
+func hasPendingCursor*(a: DiscordAdapter; userId: UserId): bool =
+  not a.cursor.isNil and a.cursor.pending.getOrDefault($userId, "").len > 0
+
+proc settleCursor*(a: DiscordAdapter; userId: UserId) =
+  ## Saves the pending cursor of `userId`, once.
+  if a.cursor.isNil: return
+  let key = $userId
+  let msgId = a.cursor.pending.getOrDefault(key, "")
+  if msgId.len == 0: return
+  a.cursor.pending.del(key)
+  if a.cursor.save != nil:
+    a.cursor.save(userId, msgId)
+
 proc ack*(a: DiscordAdapter; channelId: string) =
   ## No-op — Discord has no explicit acknowledgement step.
   discard
@@ -911,6 +940,7 @@ proc newDiscordAdapter*(token:        string;
   appId[] = ""
   var seen = new(RecentIds)
   seen[] = initRecentIds(DiscordDedupeTtlSec, DiscordDedupeMaxMessages)
+  let cursor = DiscordCursorState(pending: initTable[string, string]())
   DiscordAdapter(
     token:      token,
     apiBase:    apiBase,
@@ -921,5 +951,6 @@ proc newDiscordAdapter*(token:        string;
     seenMessages: seen,
     requireMention: requireMention,
     allowedChannels: allowedChannels,
+    cursor: cursor,
     http:       newStdHttpAdapter(),
   )

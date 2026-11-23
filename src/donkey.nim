@@ -1180,6 +1180,7 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
       continue
     completeReactionFor(runtime.presentationState, outboundPorts, outMsg)
     routeOutbound(outMsg, outboundPorts, log, runtime.presentationState, runtime.ledger)
+    settleDiscordCursorOnReply(adapters.dc, runtime.sm, outMsg)
 
 proc startDaemonIngress(ctx: DaemonContext;
                         log: Logger) =
@@ -1213,6 +1214,10 @@ proc setupDaemonRuntime(ctx: DaemonContext;
                         cfg: DonkeyConfig;
                         memory: MdFileAdapter;
                         log: Logger) =
+  ## The Discord DM cursor is saved by the adapter after delivery; the memory
+  ## that stores it lives here.
+  ctx.adapters.dc.cursor.save = proc(userId: UserId; msgId: string) {.gcsafe.} =
+    discard memory.saveChannelPreference(userId, "discord_last_msg_id", msgId)
   setupIpcServer(cfg, ctx.runtime, ctx.services.tools.len + nativeSessionTools().len, ctx.runtime.daemonStartMs,
                  ctx.env.telegramToken, ctx.env.discordToken, ctx.env.wecomCorpId,
                  ctx.env.wechatAppId, ctx.env.feishuAppId, ctx.env.slackBotToken,
