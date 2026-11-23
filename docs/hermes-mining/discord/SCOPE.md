@@ -73,9 +73,12 @@ sobre o gateway:
   e a sobreposição do backfill com o tempo real não re-despacham um turno
   (cobre `cee761ee4a`/`807bdc17f6`).
 
-Ainda **não há**: ledger de entrega, cursor que só avança depois da entrega
-final (hoje avança antes do despacho: at-most-once) e backfill numa reconexão
-que não conseguiu fazer RESUME.
+- **Backfill depois de uma sessão perdida**: um READY depois de outro no
+  mesmo processo (RESUME recusado ou impossível) põe `deResync` na fila, e o
+  drain roda a mesma recuperação do startup (cobre `2278f2cb7e`).
+
+Ainda **não há**: ledger de entrega e cursor que só avança depois da entrega
+final (hoje avança antes do despacho: at-most-once).
 
 O Slack já tem um precedente interno de dedup com TTL
 (`tests/channel/t_slack.nim`, suíte "SlackAdapter event deduplication"), então

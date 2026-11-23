@@ -42,6 +42,8 @@ type
     deInteraction   ## slash command interaction (code already extracted)
     deModalRequest  ## /continue slash cmd without code → need to show modal
     deButtonClick   ## component button click — content = custom_id
+    deResync        ## a new gateway session replaced a lost one: the events
+                    ## of the gap were not replayed, recover them by REST
 
   DiscordRawEvent* = object
     kind*:             DiscordEventKind
@@ -65,6 +67,13 @@ var gDiscordEvents* = initEventQueue[DiscordRawEvent]("discord")
 ## and the flag are thread-local to it: no lock, no cast.
 var gDiscordPending {.threadvar.}: seq[DiscordRawEvent]
 var gDiscordReady {.threadvar.}: bool
+var gDiscordEverReady {.threadvar.}: bool  ## a READY was seen before in this process
+
+func readyNeedsResync*(readyBefore: bool): bool =
+  ## A READY answers an IDENTIFY. The first one is the startup, recovered by
+  ## the startup backfill; a later one means the session was lost (RESUME
+  ## refused or impossible) and the gateway did not replay the gap.
+  readyBefore
 
 proc bufferOrPush(event: DiscordRawEvent) =
   ## Before READY the event waits; afterwards it goes to the daemon loop.
@@ -248,6 +257,10 @@ proc runGatewaySession(token: string; state: var GatewayState; logger: Logger) =
             logger.info("discord: ready, session=" & state.sessionId)
             ## Gateway is now ready — flush buffered messages.
             gDiscordReady = true
+            if readyNeedsResync(gDiscordEverReady):
+              logger.info("discord: new session after a lost one; recovering the gap")
+              gDiscordEvents.push(DiscordRawEvent(kind: deResync))
+            gDiscordEverReady = true
             let pendingCount = gDiscordPending.len
             if pendingCount > 0:
               logger.info("discord: flushing " & $pendingCount & " buffered message(s)")
