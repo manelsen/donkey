@@ -3,11 +3,12 @@
 ## Uses system archive utilities behind a structured contract and performs
 ## preflight path checks to block traversal before extraction.
 
-import std/[json, os, osproc, strutils]
+import std/[json, os, strutils]
 import results
 import ../../core/tooling/structured_tool_result
 import ../../domain/tools/path_guard
 import ./fs_tools
+import ../../ports/process
 
 type
   ArchiveFormat = enum
@@ -26,15 +27,11 @@ proc detectArchiveFormat(path: string): Result[ArchiveFormat, string] {.gcsafe, 
   else:
     err("unsupported archive format: " & path)
 
-proc runCommand(argv: seq[string]; workingDir = ""): tuple[output: string, code: int] {.gcsafe, raises: [].} =
-  try:
-    let cmd = quoteShellCommand(argv)
-    let (output, exitCode) = execCmdEx(cmd,
-                                       options = {poUsePath, poStdErrToStdOut},
-                                       workingDir = workingDir)
-    (output: output, code: exitCode)
-  except CatchableError as e:
-    (output: e.msg, code: 127)
+proc runCommand(process: ProcessRuntimePort; argv: seq[string];
+                workingDir = ""): tuple[output: string, code: int] {.gcsafe, raises: [].} =
+  let ran = process.run(argvSpec(argv, workingDir)).valueOr:
+    return (output: error, code: 127)
+  (output: ran.output, code: ran.exitCode)
 
 proc resolveArchivePath(path, paddockDir: string): Result[string, string] {.gcsafe, raises: [].} =
   if path.strip().len == 0:
@@ -100,10 +97,10 @@ proc ensureArchiveTool(format: ArchiveFormat; action: string): Result[seq[string
     else:
       err("unsupported archive operation")
 
-proc listArchiveEntries(resolvedArchive: string; format: ArchiveFormat): Result[seq[string], string] {.gcsafe, raises: [].} =
+proc listArchiveEntries(process: ProcessRuntimePort; resolvedArchive: string; format: ArchiveFormat): Result[seq[string], string] {.gcsafe, raises: [].} =
   let baseCmd = ensureArchiveTool(format, "list").valueOr:
     return err(error)
-  let (outp, code) = runCommand(baseCmd & @[resolvedArchive])
+  let (outp, code) = runCommand(process, baseCmd & @[resolvedArchive])
   if code != 0:
     return err(outp.strip())
   var entries: seq[string] = @[]
@@ -124,7 +121,8 @@ proc validateArchiveEntries(entries: seq[string]): Result[void, string] {.gcsafe
       return err("unsafe archive entry: " & entry)
   ok()
 
-proc performArchiveExtract*(archivePath, destinationDir, paddockDir: string): StructuredToolResult {.gcsafe, raises: [].} =
+proc performArchiveExtract*(process: ProcessRuntimePort; fs: FsRuntimePort;
+                            archivePath, destinationDir, paddockDir: string): StructuredToolResult {.gcsafe, raises: [].} =
   if paddockDir.len == 0:
     return usageErrorToolResult("paddock is required")
 
@@ -132,29 +130,27 @@ proc performArchiveExtract*(archivePath, destinationDir, paddockDir: string): St
     return usageErrorToolResult(error)
   let resolvedDestination = resolveWorkspacePath(destinationDir, paddockDir, "destination").valueOr:
     return usageErrorToolResult(error)
-  if not fileExists(resolvedArchive):
+  if fs.entryKind(resolvedArchive) != fekFile:
     return operationalErrorToolResult("archive not found: " & archivePath)
 
   let format = detectArchiveFormat(resolvedArchive).valueOr:
     return usageErrorToolResult(error)
 
-  let entries = listArchiveEntries(resolvedArchive, format).valueOr:
+  let entries = listArchiveEntries(process, resolvedArchive, format).valueOr:
     return operationalErrorToolResult(error)
   let validation = validateArchiveEntries(entries)
   if validation.isErr:
     return operationalErrorToolResult(validation.error)
 
-  try:
-    createDir(resolvedDestination)
-  except CatchableError as e:
-    return operationalErrorToolResult(e.msg)
+  fs.createDir(resolvedDestination).isOkOr:
+    return operationalErrorToolResult(error)
 
   let baseCmd = ensureArchiveTool(format, "extract").valueOr:
     return operationalErrorToolResult(error)
   let argv = case format
     of afZip: baseCmd & @[resolvedArchive, "-d", resolvedDestination]
     of afTar, afTarGz: baseCmd & @[resolvedArchive, "-C", resolvedDestination]
-  let (outp, code) = runCommand(argv)
+  let (outp, code) = runCommand(process, argv)
   if code != 0:
     return operationalErrorToolResult(outp.strip())
 
@@ -166,7 +162,8 @@ proc performArchiveExtract*(archivePath, destinationDir, paddockDir: string): St
     "entries": entries,
   })
 
-proc performArchiveCreate*(archivePath: string; inputs: seq[string]; paddockDir: string): StructuredToolResult {.gcsafe, raises: [].} =
+proc performArchiveCreate*(process: ProcessRuntimePort; fs: FsRuntimePort;
+                           archivePath: string; inputs: seq[string]; paddockDir: string): StructuredToolResult {.gcsafe, raises: [].} =
   if paddockDir.len == 0:
     return usageErrorToolResult("paddock is required")
   if inputs.len == 0:
@@ -181,19 +178,17 @@ proc performArchiveCreate*(archivePath: string; inputs: seq[string]; paddockDir:
   for inputPath in inputs:
     let resolvedInput = resolveWorkspacePath(inputPath, paddockDir, "input").valueOr:
       return usageErrorToolResult(error)
-    if not dirExists(resolvedInput) and not fileExists(resolvedInput):
+    if fs.entryKind(resolvedInput) == fekMissing:
       return operationalErrorToolResult("path not found: " & inputPath)
     relativeInputs.add(relativeToPaddock(resolvedInput, paddockDir))
 
-  try:
-    createDir(parentDir(resolvedArchive))
-  except CatchableError as e:
-    return operationalErrorToolResult(e.msg)
+  fs.createDir(parentDir(resolvedArchive)).isOkOr:
+    return operationalErrorToolResult(error)
 
   let baseCmd = ensureArchiveTool(format, "create").valueOr:
     return operationalErrorToolResult(error)
   let argv = baseCmd & @[resolvedArchive] & relativeInputs
-  let (outp, code) = runCommand(argv, paddockDir)
+  let (outp, code) = runCommand(process, argv, paddockDir)
   if code != 0:
     return operationalErrorToolResult(outp.strip())
 

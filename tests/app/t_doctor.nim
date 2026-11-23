@@ -6,6 +6,11 @@
 
 import std/[os, sequtils, strutils, unittest]
 import donkey/app/doctor
+import donkey/adapters/filesystem/fs_adapter
+import donkey/adapters/process/process_adapter
+
+let testProcess = newProcessAdapter()
+let testFs = newFsAdapter()
 import donkey/core/diagnostics
 import donkey/core/pipeops
 import donkey/config/types
@@ -61,29 +66,42 @@ proc runTests*() =
   suite "doctor — checkContainerRuntime":
 
     test "check returns a DiagResult with runtime label":
-      let r = checkContainerRuntime()
+      let r = checkContainerRuntime(testProcess)
       check r.name == "container runtime"
 
     test "check result is either dsOk or dsErr (no crash)":
-      let r = checkContainerRuntime()
+      let r = checkContainerRuntime(testProcess)
       check r.status in {dsOk, dsErr}
+
+    test "a runtime with compose is ok, decided by the process port alone":
+      var calls: seq[seq[string]]
+      let fake = ProcessRuntimePort(run: proc(spec: ProcessSpec):
+          Result[ProcessOutput, string] {.gcsafe, raises: [].} =
+        calls.add spec.argv
+        ok(ProcessOutput(output: "v1", exitCode: 0)))
+      let r = checkContainerRuntime(fake, "podman")
+      check r.status == dsOk
+      check calls == @[@["podman", "--version"], @["podman", "compose", "version"]]
+
+    test "a runtime that cannot be started is an error":
+      check checkContainerRuntime(unavailableProcess()).status == dsErr
 
   suite "doctor — checkSandboxRuntime":
 
     test "oci sandbox runtime check returns a DiagResult":
       let cfg = DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker")
-      let r = checkSandboxRuntime(cfg)
+      let r = checkSandboxRuntime(testProcess, testFs, cfg)
       check r.name == "sandbox runtime"
       check r.status in {dsOk, dsErr}
 
     test "none sandbox runtime is trivially ok":
       let cfg = DonkeyConfig(sandboxMode: smNone)
-      let r = checkSandboxRuntime(cfg)
+      let r = checkSandboxRuntime(testProcess, testFs, cfg)
       check r.status == dsOk
 
     test "invalid sandbox runtime reports config error":
       let cfg = DonkeyConfig(sandboxMode: smNone, invalidSandboxMode: "wasmer")
-      let r = checkSandboxRuntime(cfg)
+      let r = checkSandboxRuntime(testProcess, testFs, cfg)
       check r.status == dsErr
       check "invalid" in r.detail
       check "wasmer" in r.detail
@@ -131,39 +149,39 @@ proc runTests*() =
   suite "doctor — runDoctorChecks":
 
     test "returns at least runtime + pgvector + API key checks":
-      let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
+      let results = runDoctorChecks(testProcess, testFs, DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
       check results.len >= 4    # sandbox policy + sandbox runtime + runtime + pgvector
 
     test "result contains runtime check":
-      let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
+      let results = runDoctorChecks(testProcess, testFs, DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
       var found = false
       for r in results:
         if r.name == "container runtime": found = true
       check found
 
     test "result contains sandbox runtime check":
-      let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
+      let results = runDoctorChecks(testProcess, testFs, DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
       var found = false
       for r in results:
         if r.name == "sandbox runtime": found = true
       check found
 
     test "result contains pgvector check":
-      let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
+      let results = runDoctorChecks(testProcess, testFs, DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
       var found = false
       for r in results:
         if r.name == "pgvector": found = true
       check found
 
     test "result contains sandbox policy check":
-      let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
+      let results = runDoctorChecks(testProcess, testFs, DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
       var found = false
       for r in results:
         if r.name == "sandbox policy": found = true
       check found
 
     test "result contains at least one API key check":
-      let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
+      let results = runDoctorChecks(testProcess, testFs, DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
       var found = false
       for r in results:
         if r.name in ["Telegram", "Discord", "ZAI Coding", "ZAI Anthropic", "OpenRouter", "Zhipu/ZAI", "Anthropic"]:
@@ -171,7 +189,7 @@ proc runTests*() =
       check found
 
     test "result contains discord and zai compatibility checks":
-      let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
+      let results = runDoctorChecks(testProcess, testFs, DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
       var foundDiscord = false
       var foundZaiCoding = false
       var foundZaiAnthropic = false
@@ -184,17 +202,17 @@ proc runTests*() =
       check foundZaiAnthropic
 
     test "allPassed pipeline works on doctor results":
-      let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
+      let results = runDoctorChecks(testProcess, testFs, DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
       # Just verify the pipeline doesn't crash; result depends on environment.
       let _ = results |> allPassed
 
     test "countFailed pipeline works on doctor results":
-      let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
+      let results = runDoctorChecks(testProcess, testFs, DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
       let failed = results |> countFailed
       check failed >= 0
 
     test "formatReport pipeline produces non-empty output":
-      let results = runDoctorChecks(DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
+      let results = runDoctorChecks(testProcess, testFs, DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker"))
       let report  = results |>-> formatReport("Donkey Doctor")
       check "Donkey Doctor" in report
       check report.len > 0
@@ -264,7 +282,7 @@ proc runTests*() =
 
     test "the formatted report never prints the secret, only its length":
       const secret = "sk-doctor-super-secret-value"
-      let results = runDoctorChecks(DonkeyConfig(
+      let results = runDoctorChecks(testProcess, testFs, DonkeyConfig(
         sandboxMode: smNone, env: environmentOf({"OPENROUTER_API_KEY": secret})))
       let report = results |>-> formatReport("Donkey Doctor")
       check secret notin report
@@ -276,14 +294,16 @@ proc runTests*() =
 
     test "checkRuntimeCompose is chainable via >>=":
       # runRuntimeCmd either succeeds or fails; either way >>= handles it cleanly.
-      let r = runRuntimeCmd() >>= proc(version: string): Result[string, string] =
-        checkRuntimeCompose("docker", version)
+      let process = testProcess
+      let r = runRuntimeCmd(process) >>= proc(version: string): Result[string, string] =
+        checkRuntimeCompose(process, "docker", version)
       # Result is Ok or Err — no crash either way.
       check r.isOk or r.isErr
 
     test "failed runtime short-circuits compose check":
+      let process = testProcess
       let r = Result[string, string].err("no runtime") >>= proc(version: string): Result[string, string] =
-        checkRuntimeCompose("docker", version)
+        checkRuntimeCompose(process, "docker", version)
       check r.isErr
       check "no runtime" in r.error
 

@@ -1,6 +1,8 @@
 import std/[os, strtabs, strutils, times, unittest]
 import results
 import donkey/app/sandbox
+import donkey/adapters/filesystem/fs_adapter
+import donkey/adapters/process/process_adapter
 import donkey/config/types
 
 const FakeBin = "/tmp/donkey_fake_oci_bin"
@@ -16,21 +18,23 @@ proc runTests*() =
   suite "sandbox docker permission hints":
 
     test "write probe maps permission denied to an actionable hint":
-      let fake = proc(plan: SandboxPlan;
-                      env: StringTableRef): tuple[output: string, exitCode: int]
-                      {.gcsafe, raises: [].} =
-        ("permission denied while trying to connect to the docker API at unix:///var/run/docker.sock", 1)
+      let fake = ProcessRuntimePort(run: proc(spec: ProcessSpec):
+          Result[ProcessOutput, string] {.gcsafe, raises: [].} =
+        ok(ProcessOutput(exitCode: 1, output:
+          "permission denied while trying to connect to the docker API at unix:///var/run/docker.sock")))
       let res = probeSandboxWorkspaceWritable(
-        smOci, "/tmp", "alpine", "docker", false, true, fake)
+        fake, smOci, "/tmp", "alpine", "docker", false, true)
       check res.isErr
       check "usermod -aG docker" in res.error
       check "systemctl --user restart donkey" in res.error
 
     test "executeOciPlan maps permission denied without host fallback":
-      let fake = proc(plan: SandboxPlan): string {.gcsafe, raises: [].} =
-        "permission denied while trying to connect to the docker API at unix:///var/run/docker.sock"
+      let fake = ProcessRuntimePort(run: proc(spec: ProcessSpec):
+          Result[ProcessOutput, string] {.gcsafe, raises: [].} =
+        ok(ProcessOutput(exitCode: 1, output:
+          "permission denied while trying to connect to the docker API at unix:///var/run/docker.sock")))
       let output = executeOciPlan(
-        "true", "/tmp", "alpine", "docker", false, false, true, fake)
+        fake, "true", "/tmp", "alpine", "docker", false, false, true)
       check "usermod -aG docker" in output
       check "systemctl --user restart donkey" in output
 
@@ -44,7 +48,7 @@ proc runTests*() =
         putEnv("PATH", oldPath)
         removeDir(FakeBin)
       let cfg = DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker")
-      let res = sandboxAvailabilityResult(cfg)
+      let res = sandboxAvailabilityResult(newProcessAdapter(), newFsAdapter(), cfg)
       check res.isErr
       check "usermod -aG docker" in res.error
 
@@ -56,7 +60,7 @@ proc runTests*() =
         putEnv("PATH", oldPath)
         removeDir(FakeBin)
       let cfg = DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "podman")
-      let res = sandboxAvailabilityResult(cfg)
+      let res = sandboxAvailabilityResult(newProcessAdapter(), newFsAdapter(), cfg)
       check res.isOk
       check "runtime=podman" in res.get()
 
@@ -69,7 +73,7 @@ proc runTests*() =
         removeDir(FakeBin)
       let cfg = DonkeyConfig(sandboxMode: smOci, sandboxRuntimeCmd: "docker")
       let started = epochTime()
-      let res = sandboxAvailabilityResult(cfg, timeoutMs = 50)
+      let res = sandboxAvailabilityResult(newProcessAdapter(), newFsAdapter(), cfg, timeoutMs = 50)
       check res.isErr
       check epochTime() - started < 2.0
 

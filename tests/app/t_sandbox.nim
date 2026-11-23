@@ -5,6 +5,12 @@
 import std/[os, strutils, unittest]
 import donkey/config/types
 import donkey/app/sandbox
+import donkey/core/pipeops
+import donkey/adapters/filesystem/fs_adapter
+import donkey/adapters/process/process_adapter
+
+let testProcess = newProcessAdapter()
+let testFs = newFsAdapter()
 import donkey/core/types
 
 proc runTests*() =
@@ -91,43 +97,44 @@ proc runTests*() =
       check not shouldFallbackOci(output)
 
     test "executeOciPlan falls back to direct exec when runtime is unavailable":
-      var plans: seq[SandboxPlan] = @[]
-      let runner: SandboxRunner =
-        proc(plan: SandboxPlan): string {.closure, gcsafe.} =
-          {.cast(gcsafe).}: plans.add(plan)
-          if plan.command.startsWith("docker run --rm"):
+      var plans: seq[ProcessSpec] = @[]
+      let runner = ProcessRuntimePort(run: proc(spec: ProcessSpec):
+          Result[ProcessOutput, string] {.gcsafe, raises: [].} =
+        plans.add(spec)
+        if spec.command.startsWith("docker run --rm"):
+          ok(ProcessOutput(exitCode: 125, output:
             "Unable to find image 'donkey-sandbox:alpine-git' locally\n" &
-              "docker: Error response from daemon: pull access denied.\n[exit 125]"
-          else:
-            "ok"
+            "docker: Error response from daemon: pull access denied.\n"))
+        else:
+          ok(ProcessOutput(output: "ok")))
 
-      let result = executeOciPlan("echo ok", "/tmp/p1", "alpine", "docker", true, false, true, runner)
+      let result = executeOciPlan(runner, "echo ok", "/tmp/p1", "alpine", "docker", true, false, true)
 
-      check plans.len == 1
+      check plans.len == 2  ## the container, then the host fallback
       check plans[0].command.startsWith("docker run --rm")
       check result.contains("docker sandbox unavailable")
       check result.endsWith("ok")
 
     test "executeOciPlan preserves runtime command failures that are not runtime issues":
-      var plans: seq[SandboxPlan] = @[]
-      let runner: SandboxRunner =
-        proc(plan: SandboxPlan): string {.closure, gcsafe.} =
-          {.cast(gcsafe).}: plans.add(plan)
-          "sh: foo: not found\n[exit 127]"
+      var plans: seq[ProcessSpec] = @[]
+      let runner = ProcessRuntimePort(run: proc(spec: ProcessSpec):
+          Result[ProcessOutput, string] {.gcsafe, raises: [].} =
+        plans.add(spec)
+        ok(ProcessOutput(output: "sh: foo: not found\n", exitCode: 127)))
 
-      let result = executeOciPlan("foo", "/tmp/p1", "alpine", "docker", true, false, true, runner)
+      let result = executeOciPlan(runner, "foo", "/tmp/p1", "alpine", "docker", true, false, true)
 
       check plans.len == 1
       check result == "sh: foo: not found\n[exit 127]"
 
     test "executeOciPlan can refuse host fallback when runtime is unavailable":
-      var plans: seq[SandboxPlan] = @[]
-      let runner: SandboxRunner =
-        proc(plan: SandboxPlan): string {.closure, gcsafe.} =
-          {.cast(gcsafe).}: plans.add(plan)
-          "Cannot connect to the docker daemon.\n[exit 125]"
+      var plans: seq[ProcessSpec] = @[]
+      let runner = ProcessRuntimePort(run: proc(spec: ProcessSpec):
+          Result[ProcessOutput, string] {.gcsafe, raises: [].} =
+        plans.add(spec)
+        ok(ProcessOutput(output: "Cannot connect to the docker daemon.\n", exitCode: 125)))
 
-      let result = executeOciPlan("echo ok", "/tmp/p1", "alpine", "docker", false, false, true, runner)
+      let result = executeOciPlan(runner, "echo ok", "/tmp/p1", "alpine", "docker", false, false, true)
 
       check plans.len == 1
       check result.contains("host fallback is disabled")
@@ -151,20 +158,20 @@ proc runTests*() =
       createDir(paddock)
       writeFile(paddock / "canary.txt", "ok")
       defer: removeDir(paddock)
-      let r = sandboxBash("cat canary.txt", paddock, smNone, "alpine")
+      let r = sandboxBash(testProcess, testFs, "cat canary.txt", paddock, smNone, "alpine")
       check r == "ok"
 
     test "creates paddock dir if missing":
       let paddock = getTempDir() / "donkey_sb_autocreate"
       defer: (try: removeDir(paddock) except: discard)
-      discard sandboxBash("pwd", paddock, smNone, "alpine")
+      discard sandboxBash(testProcess, testFs, "pwd", paddock, smNone, "alpine")
       check dirExists(paddock)
 
     test "non-zero exit code appended":
       let paddock = getTempDir() / "donkey_sb_exit"
       createDir(paddock)
       defer: removeDir(paddock)
-      let r = sandboxBash("exit 7", paddock, smNone, "alpine")
+      let r = sandboxBash(testProcess, testFs, "exit 7", paddock, smNone, "alpine")
       check r.contains("[exit 7]")
 
     test "absolute escape still works in smNone (documented limitation)":
@@ -173,7 +180,7 @@ proc runTests*() =
       let paddock = getTempDir() / "donkey_sb_nolimit"
       createDir(paddock)
       defer: removeDir(paddock)
-      let r = sandboxBash("echo ok", paddock, smNone, "alpine")
+      let r = sandboxBash(testProcess, testFs, "echo ok", paddock, smNone, "alpine")
       check r == "ok"
 
     test "smNone does not inherit secret-bearing host env":
@@ -182,19 +189,19 @@ proc runTests*() =
       defer: removeDir(paddock)
       putEnv("OPENAI_API_KEY", "super-secret")
       defer: delEnv("OPENAI_API_KEY")
-      let r = sandboxBash("printf %s \"$OPENAI_API_KEY\"", paddock, smNone, "alpine")
+      let r = sandboxBash(testProcess, testFs, "printf %s \"$OPENAI_API_KEY\"", paddock, smNone, "alpine")
       check r == "[exit 0]"
 
   suite "sandboxBash — smWasm":
 
     test "missing wasm shell does not fall back to host when fallback is disabled":
-      if resolveShellWasmPath().fileExists:
+      if fileExists(resolveShellWasmPath()):
         check true
       else:
         let paddock = getTempDir() / "donkey_sb_wasm_missing"
         createDir(paddock)
         defer: removeDir(paddock)
-        let r = sandboxBash("echo ok", paddock, smWasm, "alpine", "docker", false)
+        let r = sandboxBash(testProcess, testFs, "echo ok", paddock, smWasm, "alpine", "docker", false)
         check "ok" notin r
 
   suite "SandboxMode values":

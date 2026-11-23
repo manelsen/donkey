@@ -4,6 +4,7 @@ import std/[os, strtabs, strutils, unittest]
 import donkey/core/pipeops
 import donkey/config/types
 import donkey/app/sandbox
+import donkey/adapters/filesystem/fs_adapter
 
 proc runTests*() =
   suite "Sandbox Enforcement":
@@ -74,7 +75,7 @@ proc runTests*() =
       let ownerFn: PathOwnerFn = proc(path: string): Result[int, string] {.gcsafe.} =
         discard path
         ok(1000)
-      let res = validatePaddockOwnership(cfg, devMode = false, ownerFn = ownerFn, uid = 1000)
+      let res = validatePaddockOwnership(newFsAdapter(), cfg, devMode = false, ownerFn = ownerFn, uid = 1000)
       check res.isOk
 
     test "refuses mismatched paddock ownership in production mode":
@@ -88,7 +89,7 @@ proc runTests*() =
         if path.endsWith("heartbeat-state.json"): ok(0)
         else: ok(1000)
       let cfg = DonkeyConfig(paddocks: root)
-      let res = validatePaddockOwnership(cfg, devMode = false, ownerFn = ownerFn, uid = 1000)
+      let res = validatePaddockOwnership(newFsAdapter(), cfg, devMode = false, ownerFn = ownerFn, uid = 1000)
       check res.isErr
       check "Security Error" in res.error
       check "heartbeat-state.json" in res.error
@@ -103,18 +104,14 @@ proc runTests*() =
         discard path
         ok(0)
       let cfg = DonkeyConfig(paddocks: root)
-      let res = validatePaddockOwnership(cfg, devMode = true, ownerFn = ownerFn, uid = 1000)
+      let res = validatePaddockOwnership(newFsAdapter(), cfg, devMode = true, ownerFn = ownerFn, uid = 1000)
       check res.isOk
 
     test "workspace write probe succeeds on zero exit":
-      let runner: SandboxRunnerRaw =
-        proc(plan: SandboxPlan; env: StringTableRef): tuple[output: string, exitCode: int]
-             {.closure, gcsafe, raises: [CatchableError].} =
-          discard plan
-          discard env
-          ("", 0)
-      let res = probeSandboxWorkspaceWritable(
-        smOci, "/tmp/paddock", "alpine", runPlanRaw = runner)
+      let runner = ProcessRuntimePort(run: proc(spec: ProcessSpec):
+          Result[ProcessOutput, string] {.gcsafe, raises: [].} =
+        ok(ProcessOutput(exitCode: 0)))
+      let res = probeSandboxWorkspaceWritable(runner, smOci, "/tmp/paddock", "alpine")
       check res.isOk
 
     test "workspace write probe command uses create and cleanup":
@@ -124,14 +121,10 @@ proc runTests*() =
       check SandboxWriteProbeFile in cmd
 
     test "workspace write probe returns formatted failure":
-      let runner: SandboxRunnerRaw =
-        proc(plan: SandboxPlan; env: StringTableRef): tuple[output: string, exitCode: int]
-             {.closure, gcsafe, raises: [CatchableError].} =
-          discard plan
-          discard env
-          ("touch: permission denied\n", 1)
-      let res = probeSandboxWorkspaceWritable(
-        smOci, "/tmp/paddock", "alpine", runPlanRaw = runner)
+      let runner = ProcessRuntimePort(run: proc(spec: ProcessSpec):
+          Result[ProcessOutput, string] {.gcsafe, raises: [].} =
+        ok(ProcessOutput(output: "touch: permission denied\n", exitCode: 1)))
+      let res = probeSandboxWorkspaceWritable(runner, smOci, "/tmp/paddock", "alpine")
       check res.isErr
       check "permission denied" in res.error
       check "[exit 1]" in res.error

@@ -4,13 +4,14 @@
 ## performRenderMermaid converts Mermaid diagrams to SVG.
 ## performInspectImage uses the LLM as a vision assistant.
 
-import std/[osproc, os, strutils, times]
+import std/[os, strutils, times]
 import results
 import ../../domain/calc
 import ../../domain/message
 import ../../domain/providers/media_pure
 import ../../ports/provider
 import ../../ports/fs
+import ../../ports/process
 
 # ── calc ──────────────────────────────────────────────────────────────────────
 
@@ -24,23 +25,21 @@ proc performCalc*(expression: string): string {.gcsafe, raises: [].} =
 
 const MermaidTempPrefix* = "donkey_mermaid_"
 
-proc performRenderMermaid*(diagram: string): string {.gcsafe, raises: [].} =
+proc performRenderMermaid*(process: ProcessRuntimePort; fs: FsRuntimePort;
+                           diagram: string): string {.gcsafe, raises: [].} =
   let ts    = $getTime().toUnix()
   let inF   = "/tmp/" & MermaidTempPrefix & ts & ".mmd"
   let outF  = "/tmp/" & MermaidTempPrefix & ts & ".svg"
-  try:
-    writeFile(inF, diagram)
-    let (_, code) = execCmdEx("mmdc -i " & inF & " -o " & outF,
-                               options = {poEvalCommand})
-    if code == 0 and fileExists(outF):
-      return "Diagram rendered: " & outF
-    else:
-      return "```mermaid\n" & diagram & "\n```\n" &
-             "(install mmdc via `npm i -g @mermaid-js/mermaid-cli` for SVG output)"
-  except CatchableError:
-    return "```mermaid\n" & diagram & "\n```"
-  finally:
-    discard tryRemoveFile(inF)
+  let fallback = "```mermaid\n" & diagram & "\n```"
+  if fs.writeFile(inF, diagram).isErr:
+    return fallback
+  defer: discard fs.remove(inF, false)
+  let ran = process.run(argvSpec(@["mmdc", "-i", inF, "-o", outF]))
+  if ran.isOk and ran.get.exitCode == 0 and fs.entryKind(outF) == fekFile:
+    "Diagram rendered: " & outF
+  else:
+    fallback & "\n" &
+      "(install mmdc via `npm i -g @mermaid-js/mermaid-cli` for SVG output)"
 
 # ── inspect_image ─────────────────────────────────────────────────────────────
 

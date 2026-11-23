@@ -1,5 +1,10 @@
 import std/[json, os, strutils, times, unittest]
 import donkey/app/tools/archive_tools
+import donkey/adapters/filesystem/fs_adapter
+import donkey/adapters/process/process_adapter
+
+let testProcess = newProcessAdapter()
+let testFs = newFsAdapter()
 import donkey/core/tooling/structured_tool_result
 
 proc parse(toolResult: StructuredToolResult): JsonNode =
@@ -22,14 +27,14 @@ proc runTests*() =
       writeFile(paddock / "alpha.txt", "alpha\n")
       writeFile(paddock / "docs" / "notes.txt", "structured archive\n")
 
-      let created = parse(performArchiveCreate("bundle.tgz",
+      let created = parse(performArchiveCreate(testProcess, testFs, "bundle.tgz",
                                                @["alpha.txt", "docs"],
                                                paddock))
       check created["ok"].getBool()
       check created["data"]["archive_path"].getStr() == "bundle.tgz"
       check fileExists(paddock / "bundle.tgz")
 
-      let extracted = parse(performArchiveExtract("bundle.tgz",
+      let extracted = parse(performArchiveExtract(testProcess, testFs, "bundle.tgz",
                                                   "restored",
                                                   paddock))
       check extracted["ok"].getBool()
@@ -46,9 +51,9 @@ proc runTests*() =
           removeDir(paddock)
 
       writeFile(paddock / "alpha.txt", "alpha\n")
-      discard performArchiveCreate("bundle.tgz", @["alpha.txt"], paddock)
+      discard performArchiveCreate(testProcess, testFs, "bundle.tgz", @["alpha.txt"], paddock)
 
-      let parsed = parse(performArchiveExtract("bundle.tgz",
+      let parsed = parse(performArchiveExtract(testProcess, testFs, "bundle.tgz",
                                                "../escape",
                                                paddock))
 
@@ -65,7 +70,7 @@ proc runTests*() =
 
       writeFile(paddock / "alpha.txt", "alpha\n")
 
-      let parsed = parse(performArchiveCreate("bundle.rar", @["alpha.txt"], paddock))
+      let parsed = parse(performArchiveCreate(testProcess, testFs, "bundle.rar", @["alpha.txt"], paddock))
 
       check not parsed["ok"].getBool()
       check parsed["status"].getStr() == "usage_error"

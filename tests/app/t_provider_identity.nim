@@ -7,6 +7,11 @@ import std/[options, os, sequtils, sets, strutils, unittest]
 import donkey/domain/providers/descriptors
 import donkey/config/types
 import donkey/app/doctor
+import donkey/adapters/filesystem/fs_adapter
+import donkey/adapters/process/process_adapter
+
+let testProcess = newProcessAdapter()
+let testFs = newFsAdapter()
 import donkey/app/setup_wizard
 import donkey/app/service_handler
 import donkey/tui/admin_tui
@@ -41,7 +46,7 @@ proc runTests*() =
       check labels.len == labels.deduplicate().len
 
     test "runDoctorChecks lists a key check for every descriptor":
-      let results = runDoctorChecks(DonkeyConfig(sandboxMode: smNone))
+      let results = runDoctorChecks(testProcess, testFs, DonkeyConfig(sandboxMode: smNone))
       for row in doctorProviderRows():
         check results.anyIt(it.name == row.label)
 
