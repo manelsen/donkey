@@ -20,9 +20,12 @@ jobs:
         uses: the-pr-agent/pr-agent@e673a02076ce09a4726c3d0c3cc85780e59ca52b
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ANTHROPIC.KEY: ${{ secrets.ANTHROPIC_KEY }}
-          config.model: "anthropic/claude-opus-5"
-          config.fallback_models: '["anthropic/claude-haiku-4-5-20251001"]'
+          OPENROUTER.KEY: ${{ secrets.OPENROUTER_KEY }}
+          config.model: "openrouter/deepseek/deepseek-v4.1-flash-1017"
+          config.fallback_models: '["openrouter/deepseek/deepseek-v4.1-flash"]'
+          # Not in PR-Agent's built-in token table; the model takes 1M, this
+          # caps the prompt PR-Agent builds.
+          config.custom_model_max_tokens: "128000"
           github_action_config.auto_review: "true"
           github_action_config.auto_describe: "false"
           github_action_config.auto_improve: "true"
