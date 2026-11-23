@@ -307,6 +307,35 @@ proc runTests*() =
 
   # ── toInbound ─────────────────────────────────────────────────────────────────
 
+  suite "slack_pure — the bot's mention (like Discord DS-007)":
+    proc withBot(event: JsonNode; botUser = "UBOT"): JsonNode =
+      result = makeEventCallback("T1", event)
+      result["authorizations"] = %* [{"user_id": botUser, "is_bot": true}]
+
+    test "the bot's mention is not part of what was said":
+      let ev = makeMessageEvent("U1", "C1", "<@UBOT> /help", "1.0")
+      check parseEvent(withBot(ev)).text == "/help"
+      let old = makeMessageEvent("U1", "C1", "hey <@UBOT|donkey> there", "1.0")
+      check parseEvent(withBot(old)).text == "hey there"
+
+    test "other users' mentions and the rest of the spacing are kept":
+      let ev = makeMessageEvent("U1", "C1", "<@UBOT> ask <@U2>:  a  b", "1.0")
+      check parseEvent(withBot(ev)).text == "ask <@U2>:  a  b"
+
+    test "text without the mention keeps its own spacing":
+      check stripUserMention("    indented code", "UBOT") == "    indented code"
+
+    test "a label without its closing bracket on the line is not a mention":
+      check stripUserMention("<@UBOT|na\nme> x", "UBOT") == "<@UBOT|na\nme> x"
+
+    test "a message that is only the mention is ignored":
+      let ev = makeMessageEvent("U1", "C1", "<@UBOT>", "1.0")
+      check parseEvent(withBot(ev)).kind == sekUnknown
+
+    test "without the bot's id nothing is stripped":
+      let ev = makeMessageEvent("U1", "C1", "<@UBOT> /help", "1.0")
+      check parseEvent(makeEventCallback("T1", ev)).text == "<@UBOT> /help"
+
   suite "slack_pure — inbound entities":
     test "the three characters Slack escapes reach the agent as typed":
       let ev = makeMessageEvent("U1", "C1", "if a &lt; b &amp;&amp; c &gt; d", "1.0")
