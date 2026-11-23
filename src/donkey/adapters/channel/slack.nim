@@ -304,7 +304,14 @@ const
   SlackDedupeMaxEvents* = 2048
 
 proc eventDedupeKey(event: SlackRawEvent): string =
-  if event.eventId.len > 0: event.eventId
+  ## A message is identified by its channel and ts: a mention in a channel
+  ## can arrive both as `message` and as `app_mention`, with different event
+  ## ids (hermes 708f84c477). Interactive payloads keep their own ids, since
+  ## two clicks on one message share its ts.
+  if event.kind == srMessage and event.channelId.len > 0 and
+      event.eventTs.len > 0:
+    "msg:" & event.channelId & ":" & event.eventTs
+  elif event.eventId.len > 0: event.eventId
   elif event.triggerId.len > 0: event.triggerId
   else: ""
 

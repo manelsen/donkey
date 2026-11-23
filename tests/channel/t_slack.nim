@@ -307,6 +307,24 @@ proc runTests*() =
       check not a.isDuplicate(event, now = 1000.0)
       check a.isDuplicate(event, now = 1000.0)
 
+    test "a mention delivered as message and as app_mention is one turn (hermes 708f84c477)":
+      ## Both events describe the same message (same channel and ts) under
+      ## different event ids; answering both posted the reply twice.
+      let a = newSlackAdapter("token", getTempDir() / "donkey_slack_dedupe6.tsv")
+      let asMessage = SlackRawEvent(kind: srMessage, eventId: "EvA",
+                                    channelId: "C1", eventTs: "1700.0001")
+      let asMention = SlackRawEvent(kind: srMessage, eventId: "EvB",
+                                    channelId: "C1", eventTs: "1700.0001")
+      check not a.isDuplicate(asMessage, now = 1000.0)
+      check a.isDuplicate(asMention, now = 1000.5)
+
+    test "the same ts in another channel is another message":
+      let a = newSlackAdapter("token", getTempDir() / "donkey_slack_dedupe7.tsv")
+      check not a.isDuplicate(SlackRawEvent(kind: srMessage, eventId: "E1",
+        channelId: "C1", eventTs: "1700.0001"), now = 1000.0)
+      check not a.isDuplicate(SlackRawEvent(kind: srMessage, eventId: "E2",
+        channelId: "C2", eventTs: "1700.0001"), now = 1000.0)
+
     test "events without ids are never deduplicated":
       let a = newSlackAdapter("token", getTempDir() / "donkey_slack_dedupe5.tsv")
       let event = SlackRawEvent(text: "hello")
