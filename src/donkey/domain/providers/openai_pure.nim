@@ -242,10 +242,18 @@ proc buildRequestBodyWithQuirks*(model: string; req: CompletionRequest;
         node.hasKey("tool_calls"):
       ## Gemini 3 behind an OpenAI-compatible gateway wants each call's
       ## signature back; only a real one is sent.
-      for i, call in msg.toolCalls:
-        if call.signature.len > 0 and i < node["tool_calls"].len:
-          node["tool_calls"][i]["extra_content"] =
-            %* {"google": {"thought_signature": call.signature}}
+      ## Matched by id, so a serializer that ever filtered or reordered calls
+      ## could not attach a signature to the wrong one; position only for a
+      ## call without an id.
+      for i, wire in node["tool_calls"].getElems:
+        let wireId = wire{"id"}.getStr("")
+        var signature = ""
+        for j, call in msg.toolCalls:
+          if (wireId.len > 0 and call.id == wireId) or (wireId.len == 0 and j == i):
+            signature = call.signature
+            break
+        if signature.len > 0:
+          wire["extra_content"] = %* {"google": {"thought_signature": signature}}
     if quirks.echoReasoningContent and msg.role == roleAssistant:
       ## Must-echo providers answer 400 on a tool round whose assistant turn
       ## lacks the field; " " and not "", which DeepSeek V4 rejects (hermes
