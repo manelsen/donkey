@@ -61,8 +61,10 @@ Names are 1–32 characters of `a-z`, `0-9` and `-`. `manage_agents` supports
   returns the transcript and the caller is the lead: it writes the synthesis for
   the user.
 
-Both run the provider call on a worker, so the daemon's loop stays free while
-the agents think. Subagents can use neither, nor `manage_agents`.
+In the daemon both use the async completion, which runs the provider call on a
+worker, so the loop stays free while the agents think (a context with only a
+synchronous completion falls back to calling it inline). Subagents can use
+neither, nor `manage_agents`.
 
 ## Limits
 

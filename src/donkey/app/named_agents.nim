@@ -176,9 +176,13 @@ proc conveneNamedAgents*(fs: FsRuntimePort; paddockDir: string; callModel: Async
         prompt.add("\nReply briefly: where you agree, where you disagree, and " &
                    "your revised answer.")
       futures.add(askOnce(callModel, agent, prompt))
+    ## Every call of the round has started (an async proc runs up to its first
+    ## await, where the provider job goes to a worker); wait for all of them
+    ## before reading any, so none is left pending if one fails.
+    await allFutures(futures)
     transcript.add("\n## Round " & $round & "\n")
     for i, fut in futures:
-      let answer = await fut
+      let answer = fut.read()
       latest[i] = if answer.isOk: answer.get else: "(no answer: " & answer.error & ")"
       transcript.add("\n### @" & agents[i].agent.name & "\n" & latest[i] & "\n")
   return ok(Result[string, string], transcript)
