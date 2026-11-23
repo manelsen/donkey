@@ -57,6 +57,23 @@ func extractUserId(event: JsonNode): string =
   of JObject: userField.getOrDefault("id").getStr("")
   else: ""
 
+func slackUnescape*(text: string): string =
+  ## Slack sends `&`, `<` and `>` typed by the user as `&amp;`, `&lt;` and
+  ## `&gt;`; nothing else is escaped. One pass, so "&amp;lt;" (the user's
+  ## literal "&lt;") decodes to "&lt;" and not on to "<".
+  result = newStringOfCap(text.len)
+  var i = 0
+  while i < text.len:
+    if text[i] == '&':
+      if text.continuesWith("&amp;", i):
+        result.add('&'); i += 5; continue
+      if text.continuesWith("&lt;", i):
+        result.add('<'); i += 4; continue
+      if text.continuesWith("&gt;", i):
+        result.add('>'); i += 4; continue
+    result.add(text[i])
+    inc i
+
 func parseMessageEvent(teamId, eventId: string; event: JsonNode): SlkParseResult =
   ## Parses a "message" or "app_mention" event sub-object.
   ## Designed for  event |>-> parseMessageEvent(teamId)  (piped value is last arg).
@@ -77,7 +94,7 @@ func parseMessageEvent(teamId, eventId: string; event: JsonNode): SlkParseResult
   SlkParseResult(
     kind:      sekMessage,
     rawId:     userId,
-    text:      text,
+    text:      slackUnescape(text),
     channelId: event |>-> extractField("channel"),
     teamId:    teamId,
     eventId:   eventId,
