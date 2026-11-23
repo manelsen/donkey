@@ -207,6 +207,7 @@ const ProviderMenu: seq[ProviderMenuItem] = @[
   (id: "opencode-go",   label: "OpenCode Go   (agregador)"),
   (id: "zen",           label: "OpenCode Zen  (agregador)"),
   (id: "nvidia",        label: "NVIDIA NIM    (build.nvidia.com)"),
+  (id: "mistral",       label: "Mistral AI    (console.mistral.ai)"),
   (id: "alibaba",       label: "Alibaba DashScope (Qwen)"),
   (id: "fireworks",     label: "Fireworks AI"),
 ]

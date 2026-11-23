@@ -168,5 +168,34 @@ proc runTests*() =
           check not detectProviderAvailability().fireworks
           check not detectProviderAvailability().fireworks
 
+  suite "mistral breadth — descriptor to availability":
+
+    const MistralEnv = "MISTRAL_API_KEY"
+
+    test "Mistral identity comes from the descriptor table":
+      let descriptor = descriptorOr("mistral")
+      check descriptor.id == "mistral"
+      check descriptor.envNames == @[MistralEnv]
+      check descriptor.defaultModel == DefaultModelMistral
+      check descriptor.transport == ptOpenAiChat
+      check providerDescriptor("mistralai").get().id == "mistral"
+      check providerDescriptor("mistral-ai").get().id == "mistral"
+
+    test "an empty model resolves to the descriptor default":
+      let spec = buildProviderSpec(
+        ProviderPrefs(providerName: "mistral", modelName: ""))
+      check spec.modelName == DefaultModelMistral
+
+    test "the daemon status surface lists Mistral when its env key exists":
+      withEnv(MistralEnv, "ms-test"):
+        let availability = detectProviderAvailability()
+        check availability.mistral
+        check availableProviderNames(availability).has("mistral")
+
+    test "unset env leaves Mistral unavailable":
+      withoutEnv(MistralEnv):
+        withoutEnv("MISTRAL_API_KEYS"):
+          check not detectProviderAvailability().mistral
+
 when isMainModule:
   runTests()

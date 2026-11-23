@@ -64,3 +64,14 @@ proc buildCompatRequestBody*(profile: CompatProfile; model: string;
     mergeInto(result, profile.reasoningOffExtras)
   if stream:
     mergeInto(result, profile.streamExtras)
+  if profile.quirks.shortToolIds:
+    ## On the wire copy only: the stored history keeps the original ids.
+    let messages = result.getOrDefault("messages")
+    if not messages.isNil and messages.kind == JArray:
+      for message in messages:
+        let calls = message.getOrDefault("tool_calls")
+        if not calls.isNil and calls.kind == JArray:
+          for call in calls:
+            call["id"] = %mistralToolId(call{"id"}.getStr(""))
+        if message.hasKey("tool_call_id"):
+          message["tool_call_id"] = %mistralToolId(message["tool_call_id"].getStr(""))

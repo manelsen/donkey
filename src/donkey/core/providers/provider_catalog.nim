@@ -697,6 +697,17 @@ proc buildDefaultCatalog*(): ProviderCatalog =
     contextWindow = 0,
   ))
 
+  # ── Mistral AI ──
+  # Context is not verified, so 0; vision is per model (Pixtral), not here.
+  result.register(makeEntry(
+    DefaultModelMistral, "mistral",
+    aliases = @[],
+    capabilities = {mcTools, mcStreaming},
+    costTier = ctModerate,
+    budgetPriority = bpDefault,
+    contextWindow = 0,
+  ))
+
   # ── Fireworks AI ──
   # Vision and context are unverified, so no `mcImage` and context 0.
   result.register(makeEntry(

@@ -14,7 +14,7 @@
 ##   https://platform.openai.com/docs/api-reference/chat/create
 ##   https://platform.openai.com/docs/api-reference/chat/object
 
-import std/json
+import std/[json, strutils]
 import ../../core/pipeops
 import ../../domain/message
 
@@ -69,6 +69,7 @@ type
     toolChoiceAuto*:        bool  ## add tool_choice="auto" when tools are present
     omitStreamKey*:         bool  ## non-streaming bodies omit `stream`
     includeReasoningField*: bool  ## send include_reasoning when req.reasoning
+    shortToolIds*:          bool  ## tool ids must be 9 alphanumerics (Mistral)
 
 
 const
@@ -77,6 +78,23 @@ const
 
 func defaultOpenAiQuirks*(): OpenAiWireQuirks =
   OpenAiWireQuirksDefault
+
+const ToolIdAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+func mistralToolId*(id: string): string =
+  ## Mistral rejects any tool id that is not exactly 9 alphanumerics
+  ## (hermes b33ed35968). A conforming id is kept; any other is mapped through
+  ## a 64-bit FNV-1a hash, so the call and its result map to the same id and
+  ## the mapping is the same on every request.
+  if id.len == 9 and id.allCharsInSet({'A' .. 'Z', 'a' .. 'z', '0' .. '9'}):
+    return id
+  var h = 0xcbf29ce484222325'u64
+  for c in id:
+    h = (h xor uint64(ord(c))) * 0x100000001b3'u64
+  result = newString(9)
+  for i in 0 ..< 9:
+    result[i] = ToolIdAlphabet[int(h mod 62)]
+    h = h div 62
 
 # ── Internal pure helpers ─────────────────────────────────────────────────────
 

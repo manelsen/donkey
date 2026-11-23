@@ -132,6 +132,8 @@ Keep this disabled unless you explicitly want the PostgreSQL runtime.
 | `ANTHROPIC_API_KEY` | Anthropic provider key |
 | `GEMINI_API_KEY` | Gemini provider key |
 | `MINIMAX_API_KEY` | MiniMax provider key |
+| `MISTRAL_API_KEY` | Mistral AI provider key |
+| `MISTRAL_BASE_URL` | Override the Mistral endpoint (base URL; `/chat/completions` is appended) |
 | `BRAVE_API_KEY` | Enables `web_search` via Brave Search |
 
 Example:

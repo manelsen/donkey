@@ -10,6 +10,7 @@ import donkey/domain/providers/descriptors
 import donkey/domain/providers/profile_nvidia
 import donkey/domain/providers/profile_alibaba
 import donkey/domain/providers/profile_fireworks
+import donkey/domain/providers/profile_mistral
 import donkey/adapters/provider/zhipu
 import donkey/adapters/provider/minimax
 import donkey/adapters/provider/openrouter
@@ -76,6 +77,12 @@ proc expectations(): seq[ProfileExpectation] =
       emptyContent: false),
     ProfileExpectation(name: "alibaba", providerIds: @["alibaba"],
       profile: alibabaCompatProfile(),
+      toolChoice: false, toolResultName: true, imageWithToolCalls: true,
+      includeReasoning: false, reasoningSplit: false, streamOptions: false,
+      emptyContent: false),
+    ProfileExpectation(name: "mistral", providerIds: @["mistral"],
+      profile: mistralCompatProfile(),
+      # strict API: no Donkey-only include_reasoning
       toolChoice: false, toolResultName: true, imageWithToolCalls: true,
       includeReasoning: false, reasoningSplit: false, streamOptions: false,
       emptyContent: false),
