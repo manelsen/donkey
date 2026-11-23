@@ -20,7 +20,7 @@ jobs:
         uses: the-pr-agent/pr-agent@e673a02076ce09a4726c3d0c3cc85780e59ca52b
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OPENROUTER.KEY: ${{ secrets.OPENROUTER_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_KEY }}
           config.model: "openrouter/deepseek/deepseek-v4.1-flash-1017"
           config.fallback_models: '["openrouter/deepseek/deepseek-v4.1-flash"]'
           # Not in PR-Agent's built-in token table; the model takes 1M, this
