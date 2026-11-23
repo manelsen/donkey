@@ -532,7 +532,11 @@ proc handleDiscordEvent*(sm: var SessionManager;
     let tracksCursor = event.messageId.len > 0 and event.guildId.len == 0 and
                        event.interactionId.len == 0
     proc answeredNow() =
-      if tracksCursor:
+      ## With a DM of this user still in a turn, the answered message joins
+      ## the pending one: moving the cursor now would pass the unfinished DM.
+      if tracksCursor and dcAdapter.hasPendingCursor(userId):
+        dcAdapter.notePendingCursor(userId, event.messageId)
+      elif tracksCursor:
         discard memory.saveChannelPreference(userId, "discord_last_msg_id",
           laterSnowflake(memory.loadChannelPreference(userId, "discord_last_msg_id").get(""),
                          event.messageId))

@@ -830,6 +830,9 @@ proc notePendingCursor*(a: DiscordAdapter; userId: UserId; msgId: string) =
   let key = $userId
   a.cursor.pending[key] = laterSnowflake(a.cursor.pending.getOrDefault(key, ""), msgId)
 
+func hasPendingCursor*(a: DiscordAdapter; userId: UserId): bool =
+  not a.cursor.isNil and a.cursor.pending.getOrDefault($userId, "").len > 0
+
 proc settleCursor*(a: DiscordAdapter; userId: UserId) =
   ## Saves the pending cursor of `userId`, once.
   if a.cursor.isNil: return

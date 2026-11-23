@@ -731,6 +731,8 @@ proc runTests*() =
       check laterSnowflake("99", "100") == "100"   ## not string order
       check laterSnowflake("100", "99") == "100"
       check laterSnowflake("x", "7") == "7"
+      check laterSnowflake("9223372036854775807", "9223372036854775808") ==
+        "9223372036854775808"   ## past int64
 
   suite "discord_pure.toInbound — conversion":
 

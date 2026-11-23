@@ -261,9 +261,10 @@ func isDiscordCdnUrl*(url: string): bool =
 func laterSnowflake*(a, b: string): string =
   ## The later of two Discord ids. Snowflakes are 64-bit numbers, so "100" is
   ## after "99"; an id that does not parse loses to one that does.
-  var x, y: BiggestInt
-  let okA = (try: (x = parseBiggestInt(a); true) except ValueError: false)
-  let okB = (try: (y = parseBiggestInt(b); true) except ValueError: false)
+  ## Unsigned: a snowflake is a 64-bit unsigned number.
+  var x, y: BiggestUInt
+  let okA = (try: (x = parseBiggestUInt(a); true) except ValueError: false)
+  let okB = (try: (y = parseBiggestUInt(b); true) except ValueError: false)
   if not okA: return (if okB: b else: a)
   if not okB: return a
   if y > x: b else: a

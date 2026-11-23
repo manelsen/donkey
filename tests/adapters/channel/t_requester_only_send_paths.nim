@@ -467,6 +467,30 @@ proc runTests*() =
         dc, state, e, msgSeq, logger, noop, noop, noop)
       check mem.loadChannelPreference(uid, "discord_last_msg_id").get("") == "3000"
 
+    test "Discord: a command answered while a DM is in a turn does not pass that DM":
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var state = initPresentationState()
+      let e = env("dc-cur4")
+      let dc = newDiscordAdapter("TOK", Tmp / "dc-cur4" / "ids.tsv", apiBase = base())
+      dc.appId[] = "BOT"
+      let mem = e.memory
+      dc.cursor.save = proc(userId: UserId; msgId: string) {.gcsafe.} =
+        discard mem.saveChannelPreference(userId, "discord_last_msg_id", msgId)
+      let uid = dc.resolver.resolve(ckDiscord, "63")
+      discard sm.getOrCreate(uid)
+      handleDiscordEvent(sm, DiscordRawEvent(kind: deMessage, discordUserId: "63",
+        content: "uma pergunta longa", messageId: "5000"),
+        dc, state, e, msgSeq, logger, noop, noop, captureFallback)
+      handleDiscordEvent(sm, DiscordRawEvent(kind: deMessage, discordUserId: "63",
+        content: "/help", messageId: "5001"),
+        dc, state, e, msgSeq, logger, noop, noop, noop)
+      check mem.loadChannelPreference(uid, "discord_last_msg_id").get("") == ""
+      settleDiscordCursorOnReply(dc, sm, OutboundMessage(userId: uid,
+        channel: ckDiscord, replyKind: rkFinalAnswer))
+      check mem.loadChannelPreference(uid, "discord_last_msg_id").get("") == "5001"
+
     test "Discord: a message delivered twice is handled once":
       ## A gateway RESUME replays events, and the startup backfill can overlap
       ## the live stream: the second copy must not answer again.
