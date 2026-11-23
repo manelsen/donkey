@@ -1,6 +1,6 @@
 ## Domain types + buildPrompt — pure func, zero side effects.
 
-import std/[strutils, unittest]
+import std/[unicode, strutils, unittest]
 import donkey/domain/message
 import donkey/core/pipeops
 
@@ -214,6 +214,17 @@ proc runTests*() =
       for c in chunks:
         check c.len <= 20
       check chunks.join("") == text
+
+    test "a hard cut never splits a multi-byte character":
+      ## "ção" is five bytes; with no space or newline to break at, the cut
+      ## used to fall inside "ç" or "ã" and send invalid UTF-8.
+      let text = "aaaaaaaaa" & "ção" & "bbbbbbbb" & "🐴🐴"
+      for limit in 3 .. 20:
+        let chunks = splitChunks(text, limit)
+        check chunks.join("") == text
+        for c in chunks:
+          check c.validateUtf8() == -1
+          check c.len <= max(limit, 4)  ## a character wider than the limit stays whole
 
   suite "buildPrompt with tools":
 
