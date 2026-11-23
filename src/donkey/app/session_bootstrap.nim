@@ -146,6 +146,7 @@ func availableProviderNames*(av: ProviderAvailability): seq[string] =
   if av.groq: result.add("groq")
   if av.ollama: result.add("ollama")
   if av.nvidia: result.add("nvidia")
+  if av.mistral: result.add("mistral")
   if av.alibaba: result.add("alibaba")
   if av.fireworks: result.add("fireworks")
 

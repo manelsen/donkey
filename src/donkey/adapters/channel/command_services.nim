@@ -215,6 +215,7 @@ proc buildDoctorReport*(memory: MdFileAdapter;
     ("GEMINI_API_KEY", "Gemini"),
     ("MINIMAX_API_KEY", "MiniMax"),
     ("NVIDIA_API_KEY", "NVIDIA NIM"),
+    ("MISTRAL_API_KEY", "Mistral AI"),
     ("DASHSCOPE_API_KEY", "Alibaba DashScope"),
     ("FIREWORKS_API_KEY", "Fireworks AI"),
   ]

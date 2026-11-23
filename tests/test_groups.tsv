@@ -266,6 +266,7 @@ g3	tests/provider/t_fireworks.nim
 g3	tests/provider/t_gemini.nim
 g3	tests/provider/t_minimax.nim
 g3	tests/provider/t_model_catalog.nim
+g3	tests/provider/t_mistral.nim
 g3	tests/provider/t_nvidia.nim
 g3	tests/provider/t_ollama.nim
 g3	tests/provider/t_openrouter.nim

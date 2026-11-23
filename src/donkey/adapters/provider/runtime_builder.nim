@@ -12,6 +12,7 @@ import ../../domain/providers/descriptors
 import ../../domain/providers/profile_nvidia
 import ../../domain/providers/profile_alibaba
 import ../../domain/providers/profile_fireworks
+import ../../domain/providers/profile_mistral
 import ../../core/pipeops
 import ../../ports/http
 import ../../ports/provider
@@ -128,6 +129,9 @@ proc nvidiaProfileAt(endpoint: string): CompatProfileFn =
 
 proc alibabaProfileAt(endpoint: string): CompatProfileFn =
   result = proc(): CompatProfile {.gcsafe.} = alibabaCompatProfileAt(endpoint)
+
+proc mistralProfileAt(endpoint: string): CompatProfileFn =
+  result = proc(): CompatProfile {.gcsafe.} = mistralCompatProfileAt(endpoint)
 
 proc fireworksProfileForModel(model: string): CompatProfileFn =
   ## The off switch is per model, so the profile is built for the model the
@@ -284,6 +288,21 @@ proc buildProviderBundle*(spec: ProviderSpec; http: HttpRuntimePort
               else: providerDefaultModelFor("alibaba"),
       providerName = "Alibaba",
       profileFn = alibabaProfileAt(providerEndpointFor("alibaba", spec.baseUrl)),
+      http = http,
+    )
+    ProviderBundle(
+      completeFn: makeFn(adapter),
+      streamFn:   adapter.makeStreamFn(),
+    )
+  of "mistral":
+    ## Mistral speaks the OpenAI dialect strictly; the deviations are data in
+    ## `mistralCompatProfile`, so there is no Mistral adapter file.
+    let adapter = newCompatAdapter(
+      spec.apiKey,
+      model = if spec.modelName.len > 0: spec.modelName
+              else: providerDefaultModelFor("mistral"),
+      providerName = "Mistral",
+      profileFn = mistralProfileAt(providerEndpointFor("mistral", spec.baseUrl)),
       http = http,
     )
     ProviderBundle(

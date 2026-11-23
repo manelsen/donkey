@@ -17,6 +17,8 @@ const
   DefaultModelGemini*      = "gemini-3.8-flash"
   DefaultModelMiniMax*     = "MiniMax-M2"
   DefaultModelNvidia*      = "nvidia/nemotron-3.5-super-vl-120b-a12b"
+  DefaultModelMistral*     = "mistral-large-latest"
+    ## Mistral's own moving alias for its flagship chat model.
   DefaultModelAlibaba*     = "qwen3.8-max"  ## first of the curated DashScope list
   DefaultModelFireworks*   = "accounts/fireworks/models/kimi-k2p6"
     ## Donkey's choice, not a Hermes default: this is

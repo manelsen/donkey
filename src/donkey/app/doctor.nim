@@ -170,6 +170,7 @@ const ProviderKeyLabels = [
   ("zai",           "Zhipu/ZAI"),
   ("zai-coding",    "ZAI Coding"),
   ("nvidia",        "NVIDIA NIM"),
+  ("mistral",       "Mistral AI"),
   ("alibaba",       "Alibaba DashScope"),
   ("fireworks",     "Fireworks AI"),
 ]

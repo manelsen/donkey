@@ -221,6 +221,8 @@ func visionSupport*(providerName, model: string): VisionSupport =
       else: vsUnknown
   of "alibaba":
     if "-vl" in m or m.startsWith("qvq"): vsYes else: vsUnknown
+  of "mistral":
+    if m.startsWith("pixtral"): vsYes else: vsUnknown
   else:
     vsUnknown
 

@@ -193,6 +193,7 @@ proc detectProviderAvailability*(): ProviderAvailability {.gcsafe, raises: [].} 
     opencodeGo: providerConfigured("opencode-go"),
     zen: providerConfigured("zen"),
     nvidia: providerConfigured("nvidia"),
+    mistral: providerConfigured("mistral"),
     alibaba: providerConfigured("alibaba"),
     fireworks: providerConfigured("fireworks"),
   )

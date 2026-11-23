@@ -120,6 +120,13 @@ const ProviderDescriptors*: seq[ProviderDescriptor] = @[
     baseUrlEnv: "",
     defaultModel: DefaultModelFireworks,
     aliases: @["fireworks-ai", "fw"]),
+  ProviderDescriptor(
+    id: "mistral", transport: ptOpenAiChat, authType: atApiKey,
+    envNames: @["MISTRAL_API_KEY"],
+    baseUrl: "https://api.mistral.ai/v1/chat/completions",
+    baseUrlEnv: "MISTRAL_BASE_URL",
+    defaultModel: DefaultModelMistral,
+    aliases: @["mistralai", "mistral-ai"]),
 ]
 
 func providerDescriptors*(): seq[ProviderDescriptor] =

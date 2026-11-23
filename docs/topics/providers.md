@@ -348,12 +348,10 @@ place:
    case and `availableProviders` in `core/providers/smart_routing.nim`;
    `detectProviderAvailability` and `availableProviderNames` in
    `app/session_bootstrap.nim`. `defaultModelForProvider` in the same
-   `smart_routing.nim` also carries a per-id/alias fallback `case`. The channel
-   status line has its own hardcoded list, `availableProvidersFromEnv` in
-   `adapters/channel/common_runtime.nim` — it reads single env names directly,
-   so a provider configured only through `*_KEYS` shows in `doctor` and the
-   daemon but not in that status line. Without the availability field the
-   router never selects the provider.
+   `smart_routing.nim` also carries a per-id/alias fallback `case`;
+   `detectProviderAvailability` lives in `app/credential_runtime.nim`, and the
+   dashboard maps the field in `domain/gateway/dashboard_pure.nim`. Without
+   the availability field the router never selects the provider.
 6. **Catalog/status.** Register the default model in
    `provider_catalog.buildDefaultCatalog` so `/models` and catalog queries see
    it without a live `/models` fetch. The entry also carries what the
@@ -397,9 +395,9 @@ Deliberately not supported:
   (`OpenAiWireQuirks.includeReasoningField`). Setting it false only stops Donkey
   from sending the field; it says nothing about what the provider does.
 
-## Compat Breadth: NVIDIA, Alibaba, Fireworks
+## Compat Breadth: NVIDIA, Alibaba, Fireworks, Mistral
 
-Three OpenAI-compatible providers were added through the generic
+Four OpenAI-compatible providers were added through the generic
 `CompatAdapter`. None has its own adapter file; each contributes a descriptor
 row and a pure profile.
 
@@ -407,7 +405,26 @@ row and a pure profile.
 |---|---|---|---|---|
 | `nvidia` (NIM) | `https://integrate.api.nvidia.com/v1/chat/completions` | `nvidia/nemotron-3.5-super-vl-120b-a12b` | Yes | tools, vision, 16384 output; context unknown |
 | `alibaba` (DashScope) | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions` | `qwen3.8-max` | No (unverified) | unknown |
-| `fireworks` | `https://api.fireworks.ai/inference/v1/chat/completions` | `accounts/fireworks/models/kimi-k2p6` | No (unverified) | unknown |
+| `fireworks` | `https://api.fireworks.ai/inference/v1/chat/completions` | `accounts/fireworks/models/kimi-k2p6` | Per model (unverified) | unknown |
+| `mistral` | `https://api.mistral.ai/v1/chat/completions` | `mistral-large-latest` | Pixtral yes; others unverified | unknown |
+
+Vision is decided per provider and model before each call
+(`media_pure.visionSupport`; see `docs/topics/media.md`). The compat
+transport sends the images it is given.
+
+### Mistral AI
+
+```bash
+export MISTRAL_API_KEY=...
+```
+
+- `MISTRAL_BASE_URL` moves the endpoint (same rule as `NVIDIA_BASE_URL`).
+- The API is strict: unknown fields are a 422, so the Donkey-only
+  `include_reasoning` is never sent.
+- A tool id must be exactly 9 alphanumerics. The `shortToolIds` quirk maps any
+  other id (Donkey's own, or another provider's before a fallback) through a
+  deterministic hash, on the wire copy only; both sides of a call/result pair
+  get the same id and the stored history keeps the original.
 
 ### NVIDIA NIM
 
