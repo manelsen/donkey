@@ -1,7 +1,9 @@
 ## Common helpers for LLM-based rerankers.
 
 import std/[json, strutils]
+import ../../core/pipeops
 import ../../ports/reranking
+import ../http/std_http
 
 const
   DefaultRerankMaxTokens* = 700
@@ -126,3 +128,32 @@ proc parseScores*(content: string; count: int): seq[float32] =
       return result
     except CatchableError:
       discard
+
+func clipCandidates*(candidates: seq[RerankCandidate];
+                     maxChars: int): seq[RerankCandidate] =
+  ## The candidates with their content cut to `maxChars`.
+  result = candidates
+  for candidate in result.mitems:
+    candidate.content = truncateCandidate(candidate.content, maxChars)
+
+proc rerankViaChat*(http: StdHttpAdapter; endpoint, apiKey: string;
+                    body: JsonNode; count: int;
+                    extraHeaders: seq[(string, string)] = @[]): seq[float32] =
+  ## Posts a chat completion that asks for scores and reads them from the
+  ## first choice. Empty on any failure: reranking is best effort, and the
+  ## caller keeps the first-stage order.
+  let headers = @[
+    ("Authorization", "Bearer " & apiKey),
+    ("Content-Type", "application/json"),
+  ] & extraHeaders
+  let resp = http.post(endpoint, $body, headers)
+  if resp.isErr:
+    return @[]
+  try:
+    let parsed = parseJson(resp.value.body)
+    let choices = parsed["choices"]
+    if choices.kind != JArray or choices.len == 0:
+      return @[]
+    parseScores(choices[0]["message"]["content"].getStr(""), count)
+  except CatchableError:
+    @[]

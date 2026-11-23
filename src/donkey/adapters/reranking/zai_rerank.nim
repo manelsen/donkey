@@ -84,30 +84,9 @@ proc rerank*(a: ZaiRerankAdapter;
              candidates: seq[RerankCandidate]): seq[float32] {.gcsafe.} =
   if a.apiKey.len == 0 or query.len == 0 or candidates.len == 0:
     return @[]
-
-  var clipped: seq[RerankCandidate]
-  clipped.setLen(candidates.len)
-  for i, candidate in candidates:
-    clipped[i] = candidate
-    clipped[i].content = truncateCandidate(candidate.content, a.maxChars)
-
-  let headers = @[
-    ("Authorization", "Bearer " & a.apiKey),
-    ("Content-Type", "application/json"),
-  ]
-  let resp = a.http.post(a.endpoint, $a.buildBody(query, clipped), headers)
-  if resp.isErr:
-    return @[]
-
-  try:
-    let body = parseJson(resp.value.body)
-    let choices = body["choices"]
-    if choices.kind != JArray or choices.len == 0:
-      return @[]
-    let content = choices[0]["message"]["content"].getStr("")
-    parseScores(content, candidates.len)
-  except CatchableError:
-    @[]
+  rerankViaChat(a.http, a.endpoint, a.apiKey,
+                a.buildBody(query, clipCandidates(candidates, a.maxChars)),
+                candidates.len)
 
 proc toRerankFn*(a: ZaiRerankAdapter): RerankFn =
   proc(query: string; candidates: seq[RerankCandidate]): seq[float32] {.gcsafe.} =

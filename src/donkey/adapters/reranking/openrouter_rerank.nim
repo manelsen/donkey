@@ -82,32 +82,10 @@ proc rerank*(a: OpenRouterRerankAdapter;
              candidates: seq[RerankCandidate]): seq[float32] {.gcsafe.} =
   if a.apiKey.len == 0 or query.strip.len == 0 or candidates.len == 0:
     return @[]
-
-  var clipped: seq[RerankCandidate]
-  clipped.setLen(candidates.len)
-  for i, candidate in candidates:
-    clipped[i] = candidate
-    clipped[i].content = truncateCandidate(candidate.content, a.maxChars)
-
-  let headers = @[
-    ("Authorization", "Bearer " & a.apiKey),
-    ("Content-Type", "application/json"),
-    ("HTTP-Referer", OpenRouterRefererUrl),
-    ("X-Title", AppName),
-  ]
-  let resp = a.http.post(OpenRouterRerankUrl, $a.buildBody(query, clipped), headers)
-  if resp.isErr:
-    return @[]
-
-  try:
-    let body = parseJson(resp.value.body)
-    let choices = body["choices"]
-    if choices.kind != JArray or choices.len == 0:
-      return @[]
-    let content = choices[0]["message"]["content"].getStr("")
-    return parseScores(content, candidates.len)
-  except CatchableError:
-    @[]
+  rerankViaChat(a.http, OpenRouterRerankUrl, a.apiKey,
+                a.buildBody(query, clipCandidates(candidates, a.maxChars)),
+                candidates.len,
+                @[("HTTP-Referer", OpenRouterRefererUrl), ("X-Title", AppName)])
 
 proc toRerankFn*(a: OpenRouterRerankAdapter): RerankFn =
   proc(query: string; candidates: seq[RerankCandidate]): seq[float32] {.gcsafe.} =
