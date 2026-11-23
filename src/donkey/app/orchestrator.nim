@@ -52,6 +52,7 @@ import ../ports/subagent_workspace
 import ../ports/memory
 import ../ports/reminders
 import ../ports/process
+import ../ports/attachment_store
 import ../ports/http
 import ../ports/fs
 import ../ports/tool
@@ -120,6 +121,7 @@ type OrchestratorState = object
   env*:           Environment  ## the snapshot settings are read from
   reminders*:     ReminderPort ## where the reminder tool schedules
   process*:       ProcessRuntimePort ## where the bash and archive tools run
+  attachments*:   AttachmentStorePort ## where generated files are kept
   history*:       ConversationHistory
   debugMode*:     bool
   showReasoning*: bool
@@ -303,6 +305,7 @@ proc prepareUserTurnSetup(globalOutbox: AsyncQueue[OutboundMessage];
   result.nativeCtx.replyTo = msg.replyTo
   result.nativeCtx.reminders = stateRuntime.reminders
   result.nativeCtx.process = stateRuntime.process
+  result.nativeCtx.attachments = stateRuntime.attachments
   result.nativeCtx.stopGeneration = stateRuntime.stopGeneration
   ## Recorded per turn: a `/stop` that arrives after this point aborts the
   ## turn; one that arrived before it belongs to an earlier turn.
@@ -817,7 +820,8 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
                       reviewRuntime:  ReviewRuntime = nil;
                       env:            Environment = Environment();
                       reminders:      ReminderPort = ReminderPort();
-                      process:        ProcessRuntimePort = unavailableProcess()): Future[void] {.async.} =
+                      process:        ProcessRuntimePort = unavailableProcess();
+                      attachments:    AttachmentStorePort = unavailableAttachments()): Future[void] {.async.} =
   ## Persistent actor. Loops: debounce → memory → LLM → reply → repeat.
   ## `env` is the snapshot tool and turn settings are read from.
   if daemonShuttingDown():
@@ -839,6 +843,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
   stateRuntime.env = env
   stateRuntime.reminders = reminders
   stateRuntime.process = process
+  stateRuntime.attachments = attachments
   stateRuntime.subagents = newSubagentManager(subagentWorkspace)
   stateRuntime.stopGeneration = currentSessionStopGeneration()
   let sessionId   = $nowMs()

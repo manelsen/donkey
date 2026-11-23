@@ -67,6 +67,7 @@ import ../ports/provider
 import ../ports/memory
 import ../ports/reminders
 import ../ports/process
+import ../ports/attachment_store
 import ../core/tooling/native_tool_args
 export native_tool_args  # argument contexts and their pure parsers
 import ../config/types as cfgTypes
@@ -119,6 +120,7 @@ type
     reminders*:    ReminderPort
     fs*:           FsRuntimePort
     process*:      ProcessRuntimePort
+    attachments*:  AttachmentStorePort  ## where generated files (speech) are kept
     completeFn*:   CompleteFn
     asyncCompleteFn*: AsyncCompleteFn
     http*:         httpPort.HttpRuntimePort
@@ -726,7 +728,7 @@ proc executeUtilityNativeTool(tc: ToolCallRequest;
       return handledError(error)
     let speech = speechSettings(ctx.env)
     if speechCtx.asVoice:
-      let prepared = prepareVoiceReply(ctx.fs,
+      let prepared = prepareVoiceReply(ctx.attachments,
         speechCtx.text, speechCtx.caption, ctx.paddockDir, ctx.channel,
         ctx.uid, ctx.http, speech, replyTo = ctx.replyTo)
       if prepared.isErr:
@@ -736,7 +738,7 @@ proc executeUtilityNativeTool(tc: ToolCallRequest;
         text: "Voice reply ready.",
         resultKind: trkOutput,
         outbound: some(prepared.get()))
-    let saved = performSpeech(ctx.fs, speechCtx.text, ctx.paddockDir, ctx.http,
+    let saved = performSpeech(ctx.attachments, speechCtx.text, ctx.paddockDir, ctx.http,
                               voice = (if speechCtx.voice.strip.len > 0: speechCtx.voice
                                        else: speech.ttsVoice),
                               format = speechCtx.format,
@@ -1040,6 +1042,7 @@ proc executeNativeTool*(tc:      ToolCallRequest;
   var ctx = ctx
   ctx.fs = ctx.fs.orUnavailable  ## a context built without a file system fails, not crashes
   ctx.process = ctx.process.orUnavailable
+  ctx.attachments = ctx.attachments.orUnavailable
   let j = try: parseJson(tc.inputJson)
           except CatchableError: newJObject()
   if sessionStopRequested(ctx):

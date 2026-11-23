@@ -3,8 +3,10 @@
 import std/[json, os, strutils, unittest]
 import donkey/app/tools/audio_tools
 import donkey/adapters/filesystem/fs_adapter
+import donkey/adapters/filesystem/attachment_store
 
 let testFs = newFsAdapter()
+let testAttachments = newAttachmentStore()
 import donkey/core/pipeops
 import donkey/domain/media/audio_pure
 import donkey/ports/http
@@ -120,7 +122,7 @@ proc runTests*() =
       let dir = freshDir("tts-ok")
       defer: removeDir(dir)
       let cap = Capture(status: 200, response: "MP3BYTES")
-      let res = performSpeech(testFs, "olá", dir, fakeHttp(cap), apiKey = "k",
+      let res = performSpeech(testAttachments, "olá", dir, fakeHttp(cap), apiKey = "k",
         endpoint = "https://tts.test/v1/audio/speech", model = "tts-1",
         voice = "alloy", format = "mp3")
       check res.isOk
@@ -140,21 +142,21 @@ proc runTests*() =
       let dir = freshDir("tts-empty")
       defer: removeDir(dir)
       let cap = Capture()
-      check performSpeech(testFs, "   ", dir, fakeHttp(cap), apiKey = "k").isErr
+      check performSpeech(testAttachments, "   ", dir, fakeHttp(cap), apiKey = "k").isErr
       check cap.url == ""
 
     test "a missing key is rejected":
       let dir = freshDir("tts-nokey")
       defer: removeDir(dir)
       let cap = Capture()
-      check performSpeech(testFs, "olá", dir, fakeHttp(cap), apiKey = "").isErr
+      check performSpeech(testAttachments, "olá", dir, fakeHttp(cap), apiKey = "").isErr
       check cap.url == ""
 
     test "an unsupported format is rejected":
       let dir = freshDir("tts-format")
       defer: removeDir(dir)
       let cap = Capture()
-      check performSpeech(testFs, "olá", dir, fakeHttp(cap), apiKey = "k",
+      check performSpeech(testAttachments, "olá", dir, fakeHttp(cap), apiKey = "k",
                           format = "exe").isErr
       check cap.url == ""
 
@@ -162,10 +164,28 @@ proc runTests*() =
       let dir = freshDir("tts-http")
       defer: removeDir(dir)
       let cap = Capture(status: 429, response: "slow down")
-      let res = performSpeech(testFs, "olá", dir, fakeHttp(cap), apiKey = "k")
+      let res = performSpeech(testAttachments, "olá", dir, fakeHttp(cap), apiKey = "k")
       check res.isErr
       check res.error.contains("429")
       check not dirExists(dir / "attachments")
+
+  suite "speech stays inside the paddock":
+    when defined(posix):
+      test "a symlinked attachments directory is refused, nothing written outside":
+        let paddock = getTempDir() / "donkey_tts_symlink_paddock"
+        let outside = getTempDir() / "donkey_tts_symlink_outside"
+        removeDir(paddock); removeDir(outside)
+        createDir(paddock); createDir(outside)
+        createSymlink(outside, paddock / "attachments")
+        defer:
+          removeFile(paddock / "attachments")
+          removeDir(paddock); removeDir(outside)
+        let cap = Capture(status: 200, response: "AUDIO")
+        let res = performSpeech(testAttachments, "olá", paddock, fakeHttp(cap), apiKey = "k")
+        check res.isErr
+        var written = 0
+        for _ in walkDir(outside): inc written
+        check written == 0
 
 when isMainModule:
   runTests()

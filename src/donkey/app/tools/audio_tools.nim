@@ -16,6 +16,7 @@ import ../../domain/message
 import ../../ports/channel_capability
 import ../../ports/http
 import ../../ports/fs
+import ../../ports/attachment_store
 
 const
   SttDefaultEndpoint* = "https://api.openai.com/v1/audio/transcriptions"
@@ -103,13 +104,16 @@ proc performTranscribe*(fs: FsRuntimePort; path: string; http: HttpRuntimePort;
     return errorText("transcribe_audio", parsed.error)
   parsed.get()
 
-proc performSpeech*(fs: FsRuntimePort; text: string; paddockDir: string; http: HttpRuntimePort;
+proc performSpeech*(attachments: AttachmentStorePort; text: string; paddockDir: string;
+                    http: HttpRuntimePort;
                     voice = TtsDefaultVoice; format = "mp3";
                     apiKey = ""; endpoint = TtsDefaultEndpoint;
                     model = TtsDefaultModel): Result[string, string]
                     {.gcsafe, raises: [].} =
   ## Sends `text` to the speech endpoint and stores the audio under the
-  ## paddock's attachments. Returns the path relative to the paddock.
+  ## paddock's attachments, through the store that confines it there (a
+  ## symlinked `attachments/` is refused). Returns the path relative to the
+  ## paddock.
   if text.strip.len == 0:
     return err("text_to_speech: text is empty")
   if apiKey.len == 0:
@@ -139,13 +143,13 @@ proc performSpeech*(fs: FsRuntimePort; text: string; paddockDir: string; http: H
     return err("text_to_speech: endpoint returned no audio")
   inc gSpeechSeq
   let name = "tts-" & $nowMs() & "-" & $gSpeechSeq & "." & extension
-  let dir = paddockDir / "attachments"
-  let saved = fs.createDir(dir) and fs.writeFile(dir / name, audio)
-  if saved.isErr:
-    return err("text_to_speech: " & saved.error)
-  ok("attachments/" & name)
+  var bytes = newSeq[byte](audio.len)
+  for i, ch in audio: bytes[i] = byte(ch)
+  let saved = attachments.save(paddockDir / AttachmentDirName, name, bytes).valueOr:
+    return err("text_to_speech: " & error)
+  ok(AttachmentDirName & "/" & saved.fileName)
 
-proc prepareVoiceReply*(fs: FsRuntimePort; text, caption, paddockDir: string;
+proc prepareVoiceReply*(attachments: AttachmentStorePort; text, caption, paddockDir: string;
                         channel: ChannelKind; uid: UserId;
                         http: HttpRuntimePort; speech: SpeechSettings;
                         replyTo = ""): Result[OutboundMessage, string]
@@ -157,7 +161,7 @@ proc prepareVoiceReply*(fs: FsRuntimePort; text, caption, paddockDir: string;
   if not supports(channel, cfSendVoice):
     return err("text_to_speech: channel " & $channel &
                " cannot deliver voice notes")
-  let saved = performSpeech(fs, text, paddockDir, http, voice = speech.ttsVoice,
+  let saved = performSpeech(attachments, text, paddockDir, http, voice = speech.ttsVoice,
                             format = "opus", apiKey = speech.ttsApiKey,
                             endpoint = speech.ttsEndpoint, model = speech.ttsModel)
   if saved.isErr:
