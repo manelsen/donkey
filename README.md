@@ -208,6 +208,12 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
   ./donkey ctl tool add-http https://mcp.example.com/mcp --token-env EXAMPLE_MCP_TOKEN
   ```
 
+  A server that uses OAuth (MCP authorization, 2025-06-18) is registered with `--oauth`, which logs in right away; `ctl mcp login <url>` logs in again later. Donkey runs without a browser, so the CLI prints the authorization URL, you authorize in your own browser, and the browser is sent to `http://127.0.0.1:8976/callback`, which does not load (nothing listens there): copy the URL from the address bar and paste it into the CLI. The tokens are stored readable only by the daemon's user (`{home}/state/mcp_oauth/`) and refreshed automatically.
+  ```bash
+  ./donkey ctl tool add-http https://mcp.example.com/mcp --oauth
+  ./donkey ctl mcp login https://mcp.example.com/mcp
+  ```
+
 ---
 
 ## 🌐 Supported Ecosystem

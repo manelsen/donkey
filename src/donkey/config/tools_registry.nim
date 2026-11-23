@@ -10,6 +10,7 @@
 ##   kind      = "mcp-http"          # a remote server over Streamable HTTP
 ##   url       = "https://mcp.example.com/mcp"
 ##   token_env = "EXAMPLE_MCP_TOKEN" # optional: the env var holding a bearer
+##   auth      = "oauth"             # or: OAuth tokens from `ctl mcp login`
 ##
 ## The token itself never goes in this file; only the name of the variable.
 
@@ -29,6 +30,7 @@ type
     args*:     seq[string]
     url*:      string
     tokenEnv*: string
+    oauth*:    bool     ## tokens from `ctl mcp login`, stored under state/
 
 func tomlString(value: string): string =
   "\"" & value.replace("\\", "\\\\").replace("\"", "\\\"") & "\""
@@ -68,6 +70,8 @@ proc saveToolEntry*(path: string; entry: ToolEntry) =
     f.writeLine("url       = " & tomlString(entry.url))
     if entry.tokenEnv.len > 0:
       f.writeLine("token_env = " & tomlString(entry.tokenEnv))
+    if entry.oauth:
+      f.writeLine("auth      = \"oauth\"")
 
 proc loadToolRegistry*(path: string): seq[ToolEntry] {.gcsafe.} =
   ## Reads all [[tool]] entries from the TOML file at `path`.
@@ -84,7 +88,8 @@ proc loadToolRegistry*(path: string): seq[ToolEntry] {.gcsafe.} =
       let url = node.getOrDefault("url").getStr("")
       if url.len > 0:
         result.add(ToolEntry(kind: tkMcpHttp, url: url,
-                             tokenEnv: node.getOrDefault("token_env").getStr("")))
+                             tokenEnv: node.getOrDefault("token_env").getStr(""),
+                             oauth: node.getOrDefault("auth").getStr("") == "oauth"))
       continue
     let cmd  = node.getOrDefault("command").getStr("")
     var args: seq[string]
