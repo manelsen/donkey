@@ -91,6 +91,9 @@ type
     spec*: ScheduleSpec
     lastRunAtMs*: int64
     lastFireAtMs*: int64
+    lastStatus*: string   ## "sent" / "failed" for the last attempt; "" before any
+    lastError*: string    ## error of the last failed attempt
+    failures*: int        ## failed attempts so far
     loadWarning*: string
 
   ScheduleStore* = ref object
@@ -204,6 +207,10 @@ proc parseRecord(node: JsonNode; version: int): Option[ScheduleRecord] =
     ),
     lastRunAtMs: jsonInt(node, "last_run_at_ms"),
     lastFireAtMs: jsonInt(node, "last_fire_at_ms"),
+    # Absent in files written before run status was kept: empty and 0.
+    lastStatus: jsonStr(node, "last_status"),
+    lastError: jsonStr(node, "last_error"),
+    failures: int(jsonInt(node, "failures")),
   )
 
   if version < ScheduleStoreVersion:
@@ -278,6 +285,9 @@ proc recordsToJson(records: OrderedTable[string, ScheduleRecord]): JsonNode =
     node["created_at_ms"] = %record.spec.createdAtMs
     node["last_run_at_ms"] = %record.lastRunAtMs
     node["last_fire_at_ms"] = %record.lastFireAtMs
+    node["last_status"] = %record.lastStatus
+    node["last_error"] = %record.lastError
+    node["failures"] = %record.failures
     list.add(node)
   result["schedules"] = list
 
@@ -292,6 +302,10 @@ proc mergeUpsert(existing: ScheduleRecord; incoming: ScheduleRecord
     result.lastRunAtMs = existing.lastRunAtMs
   if result.lastFireAtMs == 0:
     result.lastFireAtMs = existing.lastFireAtMs
+  ## Run history belongs to the scheduler, not to a ctl edit of the spec.
+  result.lastStatus = existing.lastStatus
+  result.lastError = existing.lastError
+  result.failures = existing.failures
 
 # ---------------------------------------------------------------------------
 # Public API.
@@ -299,12 +313,13 @@ proc mergeUpsert(existing: ScheduleRecord; incoming: ScheduleRecord
 
 func toViewRecord*(record: ScheduleRecord): ScheduleViewRecord =
   ## Adapter row → pure view projection, for `ctl schedule` and the TUI.
-  ## `last_status`/`last_error`/`failures` stay empty: this store does not
-  ## persist them, and the view never invents a status.
   ScheduleViewRecord(
     spec: record.spec,
     lastRunAtMs: record.lastRunAtMs,
     lastFireAtMs: record.lastFireAtMs,
+    lastStatus: record.lastStatus,
+    lastError: record.lastError,
+    failures: record.failures,
   )
 
 proc newScheduleStoreRef*(stateDir: string): ScheduleStore =
@@ -517,6 +532,16 @@ proc save*(store: ScheduleStore; state: ScheduleWatermark
   record.lastRunAtMs = max(record.lastRunAtMs, state.lastRunAtMs)
   if state.lastFireAtMs > 0:
     record.lastFireAtMs = state.lastFireAtMs
+  case state.lastStatus
+  of "sent":
+    record.lastStatus = "sent"
+    record.lastError = ""
+  of "failed":
+    record.lastStatus = "failed"
+    record.lastError = state.lastError
+    inc record.failures
+  else:
+    discard  ## a watermark-only save keeps the last outcome
   if record.spec.createdAtMs == 0:
     record.spec.createdAtMs = state.createdAtMs
   record.loadWarning = ""
