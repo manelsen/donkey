@@ -241,6 +241,25 @@ proc runTests*() =
         if "/channels/guild-chan/messages" in r.target: inc replies
       check replies == 1
 
+    test "Discord: a new gateway session recovers the gap by REST":
+      ## A READY after a lost session means the gateway did not replay the
+      ## gap; the drain runs the same recovery as the startup.
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var state = initPresentationState()
+      let dc = newDiscordAdapter("TOK", Tmp / "dc6" / "ids.tsv", apiBase = base())
+      discard sm.getOrCreate(dc.resolver.resolve(ckDiscord, "48"))
+      gDiscordEvents.push(DiscordRawEvent(kind: deResync))
+      drainDiscordEvents(sm, dc, "TOK", state, env("dc6"), msgSeq, logger,
+                         noop, noop, noop)
+      check anyRequest(proc(r: Recorded): bool =
+        r.target.startsWith("GET /channels/D1/messages"))
+
+    test "Discord: only a READY after an earlier one asks for recovery":
+      check not readyNeedsResync(readyBefore = false)
+      check readyNeedsResync(readyBefore = true)
+
     test "QQ: a group gets the notice, not the link code":
       reset()
       var sm = openSessions()

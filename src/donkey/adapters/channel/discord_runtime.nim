@@ -537,6 +537,8 @@ proc handleDiscordEvent*(sm: var SessionManager;
       event.interactionId, event.interactionToken).isOkOr:
         core_log.log(logger, core_log.lvlError, "dc send modal: " & error)
 
+  of deResync:
+    discard  ## handled by the drain loop
   of deButtonClick:
     let userId = dcAdapter.resolver.resolve(ckDiscord, event.discordUserId)
     dcAdapter.sendDeferredUpdate(
@@ -675,6 +677,14 @@ proc drainDiscordEvents*(sm: var SessionManager;
   let gate = dcAdapter.resolver.identityGate()
   var (hasEvent, event) = dcAdapter.tryRecvEvent()
   while hasEvent:
+    if event.kind == deResync:
+      ## Same recovery as at startup; messages already handled are dropped
+      ## by the dedup, the rest are processed in order.
+      checkDiscordOfflineMessages(sm, dcAdapter, discordToken, presentationState,
+                                  env, msgSeq, logger, handleInboundStatus,
+                                  completeInboundStatus, handleSessionFallback)
+      (hasEvent, event) = dcAdapter.tryRecvEvent()
+      continue
     let rawId = event.discordUserId
     let linkSource =
       case event.kind
