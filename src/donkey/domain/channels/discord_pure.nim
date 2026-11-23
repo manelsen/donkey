@@ -224,6 +224,73 @@ func parseInteractionCreate(d: JsonNode): DsParseResult =
 
   DsParseResult(kind: dekUnknown)
 
+# ── Outbound text ─────────────────────────────────────────────────────────────
+
+func tableCells(line: string): seq[string] =
+  var body = line.strip()
+  if body.startsWith("|"): body = body[1 .. ^1]
+  if body.endsWith("|"): body = body[0 ..< ^1]
+  for cell in body.split('|'):
+    result.add(cell.strip())
+
+func isTableRow(line: string): bool =
+  '|' in line and line.strip().len > 0
+
+func isSeparatorRow(line: string): bool =
+  ## `|---|:-:|--:|`: every cell is dashes with optional alignment colons.
+  if not line.isTableRow: return false
+  let cells = tableCells(line)
+  if cells.len == 0: return false
+  for cell in cells:
+    let core = cell.strip(chars = {':'})
+    if core.len == 0 or core.strip(chars = {'-'}).len != 0:
+      return false
+  true
+
+func rowAsBullets(headers, cells: seq[string]): string =
+  ## First column is the heading; every other non-empty cell is a bullet
+  ## labelled by its column header.
+  var lines: seq[string]
+  if cells.len > 0 and cells[0].len > 0:
+    lines.add("**" & cells[0] & "**")
+  for i in 1 ..< cells.len:
+    if cells[i].len == 0: continue
+    let label = if i < headers.len and headers[i].len > 0: headers[i]
+                else: "Col " & $(i + 1)
+    lines.add("• " & label & ": " & cells[i])
+  lines.join("\n")
+
+func discordText*(text: string): string =
+  ## Discord does not render GFM pipe tables (hermes cf7bf5bdc9): each table
+  ## becomes one block per row, the first cell in bold and the other cells as
+  ## `• Header: value`. Fenced code is left as it is.
+  let lines = text.split('\n')
+  var output: seq[string]
+  var inFence = false
+  var i = 0
+  while i < lines.len:
+    let line = lines[i]
+    if line.strip().startsWith("```"):
+      inFence = not inFence
+      output.add(line)
+      inc i
+      continue
+    if not inFence and line.isTableRow and i + 1 < lines.len and
+        lines[i + 1].isSeparatorRow and not line.isSeparatorRow:
+      let headers = tableCells(line)
+      var blocks: seq[string]
+      i += 2
+      while i < lines.len and lines[i].isTableRow and
+          not lines[i].strip().startsWith("```"):
+        let rendered = rowAsBullets(headers, tableCells(lines[i]))
+        if rendered.len > 0: blocks.add(rendered)
+        inc i
+      output.add(blocks.join("\n\n"))
+      continue
+    output.add(line)
+    inc i
+  output.join("\n")
+
 # ── Public pure API ───────────────────────────────────────────────────────────
 
 func parseDispatch*(t: string; d: JsonNode): DsParseResult =

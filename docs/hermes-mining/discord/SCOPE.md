@@ -85,6 +85,10 @@ sobre o gateway:
 - **Teto de anexo recebido** (25 MiB, pelo `size` do evento): o anexo maior
   não é baixado; o turno recebe uma nota com o nome do arquivo (`93ea9b04af`).
 
+- **Tabelas** (`discordText`): o Discord não renderiza tabela GFM; cada linha
+  vira um bloco com a primeira célula em negrito e as outras como
+  `• Cabeçalho: valor`, fora de blocos de código (`cf7bf5bdc9`).
+
 Ainda **não há**: ledger de entrega e cursor que só avança depois da entrega
 final (hoje avança antes do despacho: at-most-once).
 

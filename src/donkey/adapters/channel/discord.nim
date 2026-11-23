@@ -514,10 +514,10 @@ proc send*(a: DiscordAdapter; msg: OutboundMessage): Result[void, string] =
   ## If msg.keyboard is non-empty, sends with component buttons.
   ## Splits messages longer than 2000 characters into multiple sends.
   if msg.keyboard.len > 0:
-    discard a.sendKeyboard(msg.userId, msg.text, msg.keyboard)
+    discard a.sendKeyboard(msg.userId, discordText(msg.text), msg.keyboard)
     return ok()
   let chId = ? a.resolveOutboundChannelId(msg)
-  for chunk in splitChunks(msg.text, DiscordMaxChars):
+  for chunk in splitChunks(discordText(msg.text), DiscordMaxChars):
     ? a.sendChunk(chId, chunk)
   ok()
 
@@ -632,8 +632,9 @@ proc sendReturnId*(a: DiscordAdapter; msg: OutboundMessage): Result[string, stri
   ## Used by the streaming machinery to obtain the id for subsequent editMessage calls.
   ## Uses >>= to chain HTTP response → JSON parse → id extraction.
   let chId = ? a.resolveOutboundChannelId(msg)
-  let txt  = if msg.text.len > DiscordMaxChars: msg.text[0 ..< DiscordMaxChars]
-             else: msg.text
+  let shown = discordText(msg.text)
+  let txt  = if shown.len > DiscordMaxChars: shown[0 ..< DiscordMaxChars]
+             else: shown
   var body    = %* {"content": txt}
   if msg.keyboard.len > 0:
     body.add("components", %makeComponentRows(msg.keyboard))
@@ -647,7 +648,8 @@ proc editMessage*(a: DiscordAdapter; userId: UserId;
   if discordId.len == 0:
     return err("DiscordAdapter.editMessage: no Discord ID for " & $userId)
   let chId = ? a.dmChannelFor(discordId)
-  let txt  = if text.len > DiscordMaxChars: text[0 ..< DiscordMaxChars] else: text
+  let shown = discordText(text)
+  let txt  = if shown.len > DiscordMaxChars: shown[0 ..< DiscordMaxChars] else: shown
   let body    = %* {"content": txt}
   let headers = @[a.authHeader(), ("Content-Type", "application/json")]
   let url  = a.base() & "/channels/" & chId & "/messages/" & msgId

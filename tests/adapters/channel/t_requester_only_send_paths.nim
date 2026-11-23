@@ -254,6 +254,24 @@ proc runTests*() =
         check payload["allowed_mentions"] == %* {"parse": ["users"]}
       check carriers == 10
 
+    test "Discord: a table in a reply or a streamed edit arrives as bullets":
+      ## hermes cf7bf5bdc9: Discord shows raw pipes for a GFM table.
+      reset()
+      let dc = newDiscordAdapter("TOK", Tmp / "dc-t" / "ids.tsv", apiBase = base())
+      let uid = dc.resolver.resolve(ckDiscord, "50")
+      let table = "| Name | Score |\n|---|---|\n| Alice | 95 |"
+      check dc.send(OutboundMessage(userId: uid, text: table,
+                                    replyTo: "channel:guild-chan")).isOk
+      check dc.sendReturnId(OutboundMessage(userId: uid, text: table)).isOk
+      check dc.editMessage(uid, "m1", table).isOk
+      var seen = 0
+      for r in requests():
+        if "Alice" notin r.body: continue
+        inc seen
+        let content = parseJson(r.body)["content"].getStr
+        check content == "**Alice**\n• Score: 95"
+      check seen == 3
+
     test "Discord: a message delivered twice is handled once":
       ## A gateway RESUME replays events, and the startup backfill can overlap
       ## the live stream: the second copy must not answer again.
