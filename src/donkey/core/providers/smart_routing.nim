@@ -595,9 +595,9 @@ func reorderSelectionsWithCost*(selections: seq[ProviderSelection];
   for item in ranked:
     result.add(item.selection)
 
-func smartRouteSelections*(prefs: SmartRoutingPrefs;
-                           req: CompletionRequest;
-                           availability: ProviderAvailability): seq[ProviderSelection] =
+func routedSelections(prefs: SmartRoutingPrefs;
+                      req: CompletionRequest;
+                      availability: ProviderAvailability): seq[ProviderSelection] =
   if not prefs.usesSmartRouting:
     return @[prefs.explicitSelection]
 
@@ -729,6 +729,22 @@ func smartRouteSelections*(prefs: SmartRoutingPrefs;
     addSelectionIfAvailable(result, rc, "ollama")
 
   result = dedupeSelections(result)
+
+func smartRouteSelections*(prefs: SmartRoutingPrefs;
+                           req: CompletionRequest;
+                           availability: ProviderAvailability): seq[ProviderSelection] =
+  ## A named agent's provider (`req.providerOverride`) goes first; the user's
+  ## own routing follows, so an agent whose provider fails still answers. A
+  ## provider with no credentials configured is skipped instead of tried.
+  if req.providerOverride.len == 0 or
+      not isAvailable(availability, req.providerOverride):
+    return routedSelections(prefs, req, availability)
+  result = @[selection(req.providerOverride,
+    if req.modelOverride.len > 0: req.modelOverride
+    else: defaultModelForProvider(req.providerOverride))]
+  for s in routedSelections(prefs, req, availability):
+    if s.providerName != result[0].providerName or s.modelName != result[0].modelName:
+      result.add(s)
 
 func previewSmartRouteSelections*(prefs: SmartRoutingPrefs;
                                   availability: ProviderAvailability): seq[ProviderSelection] =

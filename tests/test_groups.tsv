@@ -73,6 +73,7 @@ g0	tests/app/t_gateway_drainer.nim
 g0	tests/app/t_heartbeat.nim
 g0	tests/app/t_http_gateway.nim
 g0	tests/app/t_image_fallback.nim
+g0	tests/app/t_named_agents.nim
 g0	tests/app/t_inbound_gate.nim
 g0	tests/app/t_ipc_server.nim
 g0	tests/app/t_inbound_media.nim
@@ -225,6 +226,7 @@ g2	tests/domain/memory/t_session_search_pure.nim
 g2	tests/domain/memory/t_transcript_pure.nim
 g2	tests/domain/providers/t_compat_conformance.nim
 g2	tests/domain/providers/t_bedrock_pure.nim
+g2	tests/domain/agents/t_named_agent_pure.nim
 g2	tests/domain/providers/t_compat_minimax.nim
 g2	tests/domain/providers/t_compat_openai.nim
 g2	tests/domain/providers/t_compat_openrouter.nim

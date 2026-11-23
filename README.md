@@ -195,6 +195,7 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
   ./donkey ctl secret remove BRAVE_API_KEY
   ```
   Never pass the secret as a command-line argument: it would be visible to `ps` and shell history. At daemon startup the vault decrypts entries into the environment only for variables that are not already set. After `import-env`, remove the imported lines from `donkey.env` (plaintext precedence) and restart. Back up `{home}/.secret_key` separately from `.secrets/`: copying `.secrets/` alone does not expose the values, but losing the key makes them unrecoverable. A full-home backup includes both files and must be protected as a secret. The vault protects data at rest, not against a process running as the same Unix user.
+- **Named agents**: each user can keep specialist personas (a reviewer, a researcher) with their own role and optionally their own model, created from the chat (`manage_agents`) or in `{paddock}/agents/<name>.toml`, and called by starting a message with `@name`. They share the user's memory and the conversation and keep their own notes; see `docs/topics/named-agents.md`.
 - **Model Context Protocol (MCP)**: Native client support for external MCP tool servers:
   ```bash
   # Positional arguments only via CLI

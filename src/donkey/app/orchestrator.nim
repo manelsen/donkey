@@ -41,6 +41,8 @@ import ../domain/memory/capture_pure
 import ../domain/memory/provenance_pure
 import ../domain/message
 import ../domain/personality
+import ../domain/agents/named_agent_pure
+import ./named_agents
 import ../domain/providers/media_pure
 import ../config/types as cfgTypes
 import ../config/environment
@@ -455,9 +457,29 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
     identityLoaded = true
     obPhase = opDone
 
-  let systemBase = buildSystemBase(agentTraits, agentName, toolsSuffix)
+  var systemBase = buildSystemBase(agentTraits, agentName, toolsSuffix)
 
   let userPayload = decodeUserPayload(msg.payload)
+  ## `@name` at the start makes this turn one of the user's named agents: its
+  ## persona and notes, its model when it has one; the memory and the
+  ## conversation stay shared (the message keeps its `@name` in the history).
+  var routeProvider = ""
+  var routeModel = ""
+  var turnStreamFactory = streamFactory
+  let mention = agentMention(userPayload.text)
+  if mention.isSome:
+    let loaded = loadNamedAgent(fs, paddockDir, mention.get.name)
+    if loaded.isOk:
+      let agent = loaded.get.agent
+      systemBase = namedAgentSystem(agent, loaded.get.notes, toolsSuffix)
+      routeProvider = agent.provider
+      routeModel = agent.model
+      if agent.provider.len > 0:
+        ## Streaming is wired to the user's default provider only; the
+        ## agent's own model is reached through routing, without streaming.
+        turnStreamFactory = StreamFactory()
+      log.info($turnSetup.uid & " -> named agent " & agent.name &
+               (if agent.provider.len > 0: " (" & agent.provider & ")" else: ""))
   await memInbox.put(newTaskMsg(msg.id, tkLoadCtx, msg.userId, userPayload.text))
   let ctxReply = await awaitExpectedReply(memOut, msg.id, "MemoryAgent")
   var context = if ctxReply.kind == amkResult: ctxReply.text else: ""
@@ -518,11 +540,12 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   let suppressProgress = suppressHeartbeatProgress or
     suppressToolProgressFromEnv(turnSetup.nativeCtx.env)
   let loopResult = await runToolLoop(
-    globalOutbox, toolInbox, toolOut, memory, completeFn, errorExplainFn, streamFactory, turnSetup.nativeCtx,
+    globalOutbox, toolInbox, toolOut, memory, completeFn, errorExplainFn, turnStreamFactory, turnSetup.nativeCtx,
     state, history, turnSetup.uid, msg.channel, msg.replyTo, msg.id, turnSetup.streamId,
     systemBase, context, tools, providerLabel,
     suppressProgress, result.debugMode, result.showReasoning, log,
-    asyncCompleteFn, bridgeToken = msg.bridgeToken)
+    asyncCompleteFn, bridgeToken = msg.bridgeToken,
+    providerOverride = routeProvider, modelOverride = routeModel)
   result =
     result |>->
     withLoopResult(loopResult)

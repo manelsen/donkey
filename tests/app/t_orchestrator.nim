@@ -4,6 +4,7 @@
 ##   globalOutbox: AsyncQueue[OutboundMessage]  (was AsyncQueue[AgentMessage])
 ##   streamFactory:     StreamFactory() for all non-streaming tests
 
+import donkey/adapters/filesystem/fs_adapter
 import std/[json, os, strutils, unittest]
 import chronos
 import chronos/asyncsync
@@ -380,6 +381,51 @@ proc runTests*() =
       check cancelled
       check next.replyKind == rkFinalAnswer
       check next.text == "pong"
+
+    test "@name makes the turn the named agent's: persona, notes, its model":
+      let tmpDir = getTempDir() / "donkey_test_orch_named_agent"
+      removeDir(tmpDir)
+      defer: removeDir(tmpDir)
+      var seen {.threadvar.}: seq[CompletionRequest]
+      seen = @[]
+      proc capture(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
+        {.cast(gcsafe).}: seen.add(req)
+        ok(CompletionResponse(text: "revisado", inputTokens: 1, outputTokens: 1))
+
+      proc doTest(dir: string; text: string): Future[OutboundMessage] {.async.} =
+        let userDir = dir / "u-agents"
+        createDir(userDir / "agents")
+        writeFile(userDir / "USER.md", "# Ana")
+        writeFile(userDir / "agents" / "revisor.toml",
+          "name = \"revisor\"\ndescription = \"Revisa código com rigor.\"\nprovider = \"anthropic\"\n")
+        writeFile(userDir / "agents" / "revisor.notes.md", "- prefere PRs pequenos")
+        let mem = MdFileAdapter(paddocksDir: dir)
+        let inbox = newAsyncQueue[AgentMessage]()
+        let outbox = newAsyncQueue[OutboundMessage]()
+        var session = makeSessionEntry()
+        session.inbox = inbox
+        let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), capture,
+          newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], userDir,
+          newSessionState(), env = fastDebounce(), fs = newFsAdapter())
+        await inbox.put(newTaskMsg("r1", tkUserMsg, "u-agents", text))
+        let reply = await outbox.get()
+        await inbox.put(newCancelMsg())
+        await orchFut
+        return reply
+
+      discard waitFor doTest(tmpDir, "@revisor olha esse diff")
+      check seen.len >= 1
+      let req = seen[^1]
+      check "revisor" in req.system and "Revisa código com rigor." in req.system
+      check "prefere PRs pequenos" in req.system
+      check req.providerOverride == "anthropic"
+      check req.messages[^1].text == "@revisor olha esse diff"
+
+      seen = @[]
+      discard waitFor doTest(tmpDir, "@desconhecido oi")
+      check seen.len >= 1
+      check "Revisa código" notin seen[^1].system
+      check seen[^1].providerOverride == ""
 
     test "userMsg produces a text reply":
       let tmpDir = getTempDir() / "donkey_test_orch"

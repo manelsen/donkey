@@ -514,6 +514,7 @@ proc nativeSessionTools*(): seq[ToolDescription] {.gcsafe, raises: [].} =
     (CheckpointToolName,    CheckpointToolDescription,    CheckpointToolSchema),
     (RewindToolName,        RewindToolDescription,        RewindToolSchema),
     (ManageSkillsToolName,  ManageSkillsToolDescription,  ManageSkillsToolSchema),
+    (ManageAgentsToolName,  ManageAgentsToolDescription,  ManageAgentsToolSchema),
     (SessionSearchToolName, SessionSearchToolDescription, SessionSearchToolSchema),
     (MemoryIngestToolName,  MemoryIngestToolDescription,  MemoryIngestToolSchema),
     (TaskToolName,          TaskToolDescription,          TaskToolSchema),

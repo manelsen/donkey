@@ -186,6 +186,7 @@ const
   ## Never available to a child, even if requested. This is the fail-closed
   ## part of the policy: parent tools cannot be escalated through spawn.
   SubagentHardDeniedTools* = [
+    "manage_agents",
     "bash",
     "edit_file",
     "fs_write",

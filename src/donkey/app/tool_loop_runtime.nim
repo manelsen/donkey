@@ -545,7 +545,11 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
                  showReasoning: bool;
                  log: Logger;
                  asyncCompleteFn: AsyncCompleteFn = nil;
-                 bridgeToken: uint64 = 0): Future[ToolLoopRunResult] {.async.} =
+                 bridgeToken: uint64 = 0;
+                 providerOverride = "";
+                 modelOverride = ""): Future[ToolLoopRunResult] {.async.} =
+  ## `providerOverride`/`modelOverride`: a named agent's model, carried on
+  ## every request of the turn so routing tries it first.
   var loopState = history |> newToolLoopState
   var round = 0
   var recentCalls: seq[(string, string)] = @[]
@@ -558,6 +562,8 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
     inc round
 
     var req = buildPrompt(systemBase, loopState.history, context, tools, reasoning = showReasoning)
+    req.providerOverride = providerOverride
+    req.modelOverride = modelOverride
 
     let canStreamToolCalls =
       streamFactory.available and streamSlotAvailable() and

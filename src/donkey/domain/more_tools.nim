@@ -543,6 +543,27 @@ const
     "\"registry\":{\"type\":\"string\",\"description\":\"Optional registry override\"}" &
     "}}"
 
+# ── manage_agents ─────────────────────────────────────────────────────────────
+const
+  ManageAgentsToolName* = "manage_agents"
+  ManageAgentsToolDescription* =
+    "Create, list, change or delete the user's named agents, and add to an " &
+    "agent's own notes. A named agent is a persona the user calls by starting " &
+    "a message with @name: it shares the user's memory and this conversation, " &
+    "has its own role (the description) and optionally its own provider/model. " &
+    "Use it when the user asks for a specialist ('create a reviewer that...'), " &
+    "and with action=note when, as a named agent, you want to remember something " &
+    "for your next turns."
+  ManageAgentsToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"action\":{\"type\":\"string\",\"enum\":[\"list\",\"create\",\"update\",\"delete\",\"note\"]}," &
+    "\"name\":{\"type\":\"string\",\"description\":\"Agent name: 1-32 of a-z, 0-9, '-'\"}," &
+    "\"description\":{\"type\":\"string\",\"description\":\"The agent's role and persona\"}," &
+    "\"provider\":{\"type\":\"string\",\"description\":\"Optional provider id\"}," &
+    "\"model\":{\"type\":\"string\",\"description\":\"Optional model id\"}," &
+    "\"text\":{\"type\":\"string\",\"description\":\"Note to append for action=note\"}" &
+    "},\"required\":[\"action\"]}"
+
 # ── task ──────────────────────────────────────────────────────────────────────
 const
   TaskToolName* = "task"
