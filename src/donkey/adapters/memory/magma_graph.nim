@@ -15,6 +15,7 @@
 
 import ../../core/pipeops
 import ../../ports/multigraph_store
+import ./magma_stats_sql
 export multigraph_store
 
 when defined(withPostgres):
@@ -493,15 +494,6 @@ when defined(withPostgres):
 
   # ── Statistics ──────────────────────────────────────────────────────────────
 
-  func parseCount(raw: string): int =
-    if raw.len == 0:
-      0
-    else:
-      try:
-        parseInt(raw)
-      except ValueError:
-        0
-
   proc nodeCount*(g: MagmaGraph; userId: string): int =
     let db = g.openDb()
     defer: db.close()
@@ -529,24 +521,12 @@ when defined(withPostgres):
     let db = g.openDb()
     defer: db.close()
     try:
-      let rows = db.getAllRows(sql(
-        "SELECT " &
-        "COUNT(*), " &
-        "COALESCE(SUM(CASE WHEN node_type = 'memory' THEN 1 ELSE 0 END), 0), " &
-        "COALESCE(SUM(CASE WHEN node_type = 'user_profile' THEN 1 ELSE 0 END), 0), " &
-        "COALESCE(SUM(CASE WHEN node_type = 'preference' THEN 1 ELSE 0 END), 0), " &
-        "COALESCE(SUM(CASE WHEN node_type = 'entity' THEN 1 ELSE 0 END), 0), " &
-        "COALESCE(SUM(CASE WHEN embedding IS NOT NULL THEN 1 ELSE 0 END), 0) " &
-        "FROM " & MagmaNodesTable & " WHERE user_id = ?"
-      ), userId)
+      let rows = db.getAllRows(sql(nodeStatsSql(MagmaNodesTable, "embedding IS NOT NULL", perUser = true)), userId)
       if rows.len > 0:
-        result.totalNodes = parseCount(rows[0][0])
-        result.memoryNodes = parseCount(rows[0][1])
-        result.profileNodes = parseCount(rows[0][2])
-        result.preferenceNodes = parseCount(rows[0][3])
-        result.entityNodes = parseCount(rows[0][4])
-        result.embeddingNodes = parseCount(rows[0][5])
-      result.totalEdges = g.edgeCount(userId)
+        result = nodeStatsFromRow(rows[0])
+      let edgeRows = db.getAllRows(sql(edgeCountSql(MagmaEdgesTable, MagmaNodesTable, perUser = true)), userId)
+      if edgeRows.len > 0:
+        result.totalEdges = parseCount(edgeRows[0][0])
     except CatchableError:
       discard
 
@@ -554,26 +534,10 @@ when defined(withPostgres):
     let db = g.openDb()
     defer: db.close()
     try:
-      let rows = db.getAllRows(sql(
-        "SELECT " &
-        "COUNT(*), " &
-        "COALESCE(SUM(CASE WHEN node_type = 'memory' THEN 1 ELSE 0 END), 0), " &
-        "COALESCE(SUM(CASE WHEN node_type = 'user_profile' THEN 1 ELSE 0 END), 0), " &
-        "COALESCE(SUM(CASE WHEN node_type = 'preference' THEN 1 ELSE 0 END), 0), " &
-        "COALESCE(SUM(CASE WHEN node_type = 'entity' THEN 1 ELSE 0 END), 0), " &
-        "COALESCE(SUM(CASE WHEN embedding IS NOT NULL THEN 1 ELSE 0 END), 0) " &
-        "FROM " & MagmaNodesTable
-      ))
+      let rows = db.getAllRows(sql(nodeStatsSql(MagmaNodesTable, "embedding IS NOT NULL", perUser = false)))
       if rows.len > 0:
-        result.totalNodes = parseCount(rows[0][0])
-        result.memoryNodes = parseCount(rows[0][1])
-        result.profileNodes = parseCount(rows[0][2])
-        result.preferenceNodes = parseCount(rows[0][3])
-        result.entityNodes = parseCount(rows[0][4])
-        result.embeddingNodes = parseCount(rows[0][5])
-      let edgeRows = db.getAllRows(sql(
-        "SELECT count(*) FROM " & MagmaEdgesTable
-      ))
+        result = nodeStatsFromRow(rows[0])
+      let edgeRows = db.getAllRows(sql(edgeCountSql(MagmaEdgesTable, MagmaNodesTable, perUser = false)))
       if edgeRows.len > 0:
         result.totalEdges = parseCount(edgeRows[0][0])
     except CatchableError:
