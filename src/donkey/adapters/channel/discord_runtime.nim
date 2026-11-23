@@ -4,6 +4,7 @@ import ../../core/commands/command_routing
 import ../../core/log as core_log
 import ../../core/outbound/outbound
 import ../../core/pipeops
+import ../../domain/channels/discord_pure
 import ../../adapters/memory/md_file
 import ../../app/inbound_gate
 import ../../app/approval_runtime
@@ -490,6 +491,18 @@ proc handleDiscordEvent*(sm: var SessionManager;
     if dcAdapter.isDuplicateMessage(event.messageId):
       logger.debug("discord: message " & event.messageId & " already handled")
       return
+    var event = event
+    if event.guildId.len > 0:
+      ## In a server: the bot's mention is not part of what was said, and with
+      ## DONKEY_DISCORD_REQUIRE_MENTION only messages for the bot are answered.
+      let botId = dcAdapter.botUserId()
+      if dcAdapter.requireMention and
+          not addressesBot(event.content, botId, event.referencedAuthorId):
+        logger.debug("discord: message " & event.messageId & " not addressed to the bot")
+        return
+      event.content = stripBotMention(event.content, botId)
+      if event.content.len == 0:
+        return  ## a bare ping carries nothing to answer
     let userId = dcAdapter.resolver.resolve(ckDiscord, event.discordUserId)
     let inbound = InboundMessage(
       userId:    userId,

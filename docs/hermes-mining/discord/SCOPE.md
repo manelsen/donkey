@@ -89,6 +89,13 @@ sobre o gateway:
   vira um bloco com a primeira célula em negrito e as outras como
   `• Cabeçalho: valor`, fora de blocos de código (`cf7bf5bdc9`).
 
+- **Menção em servidor** (`addressesBot`, `stripBotMention`): a menção crua
+  do bot sai do texto antes do despacho (`<@bot> /help` é o comando `/help`) e
+  um ping só com a menção é ignorado. Com `DONKEY_DISCORD_REQUIRE_MENTION`
+  (opt-in, como no Telegram), só mensagem que menciona o bot ou responde a ele
+  é atendida; DM não muda. O array `mentions` não conta: um reply ping põe o
+  autor ali sem menção no texto (`608e8a6062`, `e9bceb5ae0`).
+
 Ainda **não há**: ledger de entrega e cursor que só avança depois da entrega
 final (hoje avança antes do despacho: at-most-once).
 

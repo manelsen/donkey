@@ -515,7 +515,8 @@ proc initDaemonAdapters(cfg: DonkeyConfig; env: DaemonEnv): DaemonAdapters =
     env.telegramToken, env.identityPath,
     apiBase = cfg.env.get("DONKEY_TELEGRAM_API_BASE").strip(),
     pollTimeout = 0, settings = telegramSettings(cfg.env))
-  result.dc = newDiscordAdapter(env.discordToken, env.identityPath)
+  result.dc = newDiscordAdapter(env.discordToken, env.identityPath,
+                                requireMention = discordRequireMention(cfg.env))
   result.wc = newWeComAdapter(env.wecomCorpId, cfg.env.get("WECOM_CORP_SECRET"),
                               cfg.env.get("WECOM_CALLBACK_TOKEN"), env.wecomAgentId,
                               env.identityPath)
