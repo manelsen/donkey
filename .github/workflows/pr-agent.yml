@@ -43,11 +43,11 @@ jobs:
           # caps are needed: max_model_tokens clamps every model (default 32k).
           config.custom_model_max_tokens: "128000"
           config.max_model_tokens: "128000"
-          # The model reasons before answering; with the provider's default
-          # output cap it spent the whole budget thinking and returned nothing.
+          # Reasoning is off: even at "low" the model spent the whole 32k
+          # output budget thinking on a 12k-token diff and answered nothing
+          # (PR #119). Without it the review is one plain completion.
           config.max_output_tokens: "32000"
-          config.reasoning_effort: "low"
-          config.additional_reasoning_effort_models: '["deepseek/deepseek-v4.1-flash-1017", "deepseek/deepseek-v4.1-flash"]'
+          openrouter.reasoning_effort: "none"
           github_action_config.auto_review: "true"
           github_action_config.auto_describe: "false"
           github_action_config.auto_improve: "true"
