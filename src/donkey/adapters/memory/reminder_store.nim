@@ -84,7 +84,7 @@ proc reminderAt(path: string; owner: UserId): Result[Reminder, string] {.raises:
   let reminder = ? parseReminder(? readText(path))
   if reminder.userId != owner:
     return err("belongs to " & $reminder.userId & ", not to the paddock owner")
-  if reminder.id != path.splitFile.name:
+  if not validReminderId(reminder.id) or reminder.id != path.splitFile.name:
     return err("id " & reminder.id & " is not the file name")
   ok(reminder)
 

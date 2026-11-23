@@ -79,6 +79,8 @@ proc runTests*() =
         """{"id":"forged","userId":"alice","channel":"ckTelegram","scheduledAt":1,"message":"hi"}""")
       writeFile(remDir / "renamed.json",
         """{"id":"other","userId":"mallory","channel":"ckTelegram","scheduledAt":1,"message":"again"}""")
+      writeFile(remDir / ".hidden.json",
+        """{"id":".hidden","userId":"mallory","channel":"ckTelegram","scheduledAt":1,"message":"stuck"}""")
       let due = port.due(Now).get
       check due.len == 1
       check due[0].message == "mine"
