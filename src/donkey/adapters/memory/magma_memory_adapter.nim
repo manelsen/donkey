@@ -455,7 +455,8 @@ when defined(withPostgres) or defined(withSqlite):
                          query: string;
                          limit: int;
                          rerankFnOverride: RerankFn = nil;
-                         policyOverride = none(QueryPolicy)): seq[MemoryHit] =
+                         policyOverride = none(QueryPolicy);
+                         queryEmbedding = none(seq[float32])): seq[MemoryHit] =
     ## Hybrid recall: ranked lists by embedding, by literal terms and, for
     ## queries about time, by recency and temporal adjacency are fused by
     ## reciprocal rank. With no embedding available the literal terms alone
@@ -475,7 +476,9 @@ when defined(withPostgres) or defined(withSqlite):
         kind:        string
         origin:      MemoryOrigin
 
-    let emb = a.embedFn(query)
+    ## A vector computed elsewhere (on a worker, off the event loop) is used
+    ## as it is; otherwise the question is embedded here.
+    let emb = if queryEmbedding.isSome: queryEmbedding.get() else: a.embedFn(query)
     ## A caller that already knows the question's intent (a router) passes
     ## the policy; otherwise the words of the question decide it.
     let policy = if policyOverride.isSome: policyOverride.get() else: classifyQuery(query)
@@ -652,7 +655,7 @@ when defined(withPostgres) or defined(withSqlite):
                query: string; limit: int): seq[MemoryHit] =
     a.searchWithRerank(userId, query, limit)
 
-  proc toSearchFn*(a: MagmaMemoryAdapter): SearchFn =
+  proc toSearchFn*(a: MagmaMemoryAdapter): SyncSearchFn =
     proc(userId: UserId; query: string; limit: int): seq[MemoryHit]
         {.gcsafe, raises: [].} =
       try:
@@ -762,7 +765,7 @@ else:
                                commitmentId: string;
                                status: CommitmentStatus): bool = false
   proc search*(a: MagmaMemoryAdapter; userId: UserId; query: string; limit: int): seq[MemoryHit] = @[]
-  proc toSearchFn*(a: MagmaMemoryAdapter): SearchFn = nil
+  proc toSearchFn*(a: MagmaMemoryAdapter): SyncSearchFn = nil
   proc deleteUser*(a: MagmaMemoryAdapter; userId: UserId) = discard
   proc clearMemory*(a: MagmaMemoryAdapter; userId: UserId): Result[void, string]
                     {.discardable.} = err("no memory graph backend in this build")

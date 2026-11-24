@@ -5,7 +5,7 @@
 ##
 ## Returns empty seq[float32] on error — caller treats as "no embedding".
 
-import std/json
+import std/[json, strutils]
 import ../../core/pipeops
 import ../../core/app_meta
 import ../../core/log
@@ -57,3 +57,46 @@ proc embed*(a: OpenRouterEmbeddingAdapter; text: string): seq[float32] {.gcsafe.
     let errMsg = getCurrentExceptionMsg()
     a.log.warn("embedding.parse: failed to parse embedding response reason=" & errMsg)
     return @[]
+
+# ── On a worker thread ───────────────────────────────────────────────────────
+#
+# The embedding call blocks its caller until the HTTP deadline. The daemon
+# runs it on a worker (app/blocking_executor): the job below takes plain text
+# in, builds the adapter there, and sends the vector back as text.
+
+proc encodeEmbedding*(v: seq[float32]): string =
+  var arr = newJArray()
+  for x in v:
+    arr.add(%x)
+  $arr
+
+proc decodeEmbedding*(text: string): Result[seq[float32], string] =
+  var j: JsonNode
+  try:
+    j = parseJson(text)
+  except CatchableError as e:
+    return err("embedding: unreadable vector: " & e.msg)
+  if j.kind != JArray:
+    return err("embedding: the vector is not an array")
+  var v = newSeq[float32](j.len)
+  for i in 0 ..< j.len:
+    v[i] = j[i].getFloat(0.0).float32
+  ok(v)
+
+proc openRouterEmbedJob*(input: string): Result[string, string] {.nimcall, gcsafe, raises: [].} =
+  ## `{"key", "text"}` in, the encoded vector out. An empty vector (the
+  ## adapter's way of saying it failed) is an error, so the caller can tell.
+  try:
+    let j = parseJson(input)
+    let key = j{"key"}.getStr("").strip
+    let text = j{"text"}.getStr("")
+    if key.len == 0:
+      return err("embedding: no key")
+    if text.strip.len == 0:
+      return err("embedding: no text")
+    let v = newOpenRouterEmbeddingAdapter(key).embed(text)
+    if v.len == 0:
+      return err("embedding: no vector")
+    ok(encodeEmbedding(v))
+  except Exception as e:  ## effect boundary: callee raises are unannotated
+    err("embedding job: " & e.msg)

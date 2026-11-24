@@ -46,7 +46,9 @@ proc runMemoryAgent*(inbox:     AsyncQueue[AgentMessage];
           ## Dialogue hits arrive with their session neighbours and are
           ## rendered as ordered excerpts (domain/memory/recall_pure).
           if searchFn != nil and msg.payload.len > 0:
-            let recalled = renderRecall(searchFn(userId, msg.payload, 8))
+            ## Async: the question's embedding is computed on a worker
+            ## thread, so recall does not stall the loop.
+            let recalled = renderRecall(await searchFn(userId, msg.payload, 8))
             if recalled.len > 0:
               memSection = recalled
           let parts = @[ctx.userMd, memSection, ctx.preferencesMd]
