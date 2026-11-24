@@ -141,7 +141,11 @@ proc sendMarkdown*(a: var WeComAdapter; userId: UserId; md: string): Result[void
 
 const
   DedupWindowMs = 5 * 60 * 1000  ## WeCom retries within seconds; 5 min is ample
-  DedupSlots    = 256            ## recent message ids remembered
+  DedupSlots    = 1024
+    ## Recent message ids remembered (72 KiB). WeCom retries three times about
+    ## 5 s apart, so a retry is missed only when more than ~60 other messages
+    ## a second arrive in between. The old Table had no bound at all, which
+    ## let a flood of distinct ids grow it without limit.
   DedupIdBytes  = 64
 
 type SeenId = object
