@@ -54,12 +54,6 @@ proc runTests*() =
       let errMsg = r.error
       check errMsg.contains("no WeCom ID")
 
-    test "startWebhook is a no-op and does not panic":
-      var a = newWeComAdapter("c", "s", "t", 1, "/tmp/dw_id4")
-      let logger = newLogger("test.wecom")
-      a.startWebhook(Port(8080), logger)
-      check true  ## reached without panic
-
   suite "WeComEvent — field accessors":
 
     test "WeComEvent zero-value is well-defined":

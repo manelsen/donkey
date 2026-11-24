@@ -16,6 +16,10 @@
 ##   LINE     — X-Line-Signature: base64 HMAC-SHA256 of the raw body
 ##   Matrix   — shared bearer token (Authorization or ?access_token=)
 ##   WhatsApp — hub.verify_token challenge (GET) + X-Hub-Signature-256 (POST)
+##   WeCom    — msg_signature (SHA1 of the sorted token, timestamp, nonce)
+##   WeChat   — signature (SHA1 of the sorted token, timestamp, nonce)
+##   QQ       — OneBot v11 X-Signature (HMAC-SHA1) when a secret is set;
+##              unsigned only on a loopback receiver (the daemon decides)
 ##
 ## A channel route is only mounted when its secret is configured, so no
 ## unauthenticated endpoint is ever exposed.
@@ -33,6 +37,11 @@ import ../channel/dingtalk
 import ../channel/line
 import ../channel/matrix
 import ../channel/whatsapp
+import ../channel/wecom
+import ../channel/wechat
+import ../channel/qq
+import ../../app/metrics
+import ../../domain/channels/qq_pure
 import ../../infra/event_queue
 import ../../infra/thread_handle
 
@@ -46,6 +55,9 @@ const
   LinePath*     = "/webhook/line"
   MatrixPath*   = "/webhook/matrix"
   WhatsAppPath* = "/webhook/whatsapp"
+  WeComPath*    = "/webhook/wecom"
+  WeChatPath*   = "/webhook/wechat"
+  QQOneBotPath* = "/webhook/qq"
 
   SlackReplayWindowSec*      = 300
   FeishuReplayWindowSec*     = 300
@@ -74,6 +86,11 @@ type
     matrixToken*:             string
     whatsappVerifyToken*:     string
     whatsappAppSecret*:       string
+    wecomToken*:              string   ## WECOM_CALLBACK_TOKEN
+    wechatToken*:             string   ## WECHAT_CALLBACK_TOKEN
+    qqOneBotEnabled*:         bool     ## mounted by the daemon only when
+                                       ## oneBotListenerCheck allows it
+    qqOneBotSecret*:          string   ## QQ_ONEBOT_SECRET; empty = unsigned
     tlsCertFile*:             string
     tlsKeyFile*:              string
 
@@ -429,6 +446,62 @@ proc handleWhatsApp(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
   of "POST": handleWhatsAppPost(cfg, req)
   else:      methodNotAllowed()
 
+# ── WeCom ─────────────────────────────────────────────────────────────────────
+
+proc handleWeCom(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
+  ## msg_signature is mandatory: WeCom always signs, so an unsigned request
+  ## is a forgery and must not reach the agent.
+  if cfg.wecomToken.len == 0:
+    return notFound()
+  let sig = req.query.getOrDefault("msg_signature")
+  let expected = wecomSignature(cfg.wecomToken, req.query.getOrDefault("timestamp"),
+                                req.query.getOrDefault("nonce"))
+  if sig.len == 0 or not safeEquals(sig, expected):
+    return forbidden()
+  case req.httpMethod
+  of "GET":
+    plainResp(200, req.query.getOrDefault("echostr"))  ## URL verification
+  of "POST":
+    acceptWeComXml(req.body)
+    plainResp(200)
+  else:
+    methodNotAllowed()
+
+# ── WeChat ────────────────────────────────────────────────────────────────────
+
+proc handleWeChat(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
+  if cfg.wechatToken.len == 0:
+    return notFound()
+  if not verifyWebhookSignature(cfg.wechatToken, req.query.getOrDefault("timestamp"),
+                                req.query.getOrDefault("nonce"),
+                                req.query.getOrDefault("signature")):
+    return forbidden()
+  case req.httpMethod
+  of "GET":
+    plainResp(200, req.query.getOrDefault("echostr"))
+  of "POST":
+    ## Always 200 "success": WeChat retries anything else. A body we cannot
+    ## parse is dropped, but counted so the loss is visible.
+    acceptWeChatXml(req.body).isOkOr:
+      recordWebhookFailure("wechat", error)
+    plainResp(200, "success")
+  else:
+    methodNotAllowed()
+
+# ── QQ OneBot ─────────────────────────────────────────────────────────────────
+
+proc handleQQOneBot(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
+  if not cfg.qqOneBotEnabled:
+    return notFound()
+  if req.httpMethod != "POST":
+    return methodNotAllowed()
+  if not oneBotSignatureValid(cfg.qqOneBotSecret, req.body, req.header("x-signature")):
+    recordWebhookFailure("qq", "invalid signature")
+    return forbidden()
+  acceptOneBotEvent(req.body).isOkOr:
+    recordWebhookFailure("qq", error)
+  plainResp(200)
+
 # ── Dispatch ──────────────────────────────────────────────────────────────────
 
 proc handleWebhookRequest*(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
@@ -441,6 +514,9 @@ proc handleWebhookRequest*(cfg: WebhookConfig; req: WebhookRequest): WebhookResp
   of LinePath:     handleLine(cfg, req)
   of MatrixPath:   handleMatrix(cfg, req)
   of WhatsAppPath: handleWhatsApp(cfg, req)
+  of WeComPath:    handleWeCom(cfg, req)
+  of WeChatPath:   handleWeChat(cfg, req)
+  of QQOneBotPath: handleQQOneBot(cfg, req)
   else:            notFound()
 
 func anyRouteConfigured*(cfg: WebhookConfig): bool =
@@ -450,7 +526,10 @@ func anyRouteConfigured*(cfg: WebhookConfig): bool =
     cfg.dingtalkAppSecret.len > 0 or
     cfg.lineChannelSecret.len > 0 or
     cfg.matrixToken.len > 0 or
-    cfg.whatsappVerifyToken.len > 0
+    cfg.whatsappVerifyToken.len > 0 or
+    cfg.wecomToken.len > 0 or
+    cfg.wechatToken.len > 0 or
+    cfg.qqOneBotEnabled
 
 # ── HTTP server ───────────────────────────────────────────────────────────────
 

@@ -1,8 +1,9 @@
 ## WeComAdapter — ChannelPort for WeCom (企业微信) Application.
 ##
-## Receiving: HTTP webhook server runs on a dedicated OS thread.
-##   WeCom POSTs XML to the configured URL; thread pushes WeComEvents
-##   to a module-level Channel.  Main loop calls tryRecvEvent().
+## Receiving: WeCom POSTs XML to the shared webhook receiver at
+##   /webhook/wecom (DONKEY_WEBHOOK_PORT); the receiver checks the signature
+##   and calls acceptWeComXml, which queues WeComEvents. The main loop calls
+##   tryRecvEvent().
 ##
 ## Sending: WeCom REST API (POST /cgi-bin/message/send).
 ##   access_token is fetched lazily and refreshed ~1 minute before expiry.
@@ -16,9 +17,9 @@
 ##
 ## Config env vars:
 ##   WECOM_CORP_ID, WECOM_CORP_SECRET, WECOM_AGENT_ID,
-##   WECOM_CALLBACK_TOKEN, WECOM_WEBHOOK_PORT (default 8081)
+##   WECOM_CALLBACK_TOKEN (the route is mounted only when it is set)
 
-import std/[algorithm, json, net, strutils, tables, times]
+import std/[algorithm, json, locks, strutils, tables, times]
 import checksums/sha1
 import ../../core/log
 import ../../core/pipeops
@@ -27,10 +28,9 @@ import ../../domain/message
 import ../../domain/channels/wechat_pure
 import ../http/std_http
 import ../identity/identity_resolver
-import ../webhook/http_request_reader
 import ../../app/metrics
 import ../../infra/event_queue
-import ../../infra/thread_handle
+import ../../infra/fixed
 import ../../domain/channels/access_token_pure
 
 const WeComApiBase = "https://qyapi.weixin.qq.com"
@@ -54,9 +54,9 @@ type
     http:           StdHttpAdapter
     token:          AccessToken
 
-## Module-level channel — opened once, valid for daemon lifetime.
-## Thread-safe: an `EventQueue` (shared memory, events moved, not copied),
-## created with the module; the receiving thread pushes, the daemon loop polls.
+## Module-level queue, valid for the daemon's lifetime. Thread-safe: an
+## `EventQueue` (shared memory, events moved, not copied); the receiver's
+## workers push, the daemon loop polls.
 var gWeComEvents* = initEventQueue[WeComEvent]("wecom")
 
 # ── Token management ──────────────────────────────────────────────────────────
@@ -135,122 +135,59 @@ proc sendMarkdown*(a: var WeComAdapter; userId: UserId; md: string): Result[void
     "markdown": {"content": md},
   })
 
-# ── Webhook HTTP server ────────────────────────────────────────────────────────
+# ── Webhook callbacks ──────────────────────────────────────────────────────────
+## The shared webhook receiver (adapters/webhook/webhook_receiver) serves the
+## route and checks msg_signature; it hands the body here.
 
-## Simple dedup table: msgId → timestamp. Prevents processing WeCom retries.
-## Only the webhook thread reads and writes it (handleWeComConn → dedupCheck,
-## one connection at a time), so it is thread-local to that thread: no lock,
-## no cast.
-var gWeComSeen   {.threadvar.}: Table[string, int64]
-var gWeComSeenTs {.threadvar.}: int64  ## last prune epoch ms
+const
+  DedupWindowMs = 5 * 60 * 1000  ## WeCom retries within seconds; 5 min is ample
+  DedupSlots    = 1024
+    ## Recent message ids remembered (72 KiB). WeCom retries three times about
+    ## 5 s apart, so a retry is missed only when more than ~60 other messages
+    ## a second arrive in between. The old Table had no bound at all, which
+    ## let a flood of distinct ids grow it without limit.
+  DedupIdBytes  = 64
 
-const DedupWindowMs = 5 * 60 * 1000  ## 5 minutes
+type SeenId = object
+  id:   FixedText[DedupIdBytes]
+  atMs: int64
 
-proc dedupCheck(msgId: string): bool =
-  ## Returns true if this msgId was recently seen (duplicate).
-  let now = epochMs()
-  if now - gWeComSeenTs > DedupWindowMs:
-    # Prune stale entries
-    var toDelete: seq[string]
-    for k, ts in gWeComSeen:
-      if now - ts > DedupWindowMs: toDelete.add(k)
-    for k in toDelete: gWeComSeen.del(k)
-    gWeComSeenTs = now
-  if msgId in gWeComSeen: return true
-  gWeComSeen[msgId] = now
+var
+  gWeComSeenLock: Lock
+  gWeComSeen: array[DedupSlots, SeenId]
+    ## A ring of recent message ids, plain values under a lock: the receiver's
+    ## workers handle requests in parallel, so a retry may reach another one.
+  gWeComSeenNext = 0
+
+initLock(gWeComSeenLock)
+
+proc seenRecently(msgId: string; nowMs: int64): bool {.gcsafe.} =
+  ## True when `msgId` arrived within the window; otherwise remembers it.
+  withLock gWeComSeenLock:
+    for slot in gWeComSeen:
+      if slot.atMs > 0 and nowMs - slot.atMs <= DedupWindowMs and slot.id == msgId:
+        return true
+    gWeComSeen[gWeComSeenNext] = SeenId(id: toFixed[DedupIdBytes](msgId), atMs: nowMs)
+    gWeComSeenNext = (gWeComSeenNext + 1) mod DedupSlots
   false
 
-proc sendHttpReply(s: Socket; status, body: string; logger: Logger) =
-  let r = "HTTP/1.1 " & status & "\r\n" &
-          "Content-Type: text/plain; charset=utf-8\r\n" &
-          "Content-Length: " & $body.len & "\r\n" &
-          "Connection: close\r\n\r\n" & body
-  try: s.send(r) except CatchableError:
-    logger.warn("wecom: failed to send response: " & getCurrentExceptionMsg())
-
-proc handleWeComConn*(client: Socket; token: string; logger: Logger;
-                      timeoutSec = WebhookClientTimeoutSec) =
-  ## Serves one WeCom callback request and closes the socket.
-  ## Reading goes through http_request_reader (bounded, timed out), and
-  ## msg_signature is mandatory: WeCom always signs, so an unsigned request
-  ## is a forgery and must not reach the agent.
-  defer: closeWebhookClient(client)
-  try:
-    applyWebhookClientTimeouts(client, timeoutSec).isOkOr:
-      logger.warn("wecom: " & error)
-      recordWebhookFailure("wecom", error)
-      return
-    let req = readWebhookRequest(client).valueOr:
-      logger.warn("wecom: rejected request: " & error)
-      recordWebhookFailure("wecom", error)
-      client.sendHttpReply(statusLine(readErrorStatus(error)), "", logger)
-      return
-
-    let sig   = req.query.getOrDefault("msg_signature")
-    let ts    = req.query.getOrDefault("timestamp")
-    let nonce = req.query.getOrDefault("nonce")
-    if sig.len == 0 or not safeEquals(sig, wecomSignature(token, ts, nonce)):
-      logger.warn("wecom: missing or invalid msg_signature")
-      client.sendHttpReply("403 Forbidden", "invalid signature", logger)
-      return
-
-    if req.httpMethod == "GET":
-      ## URL verification handshake.
-      client.sendHttpReply("200 OK", req.query.getOrDefault("echostr"), logger)
-      logger.info("wecom: URL verification OK")
-      return
-
-    client.sendHttpReply("200 OK", "", logger)  ## respond fast before processing
-    if req.body.len == 0: return
-
-    let r = parseXmlMsg(req.body)
-    if r.kind != wckText: return
-    let text = r.text.strip()
-    if text.len == 0: return
-    if r.msgId.len > 0 and dedupCheck(r.msgId):
-      logger.debug("wecom: duplicate msgId " & r.msgId & " skipped")
-      return
-
-    logger.info("wecom: message from " & r.rawId)
-    gWeComEvents.push(WeComEvent(
-      msgType:  "text",
-      fromUser: r.rawId,
-      msgId:    r.msgId,
-      content:  text,
-    ))
-  except CatchableError as e:
-    logger.warn("wecom: conn error: " & e.msg)
-    recordWebhookFailure("wecom", e.msg)
-
-type WeComWebhookArgs = object
-  token:  string
-  port:   int
-  logger: LogSpec
-
-proc webhookThread(args: WeComWebhookArgs) {.thread.} =
-  var server = newSocket(buffered = false)  ## see http_request_reader
-  server.setSockOpt(OptReuseAddr, true)
-  server.bindAddr(Port(args.port))
-  server.listen()
-  args.logger.info("wecom: webhook listening on port " & $args.port)
-  while true:
-    var client: Socket
-    try:
-      server.accept(client)
-      handleWeComConn(client, args.token, args.logger)
-    except CatchableError as e:
-      args.logger.warn("wecom: accept error: " & e.msg)
-      recordWebhookFailure("wecom", "accept: " & e.msg)
-      try: client.close() except CatchableError: discard
-
-## Thread handle for the WeCom webhook OS thread.
-## Safe: only assigned once via createThread in startWebhook.
-var gWeComThread: ThreadHandle[WeComWebhookArgs]  ## shared memory: a global pointer is gcsafe
-
-proc startWebhook*(a: WeComAdapter; port: Port; logger: Logger) =
-  ## Starts the webhook listener on a dedicated OS thread.
-  let args = WeComWebhookArgs(token: a.callbackToken, port: port.int, logger: logger.spec)
-  gWeComThread = spawnThread(webhookThread, args)
+proc acceptWeComXml*(body: string) {.gcsafe.} =
+  ## Queues a signed callback's text message for the daemon loop. Non-text
+  ## messages, empty text and WeCom's retries of a message already queued are
+  ## dropped.
+  if body.len == 0: return
+  let r = parseXmlMsg(body)
+  if r.kind != wckText: return
+  let text = r.text.strip()
+  if text.len == 0: return
+  if r.msgId.len > 0 and seenRecently(r.msgId, epochMs()):
+    return
+  gWeComEvents.push(WeComEvent(
+    msgType:  "text",
+    fromUser: r.rawId,
+    msgId:    r.msgId,
+    content:  text,
+  ))
 
 proc tryRecvEvent*(a: var WeComAdapter): (bool, WeComEvent) =
   let (ok, ev) = gWeComEvents.tryTake()

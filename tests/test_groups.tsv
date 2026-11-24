@@ -1,6 +1,5 @@
 g0	tests/adapters/channel/t_common_runtime.nim
 g0	tests/adapters/channel/t_dm_gate_runtimes.nim
-g0	tests/adapters/channel/t_embedded_webhooks.nim
 g0	tests/app/t_gateway_connection.nim
 g0	tests/infra/t_event_queue.nim
 g0	tests/infra/t_thread_handle.nim
@@ -42,6 +41,7 @@ g0	tests/adapters/webhook/t_line_webhook.nim
 g0	tests/adapters/webhook/t_http_request_reader.nim
 g0	tests/adapters/webhook/t_webhook_ingress.nim
 g0	tests/adapters/webhook/t_webhook_receiver.nim
+g0	tests/adapters/webhook/t_webhook_cn_routes.nim
 g0	tests/app/t_agent_chat.nim
 g0	tests/app/t_agent_message.nim
 g0	tests/app/t_command_dispatch_app.nim

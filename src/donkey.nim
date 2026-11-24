@@ -38,6 +38,7 @@ import donkey/adapters/provider/model_catalog
 import donkey/adapters/http/std_http
 import donkey/adapters/channel/telegram
 import donkey/adapters/channel/outbound_builder
+import donkey/domain/channels/qq_pure
 import donkey/app/inbound_gate
 import donkey/core/security/dm_policy
 import donkey/app/inbound_media
@@ -210,11 +211,11 @@ type DaemonEnv = object
   matrixWebhookToken: string
   whatsappVerifyToken: string
   whatsappAppSecret: string
-  wecomWebhookPort: string
-  wechatWebhookPort: string
+  wecomCallbackToken: string
+  wechatCallbackToken: string
+  retiredWebhookPorts: seq[string]
+    ## *_WEBHOOK_PORT variables still set from before the shared receiver
   matrixConfigured: bool
-  qqOneBotWebhookPort: string
-  qqOneBotWebhookHost: string
   qqOneBotSecret: string
 
 type DaemonAdapters = object
@@ -548,14 +549,16 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
   result.matrixWebhookToken = cfg.env.get("MATRIX_WEBHOOK_TOKEN")
   result.whatsappVerifyToken = cfg.env.get("WHATSAPP_VERIFY_TOKEN")
   result.whatsappAppSecret = cfg.env.get("WHATSAPP_APP_SECRET")
-  result.wecomWebhookPort = cfg.env.get("WECOM_WEBHOOK_PORT", "8081")
-  result.wechatWebhookPort = cfg.env.get("WECHAT_WEBHOOK_PORT", "8081")
+  result.wecomCallbackToken = cfg.env.get("WECOM_CALLBACK_TOKEN").strip()
+  result.wechatCallbackToken = cfg.env.get("WECHAT_CALLBACK_TOKEN").strip()
+  for retired in ["WECOM_WEBHOOK_PORT", "WECHAT_WEBHOOK_PORT",
+                  "QQ_ONEBOT_WEBHOOK_PORT", "QQ_ONEBOT_WEBHOOK_HOST"]:
+    if cfg.env.get(retired).len > 0:
+      result.retiredWebhookPorts.add retired
   result.matrixConfigured =
     cfg.env.get("MATRIX_HOMESERVER").len > 0 and
     cfg.env.get("MATRIX_BOT_USER_ID").len > 0 and
     cfg.env.get("MATRIX_ACCESS_TOKEN").len > 0
-  result.qqOneBotWebhookPort = cfg.env.get("QQ_ONEBOT_WEBHOOK_PORT", "8082")
-  result.qqOneBotWebhookHost = cfg.env.get("QQ_ONEBOT_WEBHOOK_HOST", "127.0.0.1")
   result.qqOneBotSecret = cfg.env.get("QQ_ONEBOT_SECRET")
 
 proc initDaemonAdapters(cfg: DonkeyConfig; env: DaemonEnv): DaemonAdapters =
@@ -709,16 +712,12 @@ proc startOptionalDiscordGateway(dcAdapter: var DiscordAdapter;
     log.warn("Discord slash commands NOT registered — appId unavailable")
   log.info("Discord gateway thread started")
 
-proc startOptionalWeComGateway(wcAdapter: var WeComAdapter;
-                               wecomCorpId, webhookPort: string;
-                               log: Logger) =
+proc startOptionalWeComGateway(wecomCorpId: string; log: Logger) =
+  ## Inbound arrives through the shared webhook receiver (/webhook/wecom).
   if wecomCorpId.len == 0:
     log.info("WECOM_CORP_ID not set — WeCom disabled")
     return
-
-  let wcPort = Port(parseInt(webhookPort))
-  wcAdapter.startWebhook(wcPort, log)
-  log.info("WeCom webhook started on port " & $wcPort)
+  log.info("WeCom enabled; callbacks on the webhook receiver at " & WeComPath)
 
 proc startOptionalFeishuGateway(fsAdapter: var FeishuAdapter;
                                 feishuAppId: string;
@@ -730,16 +729,12 @@ proc startOptionalFeishuGateway(fsAdapter: var FeishuAdapter;
   fsAdapter.startGateway()
   log.info("Feishu WebSocket gateway started")
 
-proc startOptionalWeChatGateway(wchAdapter: var WeChatAdapter;
-                                wechatAppId, webhookPort: string;
-                                log: Logger) =
+proc startOptionalWeChatGateway(wechatAppId: string; log: Logger) =
+  ## Inbound arrives through the shared webhook receiver (/webhook/wechat).
   if wechatAppId.len == 0:
     log.info("WECHAT_APP_ID not set — WeChat disabled")
     return
-
-  let port = Port(parseInt(webhookPort))
-  wchAdapter.startWebhook(port, log)
-  log.info("WeChat webhook listener started on port " & $port)
+  log.info("WeChat enabled; callbacks on the webhook receiver at " & WeChatPath)
 
 proc slackSocketHttp(): HttpRuntimePort {.nimcall, gcsafe.} =
   ## Built on the Socket Mode reader thread (see SlackHttpFactory).
@@ -795,15 +790,32 @@ proc startOptionalWhatsAppGateway(waAdapter: var WhatsAppAdapter;
   waAdapter.openQueue()
   log.info("WhatsApp webhook queue started")
 
-proc startOptionalWebhookReceiver(env: DaemonEnv; log: Logger) =
+proc startOptionalWebhookReceiver(env: DaemonEnv; qqOneBot: bool; log: Logger) =
   ## Mounts only the routes whose channel is configured AND has a secret.
+  ## WeCom, WeChat and QQ OneBot have no listener of their own: their
+  ## callbacks come here too.
+  for retired in env.retiredWebhookPorts:
+    log.warn(retired & " is no longer used: WeCom, WeChat and QQ OneBot " &
+             "callbacks go to the webhook receiver (DONKEY_WEBHOOK_PORT) at " &
+             WeComPath & ", " & WeChatPath & " and " & QQOneBotPath &
+             "; re-register the callback URL")
+  let callbackChannels = env.wecomCorpId.len > 0 or env.wechatAppId.len > 0 or qqOneBot
   if env.webhookPort <= 0:
-    log.info("DONKEY_WEBHOOK_PORT not set — webhook receiver disabled")
+    if callbackChannels:
+      log.error("DONKEY_WEBHOOK_PORT not set — WeCom, WeChat and QQ OneBot " &
+                "receive nothing without the webhook receiver")
+    else:
+      log.info("DONKEY_WEBHOOK_PORT not set — webhook receiver disabled")
     return
   if (env.webhookTlsCert.len > 0) != (env.webhookTlsKey.len > 0):
     log.error("DONKEY_WEBHOOK_TLS_CERT and DONKEY_WEBHOOK_TLS_KEY must be set together — webhook receiver disabled")
     return
 
+  ## Unsigned OneBot only on a loopback receiver: anyone who reaches it could
+  ## post as any QQ user.
+  let qqMount = oneBotListenerCheck(env.webhookHost, env.qqOneBotSecret)
+  if qqOneBot and qqMount.isErr:
+    log.error("QQ OneBot route not mounted: " & qqMount.error)
   let cfg = WebhookConfig(
     ## Slack events are drained by slack_runtime; only accept them when the
     ## bot token and signature secret are configured.
@@ -828,6 +840,12 @@ proc startOptionalWebhookReceiver(env: DaemonEnv; log: Logger) =
       else: "",
     whatsappAppSecret:
       if env.whatsappVerifyToken.len > 0: env.whatsappAppSecret else: "",
+    wecomToken:
+      if env.wecomCorpId.len > 0: env.wecomCallbackToken else: "",
+    wechatToken:
+      if env.wechatAppId.len > 0: env.wechatCallbackToken else: "",
+    qqOneBotEnabled: qqOneBot and qqMount.isOk,
+    qqOneBotSecret: env.qqOneBotSecret,
     tlsCertFile: env.webhookTlsCert,
     tlsKeyFile: env.webhookTlsKey,
   )
@@ -846,14 +864,7 @@ proc startOptionalQQGateway(qqAdapter: var QQChannelAdapter;
     return
   case qqAdapter.kind
   of qbkOneBot:
-    let oneBotPort = Port(parseInt(env.qqOneBotWebhookPort))
-    let oneBotHost = env.qqOneBotWebhookHost
-    qqAdapter.startWebhook(oneBotHost, oneBotPort, env.qqOneBotSecret,
-                           log).isOkOr:
-      log.error("QQ OneBot webhook: " & error)
-      return
-    log.info("QQ OneBot webhook listener started on " & oneBotHost & ":" &
-             $oneBotPort)
+    log.info("QQ OneBot enabled; events on the webhook receiver at " & QQOneBotPath)
   of qbkOfficial:
     log.info("QQ official API client enabled")
     qqAdapter.startGateway()
@@ -1253,10 +1264,8 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
 proc startDaemonIngress(ctx: DaemonContext;
                         log: Logger) =
   startOptionalDiscordGateway(ctx.adapters.dc, ctx.env.discordToken, ctx.env.discordGuildId, log)
-  startOptionalWeComGateway(ctx.adapters.wc, ctx.env.wecomCorpId,
-                            ctx.env.wecomWebhookPort, log)
-  startOptionalWeChatGateway(ctx.adapters.wch, ctx.env.wechatAppId,
-                             ctx.env.wechatWebhookPort, log)
+  startOptionalWeComGateway(ctx.env.wecomCorpId, log)
+  startOptionalWeChatGateway(ctx.env.wechatAppId, log)
   startOptionalFeishuGateway(ctx.adapters.fs, ctx.env.feishuAppId, log)
   startOptionalSlackGateway(ctx.adapters.sl, ctx.env.slackBotToken,
                             ctx.env.slackAppToken, ctx.env.slackSigningSecret,
@@ -1270,7 +1279,8 @@ proc startDaemonIngress(ctx: DaemonContext;
   if ctx.env.lineChannelAccessToken.len > 0:
     ctx.adapters.ln.openQueue()
     log.info("LINE webhook queue started")
-  startOptionalWebhookReceiver(ctx.env, log)
+  startOptionalWebhookReceiver(ctx.env,
+    ctx.adapters.qq.enabled() and ctx.adapters.qq.kind == qbkOneBot, log)
   startOptionalQQGateway(ctx.adapters.qq, ctx.env, log)
   if ctx.env.telegramToken.len > 0:
     log.info("Telegram bot starting (token len=" & $ctx.env.telegramToken.len & ")")
