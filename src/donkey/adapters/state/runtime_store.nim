@@ -17,7 +17,6 @@ import ../../core/types
 import ./durable_file
 import ../../ports/runtime_state
 import ../../infra/event_queue
-import ../../infra/thread_handle
 
 const
   SessionsFileName*     = "sessions.json"
@@ -553,71 +552,24 @@ proc ledgerCompactStarts*(store: RuntimeStateStore): int =
   ## Lock-free start signal: visible while compaction still holds the lock.
   store.compactStarts.load()
 
-type
-  LedgerWorkerShared = object
-    ## What the worker thread needs, in shared memory and passed as the thread
-    ## argument: the thread touches no global, so it needs no cast.
-    store:      ptr RuntimeStateStore
-    intervalMs: int64
-    stop:       Atomic[bool]
+type LedgerCompactionJob* = object
+  ## One compaction, as plain data for the daemon's blocking executor
+  ## (app/blocking_executor). `store` must outlive the job: the daemon awaits
+  ## a running compaction before it shuts down.
+  store*: ptr RuntimeStateStore
+  force*: bool   ## the daemon's periodic task already keeps the interval
 
-  LedgerCompactionWorker* = ref object
-    shared:     ptr LedgerWorkerShared
-    stopping*:  Atomic[bool]
-    stopped:    bool
-    thread:     ThreadHandle[ptr LedgerWorkerShared]
-
-var gLedgerWorkerRunning: bool
-  ## One worker per process. A plain bool holds no GC memory (gcsafe).
-
-proc ledgerCompactionLoop(shared: ptr LedgerWorkerShared) {.thread.} =
-  while not shared.stop.load():
-    ## Sleep in bounded slices so shutdown does not wait for the whole
-    ## interval (default is one hour).
-    var waited = 0'i64
-    while waited < shared.intervalMs and not shared.stop.load():
-      sleep(1000)
-      waited += 1000
-    if shared.stop.load():
-      break
-    let res = shared.store[].compactLedger()
-    if res.isErr:
-      discard shared.store[].compactErrorChan.push(res.error)
-
-proc startLedgerCompactionWorker*(store: ptr RuntimeStateStore;
-                                  intervalSec: float):
-                                  Result[LedgerCompactionWorker, string] {.gcsafe, raises: [].} =
-  ## Starts a dedicated OS thread for ledger compaction. Returns Ok(nil) when
-  ## the interval is disabled. The caller must keep the store alive until
-  ## `stopLedgerCompactionWorker` returns.
-  if store == nil or intervalSec <= 0.0:
-    return ok(nil)
-  if gLedgerWorkerRunning:
-    return err("ledger compaction worker is already running")
-  let shared = cast[ptr LedgerWorkerShared](allocShared0(sizeof(LedgerWorkerShared)))
-  shared.store = store
-  shared.intervalMs = max(1000'i64, int64(max(1.0, intervalSec) * 1000.0))
-  shared.stop.store(false)
-  let worker = LedgerCompactionWorker(shared: shared)
-  worker.stopping.store(false)
-  try:
-    worker.thread = spawnThread(ledgerCompactionLoop, shared)
-  except CatchableError as e:
-    deallocShared(shared)
-    return err("cannot start ledger compaction worker: " & e.msg)
-  gLedgerWorkerRunning = true
-  ok(worker)
-
-proc stopLedgerCompactionWorker*(worker: LedgerCompactionWorker) =
-  if worker == nil or worker.stopped:
-    return
-  worker.stopped = true
-  worker.stopping.store(true)
-  worker.shared.stop.store(true)
-  joinAndFree(worker.thread)
-  deallocShared(worker.shared)
-  worker.shared = nil
-  gLedgerWorkerRunning = false
+proc compactLedgerJob*(job: LedgerCompactionJob): Result[bool, string]
+                      {.nimcall, gcsafe, raises: [].} =
+  ## Compacts under the store's lock, off the daemon loop. A failure is also
+  ## published for the loop (`tryCompactError`), as the old worker did.
+  if job.store == nil or job.store[] == nil:
+    return err("ledger compaction: no store")
+  let res = job.store[].compactLedger(force = job.force)
+  if res.isErr:
+    discard job.store[].compactErrorChan.push(res.error)
+    return err(res.error)
+  ok(true)
 
 proc ledgerLastCompactError*(store: RuntimeStateStore): string =
   ## Last compaction failure, for startup diagnostics and tests.
