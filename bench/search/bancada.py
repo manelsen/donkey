@@ -151,7 +151,8 @@ class Donkey:
         self.trava = threading.Lock()
 
     def magma_seed(self, paddock, sqlite, historico):
-        if os.path.exists(sqlite + ".pronto"):
+        ## Both the marker and the graph: a graph removed by hand is built again.
+        if os.path.exists(sqlite + ".pronto") and os.path.exists(sqlite):
             return
         corpus = sqlite + ".corpus.jsonl"
         with open(corpus, "w") as f:
@@ -164,7 +165,8 @@ class Donkey:
             os.remove(sqlite)
         out = subprocess.run([self.binario, "magma-seed", paddock, sqlite, corpus],
                              capture_output=True, text=True, encoding="utf-8", check=True).stdout
-        open(sqlite + ".pronto", "w").write(out)
+        with open(sqlite + ".pronto", "w") as f:
+            f.write(out)
 
     def magma_prompts(self, paddock, sqlite):
         return MagmaPrompts(self.binario, paddock, sqlite)
@@ -345,7 +347,8 @@ def rodar(args):
             list(ex.map(lambda s: donkey.magma_seed(cenas[s][1], cenas[s][2], cenas[s][0]), cenas))
         for s in cenas:
             h, pad, sqlite = cenas[s]
-            print(f"semente {s}: grafo {open(sqlite + '.pronto').read().strip()}", flush=True)
+            with open(sqlite + ".pronto") as f:
+                print(f"semente {s}: grafo {f.read().strip()}", flush=True)
             cenas[s] = (h, pad, donkey.magma_prompts(pad, sqlite))
     tarefas = [(s, mo, c, q, r) for r in range(args.reps) for s in cenas
                for mo in args.modelos.split(",") for c in args.condicoes.split(",") for q in perguntas]

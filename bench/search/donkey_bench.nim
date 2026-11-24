@@ -82,9 +82,9 @@ proc magmaSeedCmd(paddock, sqlite, corpus: string) =
   if magma == nil: quit("MAGMA unavailable", 1)
   discard magma.saveUserMd(uid, readOrEmpty(paddock / "USER.md"))
   discard magma.savePreferences(uid, readOrEmpty(paddock / "PREFERENCES.md"))
-  var lines: seq[JsonNode]
+  var records: seq[JsonNode]
   for line in lines(corpus):
-    if line.strip.len > 0: lines.add(parseJson(line))
+    if line.strip.len > 0: records.add(parseJson(line))
   var stored, skipped = 0
   proc put(text: string; ts: int64; session: string) =
     let nid = magma.memId(uid)
@@ -97,20 +97,20 @@ proc magmaSeedCmd(paddock, sqlite, corpus: string) =
     if prev.isSome and prev.get().nodeType == NtMemory:
       magma.graph.linkTemporal(prev.get().id, nid)
   ## The two profile notes of MEMORY.md, as memories from before the history.
-  let first = if lines.len > 0: lines[0]["ts"].getBiggestInt div 1000 - 86400 else: 0
+  let first = if records.len > 0: records[0]["ts"].getBiggestInt div 1000 - 86400 else: 0
   for note in readOrEmpty(paddock / "MEMORY.md").splitLines:
     if note.startsWith("- "):
       put(note, first, "profile")
   var i = 0
-  while i < lines.len:
-    let m = lines[i]
+  while i < records.len:
+    let m = records[i]
     if m["role"].getStr == "user":
-      let reply = if i + 1 < lines.len and lines[i + 1]["role"].getStr == "assistant":
-                    lines[i + 1]["text"].getStr else: ""
+      let reply = if i + 1 < records.len and records[i + 1]["role"].getStr == "assistant":
+                    records[i + 1]["text"].getStr else: ""
       if shouldSkipAutoMemoryCapture(m["text"].getStr, reply):
         inc skipped
       else:
-        let at = if reply.len > 0: lines[i + 1] else: m
+        let at = if reply.len > 0: records[i + 1] else: m
         put(formatAutoMemoryEntry(m["text"].getStr, reply),
             at["ts"].getBiggestInt div 1000, at["session"].getStr)
         inc stored
