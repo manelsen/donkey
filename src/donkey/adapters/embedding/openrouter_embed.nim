@@ -80,7 +80,9 @@ proc decodeEmbedding*(text: string): Result[seq[float32], string] =
     return err("embedding: the vector is not an array")
   var v = newSeq[float32](j.len)
   for i in 0 ..< j.len:
-    v[i] = j[i].getFloat(0.0).float32
+    if j[i].kind notin {JFloat, JInt}:
+      return err("embedding: element " & $i & " is not a number")
+    v[i] = j[i].getFloat().float32
   ok(v)
 
 proc openRouterEmbedJob*(input: string): Result[string, string] {.nimcall, gcsafe, raises: [].} =

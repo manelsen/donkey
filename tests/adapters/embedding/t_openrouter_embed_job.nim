@@ -15,6 +15,11 @@ proc runTests*() =
       check back.get == v
       check decodeEmbedding("not json").isErr
       check decodeEmbedding("""{"a":1}""").isErr
+      ## A non-numeric element is no vector, not a zero: recall then falls
+      ## back to literal terms instead of comparing against zeros.
+      check decodeEmbedding("""[0.5, "x", 1]""").isErr
+      check decodeEmbedding("""[0.5, null]""").isErr
+      check decodeEmbedding("""[1, 2]""").get == @[1.0'f32, 2.0'f32]
 
     test "a job without a key or text is refused before any request":
       check openRouterEmbedJob("not json").isErr
