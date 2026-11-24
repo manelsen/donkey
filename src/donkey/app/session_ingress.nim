@@ -21,7 +21,7 @@ import ../domain/message
 import ../ports/memory
 import ../ports/reminders
 import ../ports/schedules
-import ../ports/gatekeeper
+import ../ports/backtrail
 import ../ports/process
 import ../ports/attachment_store
 import ../ports/access
@@ -59,7 +59,7 @@ type
     memory*:                     MemoryRuntimePort
     reminders*:                  ReminderPort
     schedules*:                  SchedulePort
-    gatekeeper*:                 GatekeeperPort ## pre-search before the model's turn
+    backtrail*:                 BacktrailPort ## pre-search before the model's turn
     process*:                    ProcessRuntimePort
     attachments*:                AttachmentStorePort
     completeFn*:                 CompleteFn
@@ -202,7 +202,7 @@ func buildSessionIngressServices*(memory: MemoryRuntimePort;
                                   fs: FsRuntimePort = unavailableFs();
                                   reminders: ReminderPort = ReminderPort();
                                   schedules: SchedulePort = SchedulePort();
-                                  gatekeeper: GatekeeperPort = GatekeeperPort();
+                                  backtrail: BacktrailPort = BacktrailPort();
                                   process: ProcessRuntimePort = unavailableProcess();
                                   attachments: AttachmentStorePort = unavailableAttachments()): SessionIngressServices =
   ## Constructs SessionIngressServices.
@@ -211,7 +211,7 @@ func buildSessionIngressServices*(memory: MemoryRuntimePort;
     memory: memory,
     reminders: reminders,
     schedules: schedules,
-    gatekeeper: gatekeeper,
+    backtrail: backtrail,
     process: process,
     attachments: attachments,
     completeFn: completeFn,
@@ -262,7 +262,7 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                                fs: FsRuntimePort = unavailableFs();
                                reminders: ReminderPort = ReminderPort();
                                schedules: SchedulePort = SchedulePort();
-                               gatekeeper: GatekeeperPort = GatekeeperPort();
+                               backtrail: BacktrailPort = BacktrailPort();
                                process: ProcessRuntimePort = unavailableProcess();
                                attachments: AttachmentStorePort = unavailableAttachments()) {.gcsafe.} =
   ## Spawns an orchestrator actor if the ingress decision requires starting a session runtime.
@@ -286,7 +286,7 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                              asyncCompleteFn = bootstrap.asyncCompleteFn,
                              subagentWorkspace = bootstrap.subagentWorkspace,
                              fs = fs, env = cfg.env, reminders = reminders,
-                             schedules = schedules, gatekeeper = gatekeeper,
+                             schedules = schedules, backtrail = backtrail,
                              process = process, attachments = attachments)
 
 func sessionTaskMsg(msg: InboundMessage; msgId: string;
@@ -403,7 +403,7 @@ proc startSessionIngress*(sm: var SessionManager;
                            services.sandboxMode, services.sandboxRuntimeCmd, services.sandboxImage,
                            services.typingFn, services.searchFn,
                            services.http, services.fs, services.reminders,
-                           services.schedules, services.gatekeeper,
+                           services.schedules, services.backtrail,
                            services.process, services.attachments)
   if result.plan.decision.startsNewSession:
     services.log.info("new session: " & result.plan.uid)

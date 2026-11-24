@@ -1,6 +1,6 @@
 ## presearch.nim — the turn starts with the search already made.
 ##
-## When the gatekeeper (`ports/gatekeeper`) says the incoming message is
+## When Backtrail (`ports/backtrail`) says the incoming message is
 ## about the conversation's past, Donkey runs the real `session_search` with
 ## the message (ranked terms) and puts the call and its result in the turn's
 ## history, as if the model had searched first. The model cannot forget to
@@ -8,7 +8,7 @@
 ## Marta's benchmark this took the default install from 75% to 92% right
 ## (bench/search/RESULTS.md).
 ##
-## A gatekeeper that is missing, fails or says "not about the past" leaves
+## A Backtrail that is missing, fails or says "not about the past" leaves
 ## the turn exactly as it would be without one.
 
 import std/json
@@ -17,19 +17,19 @@ import ../core/log
 import ../core/pipeops
 import ../domain/message
 import ../domain/more_tools
-import ../ports/gatekeeper
+import ../ports/backtrail
 import ./native_tools
 import ./session_state
 
-proc preSearch*(gatekeeper: GatekeeperPort; ctx: NativeCtx; state: SessionState;
+proc preSearch*(backtrail: BacktrailPort; ctx: NativeCtx; state: SessionState;
                 history: ConversationHistory; message, callId: string;
                 log: Logger): Future[ConversationHistory] {.async.} =
   ## `callId` is this turn's (`preSearchCallId`), unique in the session.
-  if not gatekeeper.gatekeeperAvailable:
+  if not backtrail.backtrailAvailable:
     return history
-  let decision = gatekeeper.classify(message)
+  let decision = backtrail.classify(message)
   if decision.isErr:
-    log.warn("gatekeeper: " & decision.error & "; the turn goes on without a pre-search")
+    log.warn("backtrail: " & decision.error & "; the turn goes on without a pre-search")
     return history
   if not needsPreSearch(decision.get):
     return history
@@ -44,6 +44,6 @@ proc preSearch*(gatekeeper: GatekeeperPort; ctx: NativeCtx; state: SessionState;
   var h = history
   h.addAssistantWithToolCalls("", @[call])
   h.addToolResult(callId, SessionSearchToolName, found.text, found.resultKind)
-  log.info("gatekeeper: " & $decision.get.route & " (" & $decision.get.confidence &
+  log.info("backtrail: " & $decision.get.route & " (" & $decision.get.confidence &
            "); pre-searched past sessions")
   return h

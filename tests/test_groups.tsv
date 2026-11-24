@@ -302,6 +302,6 @@ g0	tests/app/t_user_schedules.nim
 g0	tests/app/t_metrics_wiring.nim
 g2	tests/domain/memory/t_conversation_search_pure.nim
 g1	tests/app/t_conversation_search.nim
-g2	tests/domain/memory/t_gatekeeper_pure.nim
-g0	tests/adapters/decision/t_perplexity_gatekeeper.nim
+g2	tests/domain/memory/t_backtrail_pure.nim
+g0	tests/adapters/decision/t_perplexity_backtrail.nim
 g1	tests/app/t_presearch.nim

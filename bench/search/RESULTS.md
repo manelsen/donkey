@@ -341,7 +341,7 @@ recall's top 8 on the cached graphs: **53 of 60** (today's word list: 49 to
 are "N days ago" questions, which count from a 2023 question date that
 recall's recency list cannot know.
 
-## The gatekeeper as a pre-search, 24/11/2026
+## The gatekeeper as a pre-search (Backtrail), 24/11/2026
 
 Condition `prebusca` uses Perplexity Decider 1.3 on its own endpoint. It
 classifies the message, and unless the route is "not about the past", it
