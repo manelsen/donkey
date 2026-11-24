@@ -1699,7 +1699,12 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
       startPeriodicTask(proc() {.gcsafe.} =
         if runtime.ledgerCompaction == nil or runtime.ledgerCompaction.finished:
           runtime.ledgerCompaction = runOffLoop(compactLedgerJob,
-            LedgerCompactionJob(store: addr runtime.stateStore, force: true)),
+            LedgerCompactionJob(store: addr runtime.stateStore, force: true))
+        else:
+          ## A compaction longer than the whole interval is stuck or the
+          ## ledger is huge: say so instead of skipping in silence.
+          newLogger("ledger").warn("ledger compaction still running after a " &
+                                   "full interval; this tick is skipped"),
         intervalSec = max(1, compactionSec.int), name = "ledger-compaction")
   let heartbeatOutboxFn: HeartbeatOutboxFn = proc(userId, channel, taskPayload: string) {.gcsafe.} =
     let uid = UserId(userId)
