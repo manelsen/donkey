@@ -65,6 +65,8 @@ proc runTests*() =
       let text = search(ConversationSearchRequest(phrase: "kappa", countOnly: true))
       check "4 matches" in text
       check "- a: 3" in text
+      check "say you don't remember" in search(
+        ConversationSearchRequest(phrase: "operada", countOnly: true))
       check "- b: 1" in text
       check "kappa de novo" notin text
 

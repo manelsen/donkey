@@ -702,7 +702,11 @@ const
     "error text. `query` ranks conversations by its terms when you have no " &
     "exact string. `session_id` with `around` reads the messages around a hit. " &
     "Narrow with `since`/`until` (7d, 24h, 2w or YYYY-MM-DD). Case and accents " &
-    "are ignored. Results are this user's only and read-only."
+    "are ignored. If the first words find nothing useful, try others: " &
+    "synonyms, a shorter word, the singular. Finding nothing only means these " &
+    "words are not there; it may have been said in other words, so if it is " &
+    "still not found, say you don't remember it, not that it was never said. " &
+    "Results are this user's only and read-only."
   SessionSearchToolSchema* =
     "{\"type\":\"object\",\"properties\":{" &
     "\"phrase\":{\"type\":\"string\",\"description\":\"Exact string to find in every message\"}," &

@@ -184,6 +184,8 @@ proc searchConversations*(fs: FsRuntimePort; paddockDir: string;
       text.add(" in " & $perSession.len & " sessions:")
       for (id, n) in perSession[0 ..< min(perSession.len, 30)]:
         text.add("\n- " & id & ": " & $n)
+    else:
+      text.add(". " & NotFoundHint)
     return ok(Result[string, string], text)
   let limit = if req.limit > 0: min(req.limit, PhraseMaxLimit) else: PhraseDefaultLimit
   let offset = max(0, min(req.offset, matches.len))
