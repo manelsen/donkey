@@ -67,6 +67,11 @@ proc runTests*() =
       ## No route (Backtrail off or failed): recall decides by the words.
       check recallPolicyForRoute("").isNone
       check recallPolicyForRoute("maybe").isNone
+      ## Every route survives the trip on a recall request (`$` out,
+      ## `recallPolicyForRoute` in): a renamed value would fail here, not
+      ## silently fall back to the words.
+      for r in MessageRoute:
+        check recallPolicyForRoute($r) == some(recallPolicyFor(r))
 
     test "an empty message gets no pre-search query":
       check preSearchArgs("   ")["query"].getStr == ""
