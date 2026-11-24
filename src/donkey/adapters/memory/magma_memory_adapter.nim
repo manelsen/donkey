@@ -13,7 +13,6 @@ import ../../ports/embedding
 import ../../ports/multigraph_store
 import ../../ports/reranking
 import ../../domain/memory/commitment_pure
-import ../../domain/memory/decay
 import ../../domain/memory/episode_pure
 import ../../domain/memory/provenance_pure
 import ../../domain/memory/query_policy_pure
@@ -605,12 +604,11 @@ when defined(withPostgres) or defined(withSqlite):
             rankedMemories[i].finalScore * (1.0'f32 - a.searchConfig.rerankWeight)
           )
 
-    let nowSec = getTime().toUnix()
-    for i in 0 ..< rankedMemories.len:
-      if rankedMemories[i].timestamp > 0:
-        rankedMemories[i].finalScore = clampUnit(
-          decayedRelevance(rankedMemories[i].finalScore,
-                           rankedMemories[i].timestamp, nowSec))
+    ## No time decay: relevance alone ranks, as in MAGMA, where time is a
+    ## filter and an order for "when" questions (the temporal signal above),
+    ## never a penalty on old memories. A 30-day half-life used to bury what
+    ## the user said months ago under last week's small talk
+    ## (bench/search/RESULTS.md).
 
     rankedMemories.sort(proc(x, y: RankedMemory): int =
       let finalCmp = cmp(y.finalScore, x.finalScore)

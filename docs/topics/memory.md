@@ -208,9 +208,11 @@ by reciprocal rank, at equal weight:
 
 A message that asks about time (`when`, `last`, `yesterday`; `quando`,
 `último`, `ontem`, ...) also ranks by recency and pulls in the memories next
-to its hits. The words are matched whole, in English and Portuguese. Relevance then decays
-with a 30-day half-life. Without an embedding provider the literal terms
-still rank.
+to its hits. The words are matched whole, in English and Portuguese. Age
+does not lower relevance: a memory from months ago that answers the message
+ranks above last week's small talk, as in MAGMA, where time filters and
+orders "when" questions but never penalizes old memories. Without an
+embedding provider the literal terms still rank.
 
 ## Memory Origin
 

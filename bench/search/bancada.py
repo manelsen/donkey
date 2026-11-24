@@ -12,6 +12,14 @@ Uso:
       --sementes 7,11,23 --saida bench/search/out/base.jsonl
   python3 -I bench/search/bancada.py resumo bench/search/out/base.jsonl
 
+Memória (--memoria):
+  md     MEMORY.md com duas notas de perfil, como na bancada da Supernova
+  magma  o padrão do Donkey (SQLite): o grafo com uma memória por turno que a
+         captura automática guardaria, e a recordação de 8 memórias pela
+         pergunta no prompt, como o agente de memória faz a cada mensagem.
+         O grafo de cada semente é montado uma vez (embeddings pelo
+         OpenRouter) e reaproveitado.
+
 Condições:
   natural  o prompt como o Donkey envia; a agente decide se busca
   forcada  a primeira chamada é obrigatoriamente a session_search: o teto de
@@ -142,6 +150,27 @@ class Donkey:
                                   stdout=subprocess.PIPE, text=True, encoding="utf-8")
         self.trava = threading.Lock()
 
+    def magma_seed(self, paddock, sqlite, historico):
+        ## Both the marker and the graph: a graph removed by hand is built again.
+        if os.path.exists(sqlite + ".pronto") and os.path.exists(sqlite):
+            return
+        corpus = sqlite + ".corpus.jsonl"
+        with open(corpus, "w") as f:
+            for g in dados.sessoes(historico):
+                sid = f"{g[0]['at']}-1"
+                for m in g:
+                    f.write(json.dumps({"role": m["role"], "text": m["content"], "ts": m["at"],
+                                        "session": sid}, ensure_ascii=False) + "\n")
+        if os.path.exists(sqlite):
+            os.remove(sqlite)
+        out = subprocess.run([self.binario, "magma-seed", paddock, sqlite, corpus],
+                             capture_output=True, text=True, encoding="utf-8", check=True).stdout
+        with open(sqlite + ".pronto", "w") as f:
+            f.write(out)
+
+    def magma_prompts(self, paddock, sqlite):
+        return MagmaPrompts(self.binario, paddock, sqlite)
+
     def prompt(self, paddock):
         out = subprocess.run([self.binario, "prompt", paddock], capture_output=True,
                              text=True, encoding="utf-8", check=True).stdout
@@ -168,10 +197,30 @@ class Donkey:
             return json.loads(resposta)["out"]
 
 
+class MagmaPrompts:
+    """O prompt de cada pergunta com a recordação do MAGMA (um processo)."""
+
+    def __init__(self, binario, paddock, sqlite):
+        self.p = subprocess.Popen([binario, "magma-prompt", paddock, sqlite], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, text=True, encoding="utf-8")
+        self.trava = threading.Lock()
+        self.cache = {}
+
+    def para(self, pergunta):
+        with self.trava:
+            if pergunta not in self.cache:
+                self.p.stdin.write(pergunta.replace("\n", " ") + "\n")
+                self.p.stdin.flush()
+                self.cache[pergunta] = json.loads(self.p.stdout.readline())
+            return self.cache[pergunta]
+
+
 # ------------------------------------------------------------------ agente
 
 
 def rodar_pergunta(modelo, condicao, pergunta, historico, paddock, donkey, cena):
+    if isinstance(cena, MagmaPrompts):
+        cena = cena.para(pergunta)
     msgs = [{"role": "system", "content": cena["system"]}]
     for m in historico[-JANELA:]:
         msgs.append({"role": m["role"], "content": m["content"]})
@@ -285,8 +334,22 @@ def rodar(args):
         historico = dados.gerar(args.mensagens, semente)
         paddock = os.path.join(args.dados, f"s{semente}-m{args.mensagens}", "marta")
         nsess = dados.escrever_donkey(paddock, historico)
-        cenas[semente] = (historico, paddock, donkey.prompt(paddock))
+        if args.memoria == "magma":
+            sqlite = os.path.join(os.path.dirname(paddock), "magma.sqlite")
+            cenas[semente] = (historico, paddock, sqlite)
+        else:
+            cenas[semente] = (historico, paddock, donkey.prompt(paddock))
         print(f"semente {semente}: {len(historico)} mensagens em {nsess} sessões", flush=True)
+    if args.memoria == "magma":
+        ## Os grafos das sementes são montados em paralelo (embeddings são
+        ## a parte lenta) e reaproveitados nas rodadas seguintes.
+        with cf.ThreadPoolExecutor(len(cenas)) as ex:
+            list(ex.map(lambda s: donkey.magma_seed(cenas[s][1], cenas[s][2], cenas[s][0]), cenas))
+        for s in cenas:
+            h, pad, sqlite = cenas[s]
+            with open(sqlite + ".pronto") as f:
+                print(f"semente {s}: grafo {f.read().strip()}", flush=True)
+            cenas[s] = (h, pad, donkey.magma_prompts(pad, sqlite))
     tarefas = [(s, mo, c, q, r) for r in range(args.reps) for s in cenas
                for mo in args.modelos.split(",") for c in args.condicoes.split(",") for q in perguntas]
     feitas = set()
@@ -294,8 +357,10 @@ def rodar(args):
         for linha in open(args.saida):
             d = json.loads(linha)
             if d.get("categoria") != "erro":
-                feitas.add((d["semente"], d["modelo"], d["condicao"], d["pergunta"], d["rep"]))
-    tarefas = [t for t in tarefas if (t[0], t[1], t[2], t[3][0], t[4]) not in feitas]
+                feitas.add((d["semente"], d.get("memoria", "md"), d["modelo"], d["condicao"],
+                            d["pergunta"], d["rep"]))
+    tarefas = [t for t in tarefas
+               if (t[0], args.memoria, t[1], t[2], t[3][0], t[4]) not in feitas]
     print(f"{len(tarefas)} tarefas", flush=True)
     os.makedirs(os.path.dirname(os.path.abspath(args.saida)), exist_ok=True)
     trava = threading.Lock()
@@ -308,7 +373,7 @@ def rodar(args):
             nota = julgar(q, res["resposta"], historico)
         except Exception as e:  # noqa: BLE001
             res, nota = {"erro": str(e)[:300]}, {"categoria": "erro", "motivo": str(e)[:200]}
-        linha = {"semente": s, "modelo": mo, "condicao": c, "pergunta": q[0], "tipo": q[5], "rep": r,
+        linha = {"semente": s, "memoria": args.memoria, "modelo": mo, "condicao": c, "pergunta": q[0], "tipo": q[5], "rep": r,
                  "categoria": nota.get("categoria"), "motivo": nota.get("motivo"), **res}
         with trava:
             with open(args.saida, "a") as f:
@@ -327,7 +392,8 @@ def resumo(args):
     ultima = {}
     for l in open(args.arquivo):
         d = json.loads(l)
-        ultima[(d.get("semente"), d["modelo"], d["condicao"], d["pergunta"], d["rep"])] = d
+        ultima[(d.get("semente"), d.get("memoria", "md"), d["modelo"], d["condicao"],
+                d["pergunta"], d["rep"])] = d
     L = list(ultima.values())
     erros = sum(1 for d in L if d.get("categoria") == "erro")
     L = [d for d in L if d.get("categoria") != "erro"]
@@ -348,10 +414,11 @@ def resumo(args):
                   f"**{pc(c('acertou'))}** | {pc(sum(1 for d in ds if d['categoria'] == 'acertou' and d.get('buscou')))} | "
                   f"{pc(c('nao_lembra'))} | {pc(c('negou'))} | {pc(c('errou'))} | {pc(c('inventou'))} |")
 
-    tabela(lambda d: (d["modelo"], d["condicao"]), "Por modelo e condição (todas as sementes)")
-    tabela(lambda d: (d["modelo"], d["condicao"], f"s{d['semente']}"), "Por semente")
-    tabela(lambda d: (d["condicao"], d["tipo"]), "Por tipo de pergunta")
-    tabela(lambda d: (d["condicao"], d["pergunta"]), "Por pergunta")
+    mem = lambda d: d.get("memoria", "md")
+    tabela(lambda d: (mem(d), d["modelo"], d["condicao"]), "Por memória, modelo e condição (todas as sementes)")
+    tabela(lambda d: (mem(d), d["modelo"], d["condicao"], f"s{d['semente']}"), "Por semente")
+    tabela(lambda d: (mem(d), d["condicao"], d["tipo"]), "Por tipo de pergunta")
+    tabela(lambda d: (mem(d), d["condicao"], d["pergunta"]), "Por pergunta")
     print(f"\n(execuções com erro, fora das tabelas: {erros})")
 
 
@@ -363,6 +430,7 @@ def main():
     r.add_argument("--condicoes", default="natural,forcada")
     r.add_argument("--sementes", default="7,11,23")
     r.add_argument("--perguntas", default="")
+    r.add_argument("--memoria", choices=["md", "magma"], default="md")
     r.add_argument("--reps", type=int, default=1)
     r.add_argument("--mensagens", type=int, default=3000)
     r.add_argument("--paralelo", type=int, default=6)

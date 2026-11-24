@@ -202,7 +202,7 @@ DOMAIN LAYER (domain/ — Nim `func`, zero side effects, 100% testável)
   ├── personality.nim   → PersonalityTraits, onboarding phases (12)
   ├── channels/         → formatadores puros por canal (telegram_pure, discord_pure, …)
   ├── providers/        → tradutores puros por provider (openai_pure, anthropic_pure, …)
-  └── memory/           → chunking, decay, graph_pure, rrf (algoritmos puros)
+  └── memory/           → chunking, graph_pure, rrf (algoritmos puros)
 
 CORE INFRASTRUCTURE (core/ — sem I/O externo)
   Log, Cron, Pipeops, Types, CommandRouting, Onboarding,

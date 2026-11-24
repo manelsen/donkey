@@ -86,9 +86,11 @@ line. Results are in `RESULTS.md`.
 - **One synthetic history family and 16 questions.** It shows behaviours,
   not production rates.
 - **The judge is an LLM**, and it sometimes errs.
-- **The memory path is not measured.**
-  - **Markdown memory:** Donkey injects MEMORY.md into every turn, and
-    automatic capture fills it as the user talks. Here it holds only two
-    profile notes, as in Supernova's benchmark.
-  - **MAGMA builds:** they recall 8 memories by embedding on every message.
-    That is an automatic pre-search, and it deserves its own run.
+- **Two memory setups** (`--memoria`):
+  - **`md`:** MEMORY.md with only two profile notes, as in Supernova's
+    benchmark.
+  - **`magma`:** the default build (SQLite). The graph holds one memory per
+    substantive turn, as automatic capture would have stored them, embedded
+    through OpenRouter and stamped with the turn's time. Each question gets
+    the memory agent's recall of 8 memories. A seed's graph is built once
+    (about 30 minutes, embedding is the slow part) and reused.
