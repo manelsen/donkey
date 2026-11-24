@@ -166,6 +166,17 @@ The receiver itself is enabled by `DONKEY_WEBHOOK_PORT` and binds
 public HTTPS normally comes from a TLS-terminating proxy or from
 `DONKEY_WEBHOOK_TLS_CERT`/`DONKEY_WEBHOOK_TLS_KEY`.
 
+One receiver serves every callback channel. WeCom, WeChat and QQ OneBot
+used to run their own listeners (`WECOM_WEBHOOK_PORT`, `WECHAT_WEBHOOK_PORT`,
+`QQ_ONEBOT_WEBHOOK_PORT`/`_HOST`); those variables are no longer read, and
+startup warns when one is still set. Register these callback URLs instead:
+
+| Channel | Path | Mounted when |
+|---|---|---|
+| WeCom | `/webhook/wecom` | `WECOM_CORP_ID` and `WECOM_CALLBACK_TOKEN` are set; `msg_signature` is required |
+| WeChat | `/webhook/wechat` | `WECHAT_APP_ID` and `WECHAT_CALLBACK_TOKEN` are set |
+| QQ OneBot | `/webhook/qq` | the OneBot backend is configured; with `QQ_ONEBOT_SECRET` every POST needs `X-Signature`, without it the route is mounted only when the receiver binds to loopback |
+
 Redelivery can stay enabled: repeated `webhookEventId` values are dropped for
 24 hours (see below). `deliveryContext.isRedelivery` is read for telemetry only
 and never drives a decision.

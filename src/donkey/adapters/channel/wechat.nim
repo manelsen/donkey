@@ -1,10 +1,10 @@
 ## WeChatAdapter — Official Account style channel adapter.
 ##
 ## Receiving:
-##   startWebhook(port) launches an embedded HTTP server on a dedicated OS
-##   thread. It handles WeChat's GET verification challenge and POST message
-##   delivery, validates the SHA1 signature, and pushes parsed events into a
-##   thread-safe Channel drained by tryRecvEvent().
+##   WeChat calls the shared webhook receiver at /webhook/wechat
+##   (DONKEY_WEBHOOK_PORT), which answers the GET verification challenge,
+##   validates the SHA1 signature and hands POSTed XML to acceptWeChatXml.
+##   Events wait in a thread-safe queue drained by tryRecvEvent().
 ##
 ##   For testing or external forwarding, enqueueWebhookXml() accepts raw XML
 ##   directly without going through the HTTP path.
@@ -13,7 +13,7 @@
 ##   Uses WeChat Official Account APIs for customer-service text messages and
 ##   template messages.
 
-import std/[algorithm, json, nativesockets, net, strutils, tables, uri]
+import std/[algorithm, json, strutils, tables, uri]
 import checksums/sha1
 import ../../core/log
 import ../../core/pipeops
@@ -22,10 +22,8 @@ import ../../domain/message
 import ../../ports/channel
 import ../http/std_http
 import ../identity/identity_resolver
-import ../webhook/http_request_reader
 import ../../app/metrics
 import ../../infra/event_queue
-import ../../infra/thread_handle
 
 const
   WeChatApiBase* = "https://api.weixin.qq.com"
@@ -58,15 +56,8 @@ type
     http*:          StdHttpAdapter
     events:         seq[WeChatEvent]   ## direct-injection queue (tests / external)
 
-  WeChatWebhookArgs = object
-    port:   int
-    token:  string
-    logger: LogSpec
-
 var gWeChatEvents = initEventQueue[WeChatEvent]("wechat")
-var gWeChatEventsOpen  = false
-var gWeChatWebhookStarted = false
-var gWeChatWebhookThread: ThreadHandle[WeChatWebhookArgs]  ## shared memory: a global pointer is gcsafe
+  ## Valid for the daemon's lifetime: the receiver's workers push, the loop polls.
 
 func base(a: WeChatAdapter): string =
   if a.apiBase.len > 0: a.apiBase else: WeChatApiBase
@@ -136,11 +127,16 @@ proc verifyWebhookSignature*(token, timestamp, nonce, signature: string): bool =
   secureHash(parts.join("")) == parseSecureHash(signature)
 
 proc enqueueWebhookXml*(a: var WeChatAdapter; xml: string): Result[void, string] =
+  ## Direct injection into this adapter (tests, external forwarding).
   let event = ? parseWebhookXml(xml)
-  if gWeChatEventsOpen:
-    gWeChatEvents.push(event)
-  else:
-    a.events.add(event)
+  a.events.add(event)
+  ok()
+
+proc acceptWeChatXml*(xml: string): Result[void, string] {.gcsafe.} =
+  ## Queues a signed callback's event for the daemon loop.
+  let event = ? parseWebhookXml(xml)
+  if not gWeChatEvents.push(event):
+    return err("wechat event queue full: event dropped")
   ok()
 
 proc buildOAuthUrl*(a: WeChatAdapter;
@@ -252,83 +248,10 @@ proc sendTemplate*(a: WeChatAdapter;
     return err("wechat template send error " & $resp.status & ": " & resp.body)
   ok()
 
-proc respond(s: Socket; status, body: string) =
-  let resp = "HTTP/1.1 " & status & "\r\nContent-Length: " &
-             $body.len & "\r\nConnection: close\r\n\r\n" & body
-  try: s.send(resp) except CatchableError: discard
-
-proc handleWeChatConn*(client: Socket; token: string; logger: Logger;
-                       timeoutSec = WebhookClientTimeoutSec) =
-  ## Serves one WeChat Official Account webhook request and closes the socket.
-  ## GET  /?signature=…&timestamp=…&nonce=…&echostr=…  → echo echostr if valid
-  ## POST /?signature=…&timestamp=…&nonce=…            → parse XML, enqueue event
-  ## Reading goes through http_request_reader (bounded, timed out).
-  defer: closeWebhookClient(client)
-  applyWebhookClientTimeouts(client, timeoutSec).isOkOr:
-    logger.warn("wechat webhook: " & error)
-    recordWebhookFailure("wechat", error)
-    return
-  let req = readWebhookRequest(client).valueOr:
-    logger.warn("wechat webhook: rejected request: " & error)
-    recordWebhookFailure("wechat", error)
-    client.respond(statusLine(readErrorStatus(error)), "")
-    return
-  let signature = req.query.getOrDefault("signature")
-  let timestamp = req.query.getOrDefault("timestamp")
-  let nonce     = req.query.getOrDefault("nonce")
-
-  if not verifyWebhookSignature(token, timestamp, nonce, signature):
-    client.respond("403 Forbidden", "forbidden")
-  elif req.httpMethod == "GET":
-    client.respond("200 OK", req.query.getOrDefault("echostr"))
-  elif req.httpMethod == "POST":
-    ## Always 200 "success": WeChat retries anything else. A body we cannot
-    ## parse is dropped, but counted and logged so the loss is visible.
-    let evRes = parseWebhookXml(req.body)
-    if evRes.isErr:
-      logger.warn("wechat webhook: dropped unparseable event: " & evRes.error)
-      recordWebhookFailure("wechat", "unparseable event")
-    elif gWeChatEventsOpen:
-      gWeChatEvents.push(evRes.value)
-    client.respond("200 OK", "success")
-  else:
-    client.respond("405 Method Not Allowed", "")
-
-proc wechatWebhookThread(args: WeChatWebhookArgs) {.thread.} =
-  ## Minimal HTTP/1.1 server for WeChat Official Account webhook.
-  var server = newSocket(buffered = false)  ## see http_request_reader
-  server.setSockOpt(OptReuseAddr, true)
-  server.bindAddr(Port(args.port))
-  server.listen()
-
-  while true:
-    var client: Socket
-    try:
-      server.accept(client)
-    except CatchableError:
-      continue
-    try:
-      handleWeChatConn(client, args.token, args.logger)
-    except CatchableError:
-      let errMsg = getCurrentExceptionMsg()
-      args.logger.warn("wechat webhook: connection handler error: " & errMsg)
-      recordWebhookFailure("wechat", errMsg)
-
-proc startWebhook*(a: WeChatAdapter; port: Port; logger: Logger) {.gcsafe.} =
-  ## Starts the embedded WeChat webhook HTTP server on the given port.
-  ## Safe to call multiple times — only the first call has effect.
-  if gWeChatWebhookStarted:
-    return
-  gWeChatEventsOpen    = true
-  gWeChatWebhookStarted = true
-  gWeChatWebhookThread = spawnThread(wechatWebhookThread,
-               WeChatWebhookArgs(port: port.int, token: a.callbackToken, logger: logger.spec))
-
 proc tryRecvEvent*(a: var WeChatAdapter): (bool, WeChatEvent) =
-  if gWeChatEventsOpen:
-    let (ok, ev) = gWeChatEvents.tryTake()
-    if ok:
-      return (true, ev)
+  let (ok, ev) = gWeChatEvents.tryTake()
+  if ok:
+    return (true, ev)
   if a.events.len == 0:
     return (false, WeChatEvent())
   let event = a.events[0]
