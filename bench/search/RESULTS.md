@@ -191,3 +191,30 @@ cannot touch; whether it searches varies from run to run. With 2 more
 repetitions on both sides the two are level (24% and 24%). Answers right
 when it did search went from 27/43 to 29/42. The "before" side's first
 repetition predates #154, which barely touches this path.
+## Capture check, 24/11/2026
+
+`bancada.py captura` (PRD-recall item 5): which planted fact messages
+automatic capture would not keep, per seed.
+
+| Seed | User messages skipped | Planted fact messages skipped |
+|---|---|---|
+| 7, 11, 23 | about 100 of 1,910 (5%) | 8 in each seed |
+
+**Why.** All 8 are the last user line of a fact's episode, and the generator
+ends those episodes without a reply. For example:
+- "uns 8 meses. ela mora em Vitória";
+- "o ortopedista disse que são uns 3 meses de recuperação com fisioterapia".
+
+Capture needs a reply, so these turns never become memories.
+
+**What it means:**
+- **No question is affected.** Every answer key ("quadril", "Marília",
+  "concurso"…) sits in an earlier message of its episode, and that one is
+  captured.
+- **It is an artifact of the data.** In real use Donkey replies to every
+  message, so a turn like these would be captured.
+- **A real gap remains:** a turn whose reply failed (a provider error) is
+  never captured. That is a product question.
+
+The generator is left as it is, so this benchmark stays comparable with
+earlier runs and with Supernova's.

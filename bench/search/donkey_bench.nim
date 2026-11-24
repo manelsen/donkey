@@ -13,6 +13,9 @@
 ##                                   fills a MAGMA SQLite graph the way
 ##                                   Donkey's automatic capture would have:
 ##                                   one memory per substantive turn
+##   donkey_bench capture-check <corpus.jsonl>
+##                                   prints {"skipped": [user text, …]}: the
+##                                   turns automatic capture would not keep
 ##   donkey_bench magma-prompt <paddock> <sqlite>
 ##                                   reads one question per line and prints
 ##                                   {"system": …, "tools": […]} with the
@@ -158,10 +161,26 @@ proc serveCmd() =
     stdout.writeLine($(%*{"out": outText}))
     stdout.flushFile()
 
+proc captureCheckCmd(corpus: string) =
+  ## The same pairing and rule as `magma-seed`: a user turn with the reply
+  ## right after it, kept unless `shouldSkipAutoMemoryCapture` says no.
+  var records: seq[JsonNode]
+  for line in lines(corpus):
+    if line.strip.len > 0: records.add(parseJson(line))
+  var skipped = newJArray()
+  for i, m in records:
+    if m["role"].getStr != "user": continue
+    let reply = if i + 1 < records.len and records[i + 1]["role"].getStr == "assistant":
+                  records[i + 1]["text"].getStr else: ""
+    if shouldSkipAutoMemoryCapture(m["text"].getStr, reply):
+      skipped.add(m["text"])
+  echo $(%*{"skipped": skipped})
+
 when isMainModule:
   let args = commandLineParams()
   if args.len >= 2 and args[0] == "prompt": promptCmd(args[1])
   elif args.len >= 1 and args[0] == "serve": serveCmd()
   elif args.len >= 4 and args[0] == "magma-seed": magmaSeedCmd(args[1], args[2], args[3])
   elif args.len >= 3 and args[0] == "magma-prompt": magmaPromptCmd(args[1], args[2])
+  elif args.len >= 2 and args[0] == "capture-check": captureCheckCmd(args[1])
   else: quit("usage: donkey_bench prompt <paddock> | serve | magma-seed <paddock> <sqlite> <corpus> | magma-prompt <paddock> <sqlite>", 2)

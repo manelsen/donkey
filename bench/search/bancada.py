@@ -422,6 +422,36 @@ def resumo(args):
     print(f"\n(execuções com erro, fora das tabelas: {erros})")
 
 
+def captura(args):
+    """Planted facts that automatic capture would not keep, per seed.
+
+    Recall can only find what capture stored. A fact message in a turn that
+    `shouldSkipAutoMemoryCapture` drops (trivial text, or no reply after it)
+    is out of reach of recall, whatever the ranking.
+    """
+    binario = compilar(os.path.join(AQUI, "out"))
+    total = 0
+    for semente in [int(s) for s in args.sementes.split(",")]:
+        historico = dados.gerar(args.mensagens, semente)
+        caminho = os.path.join(AQUI, "out", f"captura-s{semente}.jsonl")
+        with open(caminho, "w") as f:
+            for m in historico:
+                f.write(json.dumps({"role": m["role"], "text": m["content"], "ts": m["at"],
+                                    "session": "s"}, ensure_ascii=False) + "\n")
+        out = subprocess.run([binario, "capture-check", caminho], capture_output=True,
+                             text=True, encoding="utf-8", check=True).stdout
+        pulados = set(json.loads(out)["skipped"])
+        perdidos = [(m["fato"], m["content"]) for m in historico
+                    if m.get("fato") and m["role"] == "user" and m["content"] in pulados]
+        usuario = sum(1 for m in historico if m["role"] == "user")
+        print(f"semente {semente}: capture skips {len(pulados)} of {usuario} user messages; "
+              f"planted fact messages skipped: {len(perdidos)}")
+        for fid, texto in perdidos:
+            print(f"  - {fid}: {texto}")
+        total += len(perdidos)
+    return total
+
+
 def main():
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -436,10 +466,13 @@ def main():
     r.add_argument("--paralelo", type=int, default=6)
     r.add_argument("--dados", default="/tmp/donkey-bancada")
     r.add_argument("--saida", required=True)
+    c = sub.add_parser("captura")
+    c.add_argument("--sementes", default="7,11,23")
+    c.add_argument("--mensagens", type=int, default=3000)
     s = sub.add_parser("resumo")
     s.add_argument("arquivo")
     a = p.parse_args()
-    {"rodar": rodar, "resumo": resumo}[a.cmd](a)
+    {"rodar": rodar, "resumo": resumo, "captura": captura}[a.cmd](a)
 
 
 if __name__ == "__main__":
