@@ -11,9 +11,12 @@ proc rec(sessionId, role, text: string; kind = shkSession;
 proc runTests*() =
   suite "session_search_pure":
 
+    test "query terms fold accents too":
+      check queryTerms("Reunião às 15h") == @["reuniao", "as", "15h"]
+
     test "query terms fold case and punctuation":
       check queryTerms("Deploy, PRODUCTION!") == @["deploy", "production"]
-      check queryTerms("café") == @["café"]
+      check queryTerms("café") == @["cafe"]
       check queryTerms("").len == 0
       check queryTerms("a a a b") == @["a", "b"]
 
@@ -97,8 +100,32 @@ proc runTests*() =
       let texts = @["nota zarabatana a", "nota zarabatana b"]
       check rankTextsLexically(texts, "zarabatana", 5) == @[0, 1]
 
-    test "is case-insensitive and accent-aware like session search":
+    test "is case-insensitive like session search":
       check rankTextsLexically(@["O CODINOME É Zarabatana"], "zarabatana", 5) == @[0]
+
+    test "ignores accents on both sides, like session_search":
+      ## Recall missed "a mamae é alergica a dipirona" when asked about the
+      ## "alérgica": the words did not match (bench/search/RESULTS.md).
+      let texts = @["levei a mamãe no médico pra renovar receita",
+                    "a mamae é alergica a dipirona"]
+      check rankTextsLexically(texts, "minha mãe é alérgica a qual remédio?", 5)[0] == 1
+      check rankTextsLexically(@["REUNIÃO às 15h"], "reuniao", 5) == @[0]
+      check rankTextsLexically(@["reuniao as 15h"], "Reunião", 5) == @[0]
+
+    test "a term matches words that start with it, not any substring":
+      ## Folded, "mãe" is "mae", and a substring match found it inside every
+      ## "mamae": filler flooded recall and the surgery memory fell out.
+      let texts = @["a mamae acordou animada hoje",
+                    "minha mae vai ser operada do quadril"]
+      check rankTextsLexically(texts, "cirurgia da minha mãe", 5) == @[1]
+      check rankTextsLexically(@["os deployments de ontem"], "deploy", 5) == @[0]
+      check rankTextsLexically(@["redeploy amanha"], "deploy", 5).len == 0
+
+    test "a snippet around an accented match keeps the original text":
+      let text = repeat("x", 300) & " a Reunião é às 15h " & repeat("y", 300)
+      let snippet = makeSnippet(text, "reuniao", 80)
+      check "Reunião" in snippet
+      check validateUtf8(snippet) == -1
 
     test "respects the limit and ignores empty input":
       let texts = @["a zarabatana", "b zarabatana", "c zarabatana"]

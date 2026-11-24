@@ -4,6 +4,7 @@
 ## module owns query normalization, scoring, snippets and deterministic limits.
 
 import std/[algorithm, math, strutils, unicode]
+import ./conversation_search_pure
 
 type
   SessionHitKind* = enum
@@ -32,9 +33,9 @@ const
   SessionSearchSnippetChars* = 240
 
 func foldSearchText*(text: string): string =
-  ## Unicode-aware case folding used by both query and records.
-  for r in text.runes:
-    result.add($toLower(r))
+  ## Case and Latin accents folded, as in `session_search`: "alérgica" and
+  ## "alergica" are the same word to recall too.
+  foldText(text)
 
 func queryTerms*(query: string): seq[string] =
   ## Splits on non-alphanumeric runes and deduplicates terms.
@@ -49,52 +50,19 @@ func queryTerms*(query: string): seq[string] =
   if current.len > 0 and current notin result:
     result.add(current)
 
-func countOccurrences(haystack, needle: string): int =
-  if needle.len == 0:
-    return 0
-  var pos = 0
-  while true:
-    let idx = haystack.find(needle, pos)
-    if idx < 0:
-      break
-    inc result
-    pos = idx + needle.len
-
-func safeSlice(text: string; start, stop: int): string =
-  var first = min(text.len, max(0, start))
-  var last = min(text.len, stop)
-  if first > last:
-    return ""
-  while first < last and first < text.len and
-        (ord(text[first]) and 0xC0) == 0x80:
-    inc first
-  while last > first and last < text.len and
-        (ord(text[last]) and 0xC0) == 0x80:
-    dec last
-  text[first ..< last]
-
 func makeSnippet*(text: string; query: string;
                   maxChars = SessionSearchSnippetChars): string =
-  ## Returns a bounded UTF-8-safe excerpt around the first query term.
+  ## A bounded, UTF-8-safe excerpt around the first query term found, in the
+  ## original text (accents kept), on one line.
   if text.len == 0:
     return ""
   let folded = foldSearchText(text)
-  let terms = queryTerms(query)
-  var pos = -1
-  for term in terms:
-    let found = folded.find(term)
-    if found >= 0:
-      pos = found
+  var first = ""
+  for term in queryTerms(query):
+    if countPrefixed(folded, term) > 0:
+      first = term
       break
-  let start = min(text.len,
-    if pos >= 0: max(0, pos - maxChars div 3)
-    else: 0)
-  let stop = min(text.len, start + maxChars)
-  result = safeSlice(text, start, stop)
-  if start > 0:
-    result = "…" & result
-  if stop < text.len:
-    result.add("…")
+  clipAround(text, first, maxChars)
 
 func roleBonus*(role: string): float32 =
   case role
@@ -112,7 +80,9 @@ func scoreSessionRecord*(record: SessionSearchRecord; query: string;
   var matched = 0
   var hits = 0
   for term in terms:
-    let count = countOccurrences(folded, term)
+    ## Words that start with the term, never a substring: "mae" is not in
+    ## "mamae", "deploy" is in "deployments".
+    let count = countPrefixed(folded, term)
     if count > 0:
       inc matched
       hits += count
@@ -136,7 +106,7 @@ func matchesAllTerms*(record: SessionSearchRecord; query: string): bool =
     return false
   let folded = foldSearchText(record.text)
   for term in terms:
-    if term notin folded:
+    if countPrefixed(folded, term) == 0:
       return false
   true
 

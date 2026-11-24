@@ -178,6 +178,31 @@ when defined(withSqlite):
       check hits.len == 3
       check hits.anyIt(it.content.contains("zarabatana"))
 
+    test "recall finds a memory written without accents by a question with them":
+      proc noEmbed(text: string): seq[float32] {.gcsafe.} = @[]
+      let a = newSqliteMagmaMemoryAdapter(dbPath, noEmbed)
+      let uid = UserId("u1")
+      a.appendMemory(uid, "a mamae e alergica a dipirona")
+      for i in 1 .. 10:
+        a.appendMemory(uid, "levei a mamãe no médico pra renovar receita " & $i)
+      let hits = a.search(uid, "minha mãe é alérgica a qual remédio?", 3)
+      check hits.len >= 1
+      check hits[0].content.contains("dipirona")
+
+    test "identical memories take one recall slot":
+      ## Filler said many times ("a mamae acordou animada hoje") filled
+      ## several of the 8 slots with the same text and pushed a fact out.
+      proc noEmbed(text: string): seq[float32] {.gcsafe.} = @[]
+      let a = newSqliteMagmaMemoryAdapter(dbPath, noEmbed)
+      let uid = UserId("u1")
+      a.appendMemory(uid, "a mamae vai ser operada do quadril")
+      for i in 1 .. 4:
+        a.appendMemory(uid, "a mamae acordou animada hoje")
+      let hits = a.search(uid, "mamae", 3)
+      check hits.len == 2
+      check hits.countIt(it.content == "a mamae acordou animada hoje") == 1
+      check hits.anyIt(it.content.contains("operada"))
+
     test "an old memory that answers the question beats recent ones that do not":
       ## Recall ranks by relevance, not age (MAGMA applies no time decay to
       ## relevance; time is a filter for "when" questions). With a 30-day
