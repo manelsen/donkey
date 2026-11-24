@@ -305,3 +305,4 @@ g1	tests/app/t_conversation_search.nim
 g2	tests/domain/memory/t_backtrail_pure.nim
 g0	tests/adapters/decision/t_perplexity_backtrail.nim
 g1	tests/app/t_presearch.nim
+g1	tests/app/t_blocking_executor.nim

@@ -12,6 +12,9 @@ const DirectCreateThread = [
     # spawnThread itself, behind the compile-time check.
   "src/donkey/app/provider_executor.nim",
     # `Thread[void]` workers: no argument; jobs travel through a Channel.
+  "src/donkey/app/blocking_executor.nim",
+    # Same design: `Thread[void]` workers, jobs (a nimcall and a string)
+    # through a Channel, checked by `sharesNothing`.
   "src/donkey/adapters/tools/browser_executor.nim",
     # The argument is a `ptr` to a shared block of Channels.
 ]

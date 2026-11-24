@@ -22,9 +22,8 @@ proc runTests*() =
 
     test "posts the message to the decisions endpoint with the key":
       let seen = Seen()
-      let port = perplexityBacktrail("pplx-test", fake(seen, 200,
+      let r = perplexityBacktrailCall("pplx-test", "qual é a senha do wifi?", fake(seen, 200,
         """{"answers":{"route":{"choice":"fact","confidence":0.9}}}"""))
-      let r = port.classify("qual é a senha do wifi?")
       check r.isOk and r.get.route == mrFact
       check seen.url == PerplexityDecisionsUrl
       check ("Authorization", "Bearer pplx-test") in seen.headers
@@ -32,15 +31,20 @@ proc runTests*() =
 
     test "a refused or unreadable answer is an error, never a route":
       let seen = Seen()
-      check perplexityBacktrail("k", fake(seen, 401, "{}")).classify("oi").isErr
-      check perplexityBacktrail("k", fake(seen, 200, "not json")).classify("oi").isErr
+      check perplexityBacktrailCall("k", "oi", fake(seen, 401, "{}")).isErr
+      check perplexityBacktrailCall("k", "oi", fake(seen, 200, "not json")).isErr
       let down = proc(url, payload: string; headers: seq[(string, string)]): Result[(int, string), string] {.gcsafe, raises: [].} =
         err("connection refused")
-      check perplexityBacktrail("k", down).classify("oi").isErr
+      check perplexityBacktrailCall("k", "oi", down).isErr
 
-    test "an empty key gives no backtrail":
-      check not perplexityBacktrail("", nil).backtrailAvailable
-      check not perplexityBacktrail("   ", nil).backtrailAvailable
+    test "an empty key is refused before any request":
+      let seen = Seen()
+      check perplexityBacktrailCall("  ", "oi", fake(seen, 200, "{}")).isErr
+      check seen.url == ""
+
+    test "the worker job reads its input and refuses a bad one":
+      check perplexityBacktrailJob("not json").isErr
+      check perplexityBacktrailJob($(%*{"key": "", "message": "oi"})).isErr
 
 when isMainModule:
   runTests()

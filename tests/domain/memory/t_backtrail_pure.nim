@@ -48,6 +48,15 @@ proc runTests*() =
       check preSearchCallId("m1") != preSearchCallId("m2")
       check preSearchCallId("") == "presearch"
 
+    test "a decision crosses the thread boundary as text and back":
+      let d = RouteDecision(route: mrOrder, confidence: 0.91)
+      let back = decodeDecision(encodeDecision(d))
+      check back.isOk
+      check back.get.route == mrOrder
+      check abs(back.get.confidence - 0.91) < 1e-9
+      check decodeDecision("not json").isErr
+      check decodeDecision("""{"route":"maybe"}""").isErr
+
     test "an empty message gets no pre-search query":
       check preSearchArgs("   ")["query"].getStr == ""
 

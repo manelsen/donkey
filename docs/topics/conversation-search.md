@@ -60,7 +60,7 @@ false alarm on 30 ordinary messages (`bench/search/RESULTS.md`).
 | Data | Perplexity's own paid endpoint, not used for training |
 | Cost | about $4 per million messages |
 | Latency | about 0.3 s per message |
-| If it fails | a slow (2 s deadline, no retry) or failed classification means no pre-search for that message; the turn goes on as without Backtrail. The call blocks the event loop while it runs, as recall's embedding does |
+| If it fails | a slow (2 s deadline, no retry) or failed classification means no pre-search for that message; the turn goes on as without Backtrail. The call runs on a worker thread (app/blocking_executor), so other sessions keep being served while it waits |
 | Off | `DONKEY_BACKTRAIL=off`, or no key |
 
 Only the person's own messages are classified; scheduled jobs and heartbeats

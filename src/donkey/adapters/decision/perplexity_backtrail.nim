@@ -4,10 +4,11 @@
 ## (`domain/memory/backtrail_pure` builds the body and reads the answer).
 ## Perplexity's own paid access, not the OpenRouter route: the model is
 ## pinned and Perplexity does not train on the data. The HTTP goes through
-## `StdHttpAdapter`, allowed only to api.perplexity.ai. The call blocks the
-## event loop (as recall's embedding does), so it is bounded: a 2 s deadline,
-## no retry, and the per-host circuit breaker turns an outage into instant
-## failures. A slow or failed answer means no pre-search for that message.
+## `StdHttpAdapter`, allowed only to api.perplexity.ai, with a 2 s deadline
+## and a single attempt; the per-host circuit breaker turns an outage into
+## instant failures. The call blocks its caller, so the daemon runs it on a
+## worker (`perplexityBacktrailJob` through app/blocking_executor). A slow or
+## failed answer means no pre-search for that message.
 
 import std/[json, strutils]
 import ../../core/pipeops
@@ -39,21 +40,31 @@ proc stdBacktrailPost(): BacktrailPost =
     except Exception as e:  ## effect boundary: callee raises are unannotated
       err("backtrail http: " & e.msg)
 
-proc perplexityBacktrail*(apiKey: string; post: BacktrailPost = nil): BacktrailPort =
-  ## No key, no Backtrail (the field stays nil).
+proc perplexityBacktrailCall*(apiKey, message: string;
+                              post: BacktrailPost): Result[RouteDecision, string] =
+  ## One classification. Blocking: callers run it off the loop
+  ## (`perplexityBacktrailJob`).
   let key = apiKey.strip
   if key.len == 0:
-    return BacktrailPort()
-  let send = if post != nil: post else: stdBacktrailPost()
-  BacktrailPort(classify: proc(message: string): Result[RouteDecision, string]
-                               {.gcsafe, raises: [].} =
-    let (status, body) = ? send(PerplexityDecisionsUrl, $backtrailRequest(message),
-      @[("Authorization", "Bearer " & key), ("Content-Type", "application/json")])
-    if status div 100 != 2:
-      return err("backtrail: HTTP " & $status)
-    var j: JsonNode
-    try:
-      j = parseJson(body)
-    except CatchableError as e:
-      return err("backtrail: unreadable answer: " & e.msg)
-    parseBacktrailResponse(j))
+    return err("backtrail: no Perplexity key")
+  let (status, body) = ? post(PerplexityDecisionsUrl, $backtrailRequest(message),
+    @[("Authorization", "Bearer " & key), ("Content-Type", "application/json")])
+  if status div 100 != 2:
+    return err("backtrail: HTTP " & $status)
+  var j: JsonNode
+  try:
+    j = parseJson(body)
+  except CatchableError as e:
+    return err("backtrail: unreadable answer: " & e.msg)
+  parseBacktrailResponse(j)
+
+proc perplexityBacktrailJob*(input: string): Result[string, string] {.nimcall, gcsafe, raises: [].} =
+  ## The worker's job (app/blocking_executor): `{"key", "message"}` in, the
+  ## encoded decision out. The HTTP adapter is built here, on the worker.
+  try:
+    let j = parseJson(input)
+    let decision = ? perplexityBacktrailCall(j{"key"}.getStr(""), j{"message"}.getStr(""),
+                                             stdBacktrailPost())
+    ok(encodeDecision(decision))
+  except CatchableError as e:
+    err("backtrail: bad job input: " & e.msg)

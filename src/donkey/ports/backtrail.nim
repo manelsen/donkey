@@ -5,6 +5,7 @@
 ## (`adapters/decision/perplexity_backtrail`) builds it from a key; with no
 ## key the field stays nil and Backtrail is off.
 
+import chronos
 import ../core/pipeops
 import ../domain/memory/backtrail_pure
 
@@ -12,7 +13,9 @@ export backtrail_pure
 
 type
   BacktrailPort* = object
-    classify*: proc(message: string): Result[RouteDecision, string] {.gcsafe, raises: [].}
+    classify*: proc(message: string): Future[Result[RouteDecision, string]] {.gcsafe, raises: [].}
+      ## Async: the HTTP runs off the Chronos loop (app/blocking_executor),
+      ## so classifying never stalls other sessions.
 
 func backtrailAvailable*(port: BacktrailPort): bool =
   port.classify != nil
