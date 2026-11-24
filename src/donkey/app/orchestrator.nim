@@ -55,6 +55,8 @@ import ../ports/subagent_workspace
 import ../ports/memory
 import ../ports/reminders
 import ../ports/schedules
+import ../ports/gatekeeper
+import ./presearch
 import ../ports/process
 import ../ports/attachment_store
 import ../ports/http
@@ -134,6 +136,7 @@ type OrchestratorState = object
   env*:           Environment  ## the snapshot settings are read from
   reminders*:     ReminderPort ## where the reminder tool schedules
   schedules*:     SchedulePort ## where manage_schedules keeps recurring jobs
+  gatekeeper*:    GatekeeperPort ## pre-search for messages about the past
   process*:       ProcessRuntimePort ## where the bash and archive tools run
   attachments*:   AttachmentStorePort ## where generated files are kept
   history*:       ConversationHistory
@@ -526,12 +529,19 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   if attachmentUrls.len > MaxAttachmentsPerTurn:
     log.warn("turn with " & $attachmentUrls.len & " attachments; keeping " &
              $MaxAttachmentsPerTurn)
-  let history =
+  var history =
     if attachmentUrls.len > 0:
       addUserTurnWithImages(result.history, userPayload.text, attachmentUrls,
                             attachmentPaths)
     else:
       addUserTurn(result.history, userPayload.text, "")
+  ## A message about the past starts with the search already made
+  ## (app/presearch). Only the person's own messages: a schedule or a
+  ## heartbeat is not asking about the conversation.
+  if msg.taskKind == tkUserMsg:
+    history = await preSearch(result.gatekeeper, turnSetup.nativeCtx, state,
+                              history, turnSetup.userText,
+                              preSearchCallId(msg.id), log)
 
   result =
     result |>->
@@ -860,6 +870,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
                       env:            Environment = Environment();
                       reminders:      ReminderPort = ReminderPort();
                       schedules:      SchedulePort = SchedulePort();
+                      gatekeeper:     GatekeeperPort = GatekeeperPort();
                       process:        ProcessRuntimePort = unavailableProcess();
                       attachments:    AttachmentStorePort = unavailableAttachments()): Future[void] {.async.} =
   ## Persistent actor. Loops: debounce → memory → LLM → reply → repeat.
@@ -883,6 +894,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
   stateRuntime.env = env
   stateRuntime.reminders = reminders
   stateRuntime.schedules = schedules
+  stateRuntime.gatekeeper = gatekeeper
   stateRuntime.process = process
   stateRuntime.attachments = attachments
   stateRuntime.subagents = newSubagentManager(subagentWorkspace)

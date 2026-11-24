@@ -25,6 +25,10 @@ Condições:
   forcada  a primeira chamada é obrigatoriamente a session_search: o teto de
            um porteiro perfeito, sem Gemini (todas as perguntas são sobre o
            passado, então um porteiro perfeito sempre dispararia)
+  prebusca o porteiro de verdade: o Perplexity Decider 1.3 classifica a
+           mensagem; se não for "agora", a bancada roda a session_search com
+           a própria mensagem (modo query) e entrega o resultado como uma
+           chamada de ferramenta antes do primeiro turno do modelo
 
 Chaves: OPENROUTER_API_KEY e SUPERNOVA_PROVIDER_MISTRAL_API_KEY, lidas de
 bench/search/.env.bench ou dos arquivos da Supernova. Nunca impressas.
@@ -218,6 +222,29 @@ class MagmaPrompts:
 # ------------------------------------------------------------------ agente
 
 
+ROTA_CRITERIOS = {
+    "fato": "Asks about something the person told, said or agreed on earlier in the "
+            "conversation: a fact, name, number, preference, or the current state of something.",
+    "recencia": "Asks what happened or was discussed in a recent period relative to today: "
+                "yesterday, last week, N days ago, in the last month.",
+    "ordem": "Asks when something happened, which of two events came first, or how much "
+             "time passed between events.",
+    "agora": "Does not ask about the conversation's past: a greeting, a comment, a new "
+             "request, or a request for advice.",
+}
+
+
+def rota_perplexity(mensagem):
+    """The route Perplexity Decider 1.3 gives a message (the gatekeeper)."""
+    r = post("https://api.perplexity.ai/v1/decisions",
+             {"model": "pplx-decider-v1.3", "state": mensagem,
+              "questions": {"rota": {"type": "choice",
+                                     "instructions": "What kind of message did the person send to their assistant?",
+                                     "criteria": ROTA_CRITERIOS}}},
+             {"Authorization": "Bearer " + os.environ["PERPLEXITY_API_KEY"]})
+    return r["answers"]["rota"]["choice"]
+
+
 def rodar_pergunta(modelo, condicao, pergunta, historico, paddock, donkey, cena):
     if isinstance(cena, MagmaPrompts):
         cena = cena.para(pergunta)
@@ -232,6 +259,17 @@ def rodar_pergunta(modelo, condicao, pergunta, historico, paddock, donkey, cena)
     chamadas, uso_total = [], {"prompt": 0, "completion": 0}
     t0 = time.time()
     forcar = condicao == "forcada"
+    if condicao == "prebusca":
+        rota = rota_perplexity(pergunta)
+        if rota != "agora":
+            args = {"query": pergunta}
+            out = donkey.buscar(paddock, args)
+            msgs.append({"role": "assistant", "content": "", "tool_calls": [{
+                "id": "prebusca01", "type": "function",
+                "function": {"name": BUSCA, "arguments": json.dumps(args, ensure_ascii=False)}}]})
+            msgs.append({"role": "tool", "tool_call_id": "prebusca01", "name": BUSCA, "content": out})
+            chamadas.append({"ferramenta": BUSCA, "args": args, "prebusca": True, "rota": rota,
+                             "saida_chars": len(out), "saida": out[:2000]})
     for _ in range(MAX_FERRAMENTA + 1):
         sem_mais = len(chamadas) >= MAX_FERRAMENTA
         if forcar and not chamadas:
