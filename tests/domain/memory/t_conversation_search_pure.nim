@@ -216,5 +216,33 @@ proc runTests*() =
       check a.topSessions(1)[0].seq == b.topSessions(1)[0].seq
       check "deploy" in a.topSessions(1)[0].snippet
 
+  suite "conversation search — not found is not never said":
+
+    test "an empty result says to try other words and not to deny":
+      let phrase = renderPhraseResults(@[], total = 0, offset = 0, phrase = "cirurgia",
+                                       coverage = "all 3 sessions")
+      check NotFoundHint in phrase
+      check NotFoundHint in renderRankedHits(@[], "cirurgia", "all 3 sessions")
+
+    test "a result with excerpts says what to do when none answers":
+      var r = initRanker(@["kappa"])
+      r.add(msgs("s1", [("user", "o kappa")]))
+      check FoundHint in renderRankedHits(r.topSessions(5), "kappa", "all 1 sessions")
+      let session = msgs("s1", [("user", "o kappa")])
+      let text = renderPhraseResults(phraseMatches(session, "kappa", 0), total = 1,
+                                     offset = 0, phrase = "kappa", coverage = "all 1 sessions")
+      check text.strip.endsWith(FoundHint)
+
+    test "a page past the last match points back, without either hint":
+      let text = renderPhraseResults(@[], total = 4, offset = 10, phrase = "kappa",
+                                     coverage = "all 1 sessions")
+      check "offset below 4" in text
+      check NotFoundHint notin text and FoundHint notin text
+
+    test "the hints never claim something was not said":
+      for hint in [NotFoundHint, FoundHint]:
+        check "never said" in hint      ## named only as what not to say
+        check "don't remember" in hint
+
 when isMainModule:
   runTests()

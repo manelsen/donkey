@@ -32,6 +32,19 @@ const
   Bm25K1 = 1.2
   Bm25B = 0.75
   TruncatedMark* = "[…truncated]"
+  NotFoundHint* =
+    "It may have been said in other words: try a synonym, a shorter word or " &
+    "the singular. If it is still not found, say you don't remember it, not " &
+    "that it was never said."
+    ## Closes an empty result. The tone goes in the result, where the agent
+    ## reads it when answering: Supernova's benchmark (BUSCA-bancada, 23/11)
+    ## measured fewer confident denials of things said in other words with
+    ## it there than with it only in the tool description.
+  FoundHint* =
+    "If none of the excerpts above answers the question, say you don't " &
+    "remember it; don't say it was never said."
+    ## Closes a result with excerpts: what matched may be about something
+    ## else (the neighbour's dog, when asked about hers).
   SearchToolResultPrefix = "[tool_result name=\"session_search\""
 
 type
@@ -255,10 +268,18 @@ func renderPhraseResults*(page: seq[PhraseMatch]; total, offset: int;
   result = $total & " matches for \"" & phrase & "\" (" & coverage & "); "
   if shown == 0:
     result.add("none on this page.\n")
+    if total == 0:
+      result.add(NotFoundHint & "\n")
+    else:
+      ## Matches exist; this page is past them (only an offset >= total
+      ## gets here, since the first match of a page is always shown).
+      result.add("The offset is past the last match: use an offset below " &
+                 $total & ".\n")
     return
   result.add("showing " & $(offset + 1) & "-" & $(offset + shown) & "\n\n" & body)
   if offset + shown < total:
     result.add("More: call again with offset=" & $(offset + shown) & ".\n")
+  result.add(FoundHint & "\n")
 
 # ── ranked terms (BM25) ──────────────────────────────────────────────────────
 
@@ -350,13 +371,15 @@ func topSessions*(r: Ranker; limit: int): seq[RankedHit] =
 
 func renderRankedHits*(hits: seq[RankedHit]; query, coverage: string): string =
   if hits.len == 0:
-    return "No past conversation matches \"" & query & "\" (" & coverage & ")."
+    return "No past conversation matches \"" & query & "\" (" & coverage & "). " &
+      NotFoundHint
   result = $hits.len & " conversations match \"" & query & "\" (" & coverage &
            "), best first. Read around a hit with session_id and around=<#>.\n\n"
   for h in hits:
     result.add("[session " & h.sessionId & " · " & formatTs(h.tsMs) & " · #" &
                $h.seq & " · " & $h.matchedMessages & " matching]\n" &
                h.role & ": " & h.snippet & "\n--\n")
+  result.add(FoundHint)
 
 # ── reading around a message ─────────────────────────────────────────────────
 
