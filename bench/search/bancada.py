@@ -457,9 +457,10 @@ def captura(args):
                                     "session": "s"}, ensure_ascii=False) + "\n")
         out = subprocess.run([binario, "capture-check", caminho], capture_output=True,
                              text=True, encoding="utf-8", check=True).stdout
+        ## By position, not text: a repeated line must not stand for another.
         pulados = set(json.loads(out)["skipped"])
-        perdidos = [(m["fato"], m["content"]) for m in historico
-                    if m.get("fato") and m["role"] == "user" and m["content"] in pulados]
+        perdidos = [(m["fato"], m["content"]) for i, m in enumerate(historico)
+                    if m.get("fato") and m["role"] == "user" and i in pulados]
         usuario = sum(1 for m in historico if m["role"] == "user")
         print(f"semente {semente}: capture skips {len(pulados)} of {usuario} user messages; "
               f"planted fact messages skipped: {len(perdidos)}")

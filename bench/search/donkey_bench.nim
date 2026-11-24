@@ -14,8 +14,9 @@
 ##                                   Donkey's automatic capture would have:
 ##                                   one memory per substantive turn
 ##   donkey_bench capture-check <corpus.jsonl>
-##                                   prints {"skipped": [user text, …]}: the
-##                                   turns automatic capture would not keep
+##                                   prints {"skipped": [line index, …]}: the
+##                                   user turns automatic capture would not
+##                                   keep, by their position in the corpus
 ##   donkey_bench magma-prompt <paddock> <sqlite>
 ##                                   reads one question per line and prints
 ##                                   {"system": …, "tools": […]} with the
@@ -173,7 +174,7 @@ proc captureCheckCmd(corpus: string) =
     let reply = if i + 1 < records.len and records[i + 1]["role"].getStr == "assistant":
                   records[i + 1]["text"].getStr else: ""
     if shouldSkipAutoMemoryCapture(m["text"].getStr, reply):
-      skipped.add(m["text"])
+      skipped.add(%i)
   echo $(%*{"skipped": skipped})
 
 when isMainModule:
