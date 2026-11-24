@@ -22,8 +22,9 @@ import ./native_tools
 import ./session_state
 
 proc preSearch*(gatekeeper: GatekeeperPort; ctx: NativeCtx; state: SessionState;
-                history: ConversationHistory; message: string;
+                history: ConversationHistory; message, callId: string;
                 log: Logger): Future[ConversationHistory] {.async.} =
+  ## `callId` is this turn's (`preSearchCallId`), unique in the session.
   if not gatekeeper.gatekeeperAvailable:
     return history
   let decision = gatekeeper.classify(message)
@@ -35,14 +36,14 @@ proc preSearch*(gatekeeper: GatekeeperPort; ctx: NativeCtx; state: SessionState;
   let args = preSearchArgs(message)
   if args["query"].getStr.len == 0:
     return history
-  let call = ToolCallRequest(id: PreSearchCallId, name: SessionSearchToolName,
+  let call = ToolCallRequest(id: callId, name: SessionSearchToolName,
                             inputJson: $args)
   let found = await executeNativeTool(call, ctx, state, history)
   if not found.handled:
     return history
   var h = history
   h.addAssistantWithToolCalls("", @[call])
-  h.addToolResult(PreSearchCallId, SessionSearchToolName, found.text, found.resultKind)
+  h.addToolResult(callId, SessionSearchToolName, found.text, found.resultKind)
   log.info("gatekeeper: " & $decision.get.route & " (" & $decision.get.confidence &
            "); pre-searched past sessions")
   return h

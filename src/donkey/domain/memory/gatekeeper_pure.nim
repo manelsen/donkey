@@ -65,6 +65,11 @@ proc parseGatekeeperResponse*(j: JsonNode): Result[RouteDecision, string] =
       return ok(RouteDecision(route: route, confidence: answer{"confidence"}.getFloat(0.0)))
   err("gatekeeper: unknown route '" & choice & "'")
 
+func preSearchCallId*(messageId: string): string =
+  ## One id per turn: providers reject a conversation where two tool calls
+  ## share an id, and every pre-searched turn adds one.
+  if messageId.len == 0: PreSearchCallId else: PreSearchCallId & "-" & messageId
+
 func needsPreSearch*(d: RouteDecision): bool =
   d.route != mrNow
 

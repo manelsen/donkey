@@ -43,6 +43,11 @@ proc runTests*() =
       check q.len <= PreSearchMaxQueryChars
       check q.len > 0
 
+    test "a pre-search call id is unique per message":
+      check preSearchCallId("m1") == "presearch-m1"
+      check preSearchCallId("m1") != preSearchCallId("m2")
+      check preSearchCallId("") == "presearch"
+
     test "an empty message gets no pre-search query":
       check preSearchArgs("   ")["query"].getStr == ""
 

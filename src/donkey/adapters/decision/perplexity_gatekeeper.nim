@@ -4,9 +4,10 @@
 ## (`domain/memory/gatekeeper_pure` builds the body and reads the answer).
 ## Perplexity's own paid access, not the OpenRouter route: the model is
 ## pinned and Perplexity does not train on the data. The HTTP goes through
-## `StdHttpAdapter`, allowed only to api.perplexity.ai, with a short deadline
-## and one retry: a slow or failed answer means no gatekeeper for that
-## message, never a stuck turn.
+## `StdHttpAdapter`, allowed only to api.perplexity.ai. The call blocks the
+## event loop (as recall's embedding does), so it is bounded: a 2 s deadline,
+## no retry, and the per-host circuit breaker turns an outage into instant
+## failures. A slow or failed answer means no pre-search for that message.
 
 import std/[json, strutils]
 import ../../core/pipeops
@@ -17,7 +18,7 @@ import ../http/std_http
 const
   PerplexityDecisionsUrl* = "https://api.perplexity.ai/v1/decisions"
   PerplexityHost = "api.perplexity.ai"
-  GatekeeperTimeoutSec = 5
+  GatekeeperTimeoutSec = 2
 
 type
   GatekeeperPost* = proc(url, body: string; headers: seq[(string, string)]):
@@ -25,7 +26,7 @@ type
     ## (status, body) of one POST.
 
 proc stdGatekeeperPost(): GatekeeperPost =
-  let http = newStdHttpAdapter(timeout = GatekeeperTimeoutSec, maxRetries = 1,
+  let http = newStdHttpAdapter(timeout = GatekeeperTimeoutSec, maxRetries = 1,  # one attempt: the field counts attempts
                                allowlist = @[PerplexityHost])
   result = proc(url, body: string; headers: seq[(string, string)]):
                 Result[(int, string), string] {.gcsafe, raises: [].} =

@@ -59,7 +59,7 @@ false alarm on 30 ordinary messages (`bench/search/RESULTS.md`).
 | Data | Perplexity's own paid endpoint, not used for training |
 | Cost | about $4 per million messages |
 | Latency | about 0.3 s per message |
-| If it fails | a slow (5 s deadline) or failed classification means no pre-search for that message; the turn goes on as without a gatekeeper |
+| If it fails | a slow (2 s deadline, no retry) or failed classification means no pre-search for that message; the turn goes on as without a gatekeeper. The call blocks the event loop while it runs, as recall's embedding does |
 | Off | `DONKEY_GATEKEEPER=off`, or no key |
 
 Only the person's own messages are classified; scheduled jobs and heartbeats

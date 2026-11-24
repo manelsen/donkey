@@ -540,7 +540,8 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   ## heartbeat is not asking about the conversation.
   if msg.taskKind == tkUserMsg:
     history = await preSearch(result.gatekeeper, turnSetup.nativeCtx, state,
-                              history, turnSetup.userText, log)
+                              history, turnSetup.userText,
+                              preSearchCallId(msg.id), log)
 
   result =
     result |>->

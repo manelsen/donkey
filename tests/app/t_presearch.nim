@@ -29,10 +29,10 @@ proc ctx(): NativeCtx =
   NativeCtx(uid: UserId("marta"), channel: ckTelegram, fs: newFsAdapter(),
             outbox: newAsyncQueue[OutboundMessage](), log: quiet, paddockDir: base)
 
-proc turn(port: GatekeeperPort; message: string): ConversationHistory =
+proc turn(port: GatekeeperPort; message: string; callId = "presearch-m1"): ConversationHistory =
   var h = newHistory()
   h.addUser(message)
-  waitFor preSearch(port, ctx(), newSessionState(), h, message, quiet)
+  waitFor preSearch(port, ctx(), newSessionState(), h, message, callId, quiet)
 
 proc runTests*() =
   suite "pre-search":
@@ -52,11 +52,23 @@ proc runTests*() =
       check h[1].role == roleAssistant
       check h[1].toolCalls.len == 1
       check h[1].toolCalls[0].name == "session_search"
-      check h[1].toolCalls[0].id == PreSearchCallId
+      check h[1].toolCalls[0].id == "presearch-m1"
       check parseJson(h[1].toolCalls[0].inputJson)["query"].getStr == "qual é a senha do wifi?"
       check h[2].role == roleTool
-      check h[2].toolCallId == PreSearchCallId
+      check h[2].toolCallId == "presearch-m1"
       check "girassol42" in h[2].text
+
+    test "each turn's pre-search has its own call id":
+      ## Providers reject a conversation where two tool calls share an id.
+      var h = turn(gate(mrFact), "qual é a senha do wifi?", preSearchCallId("m1"))
+      h.addAssistant("girassol42")
+      h.addUser("e o protocolo?")
+      h = waitFor preSearch(gate(mrFact), ctx(), newSessionState(), h, "e o protocolo?",
+                            preSearchCallId("m2"), quiet)
+      var ids: seq[string]
+      for m in h:
+        for c in m.toolCalls: ids.add(c.id)
+      check ids == @["presearch-m1", "presearch-m2"]
 
     test "order and recent-period messages are pre-searched too":
       check turn(gate(mrOrder), "o que veio primeiro?").len == 3
