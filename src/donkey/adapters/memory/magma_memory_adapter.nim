@@ -454,7 +454,8 @@ when defined(withPostgres) or defined(withSqlite):
                          userId: UserId;
                          query: string;
                          limit: int;
-                         rerankFnOverride: RerankFn = nil): seq[MemoryHit] =
+                         rerankFnOverride: RerankFn = nil;
+                         policyOverride = none(QueryPolicy)): seq[MemoryHit] =
     ## Hybrid recall: ranked lists by embedding, by literal terms and, for
     ## queries about time, by recency and temporal adjacency are fused by
     ## reciprocal rank. With no embedding available the literal terms alone
@@ -475,7 +476,9 @@ when defined(withPostgres) or defined(withSqlite):
         origin:      MemoryOrigin
 
     let emb = a.embedFn(query)
-    let policy = classifyQuery(query)
+    ## A caller that already knows the question's intent (a router) passes
+    ## the policy; otherwise the words of the question decide it.
+    let policy = if policyOverride.isSome: policyOverride.get() else: classifyQuery(query)
     let uid = $userId
     let semanticTopK = max(limit * max(a.searchConfig.semanticTopKMultiplier, 1),
                            max(a.searchConfig.rerankPoolSize, limit))

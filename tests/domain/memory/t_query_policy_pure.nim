@@ -20,6 +20,11 @@ proc runTests*() =
       check p.semanticWeight + p.lexicalWeight + p.temporalWeight +
             p.neighborWeight == 1.0
 
+    test "the temporal policy has a name a router can ask for":
+      check classifyQuery("when did I start the project?") == temporalPolicy()
+      check classifyQuery("what is my wifi password?") == defaultPolicy()
+      check temporalPolicy().intent == qiTemporal
+
     test "entity and causal wording do not change the policy":
       check classifyQuery("who is Alice?") == defaultPolicy()
       check classifyQuery("why did the deployment roll back?") == defaultPolicy()

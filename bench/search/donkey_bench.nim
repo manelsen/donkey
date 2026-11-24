@@ -22,6 +22,10 @@
 ##                                   {"hits": [content, …]}: recall's top k,
 ##                                   in rank order, as the memory agent asks
 ##                                   for 8
+##   donkey_bench magma-rank-policy <paddock> <sqlite> <k>
+##                                   like magma-rank, but each line is
+##                                   "policy<TAB>question": `temporal` or
+##                                   `default`, the policy a router chose
 ##   donkey_bench magma-prompt <paddock> <sqlite>
 ##                                   reads one question per line and prints
 ##                                   {"system": …, "tools": […]} with the
@@ -53,6 +57,7 @@ import donkey/domain/memory/recall_pure
 import donkey/adapters/memory/magma_memory_adapter
 import donkey/adapters/memory/multigraph_runtime
 import donkey/ports/multigraph_store
+import donkey/domain/memory/query_policy_pure
 
 const AgentName = "Donkey"
 
@@ -199,6 +204,22 @@ proc magmaRankCmd(paddock, sqlite: string; k: int) =
     stdout.writeLine($(%*{"hits": arr}))
     stdout.flushFile()
 
+proc magmaRankPolicyCmd(paddock, sqlite: string; k: int) =
+  let memory = magmaMemory(paddock, sqlite)
+  let uid = UserId(paddock.extractFilename)
+  let magma = memory.newMagmaAdapter()
+  if magma == nil: quit("MAGMA unavailable", 1)
+  var line = ""
+  while stdin.readLine(line):
+    let tab = line.find('\t')
+    let (route, question) = if tab < 0: ("default", line) else: (line[0 ..< tab], line[tab + 1 .. ^1])
+    let policy = if route == "temporal": temporalPolicy() else: defaultPolicy()
+    var arr = newJArray()
+    for hit in magma.searchWithRerank(uid, question, k, nil, some(policy)):
+      arr.add(%hit.content)
+    stdout.writeLine($(%*{"hits": arr}))
+    stdout.flushFile()
+
 when isMainModule:
   let args = commandLineParams()
   if args.len >= 2 and args[0] == "prompt": promptCmd(args[1])
@@ -207,4 +228,5 @@ when isMainModule:
   elif args.len >= 3 and args[0] == "magma-prompt": magmaPromptCmd(args[1], args[2])
   elif args.len >= 2 and args[0] == "capture-check": captureCheckCmd(args[1])
   elif args.len >= 4 and args[0] == "magma-rank": magmaRankCmd(args[1], args[2], parseInt(args[3]))
+  elif args.len >= 4 and args[0] == "magma-rank-policy": magmaRankPolicyCmd(args[1], args[2], parseInt(args[3]))
   else: quit("usage: donkey_bench prompt <paddock> | serve | magma-seed <paddock> <sqlite> <corpus> | magma-prompt <paddock> <sqlite>", 2)
