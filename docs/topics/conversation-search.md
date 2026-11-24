@@ -33,3 +33,34 @@ partial "no match" is never presented as complete. On a 100 MB synthetic
 history (200 sessions), release build: an exact phrase takes about 0.6 s; a
 ranked query whose terms occur in nearly every line (the worst case) takes
 about 2 s.
+
+## Gatekeeper (opt-in)
+
+With `PERPLEXITY_API_KEY` set (store it with `donkey ctl secret set
+PERPLEXITY_API_KEY`), each message a person sends is first classified by
+Perplexity Decider 1.3: something said before, a recent period, order or
+dates, or not about the past. For the first three, Donkey runs
+`session_search` with the message before the model's turn and gives the
+model the result as a search it already made. The model cannot forget to
+look, and the result carries the "not found is not never said" hint.
+
+On Marta's benchmark, in the default install (MAGMA), right answers went
+from 75% to 92%:
+- facts: from 93% to 100%;
+- questions about things never said: from 25% to 67%;
+- "when" questions: from 67% to 100%.
+
+The router comparison measured Perplexity at 94% routing accuracy, with no
+false alarm on 30 ordinary messages (`bench/search/RESULTS.md`).
+
+| | |
+|---|---|
+| What leaves the server | each incoming message, alone (not the history), to `api.perplexity.ai` |
+| Data | Perplexity's own paid endpoint, not used for training |
+| Cost | about $4 per million messages |
+| Latency | about 0.3 s per message |
+| If it fails | a slow (5 s deadline) or failed classification means no pre-search for that message; the turn goes on as without a gatekeeper |
+| Off | `DONKEY_GATEKEEPER=off`, or no key |
+
+Only the person's own messages are classified; scheduled jobs and heartbeats
+are not.

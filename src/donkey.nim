@@ -77,6 +77,8 @@ import donkey/domain/tools/browser_pure
 import donkey/adapters/state/runtime_store
 import donkey/adapters/state/schedule_store
 import donkey/ports/schedules
+import donkey/ports/gatekeeper
+import donkey/adapters/decision/perplexity_gatekeeper
 import donkey/adapters/state/pairing_store
 import donkey/adapters/state/approval_store
 import donkey/adapters/secrets/vault
@@ -440,6 +442,14 @@ func configuredMagmaSqlitePath(home: string; env: Environment): string =
   else:
     env.get("DONKEY_MAGMA_SQLITE_PATH")
 
+proc daemonGatekeeper(cfg: DonkeyConfig): GatekeeperPort =
+  ## Opt-in: on when PERPLEXITY_API_KEY is set (the vault fills it), off
+  ## with DONKEY_GATEKEEPER=off. Messages then go to Perplexity's own
+  ## endpoint (paid access, not used for training) to be classified.
+  if cfg.env.get("DONKEY_GATEKEEPER").strip.toLowerAscii in ["off", "0", "false", "no"]:
+    return GatekeeperPort()
+  perplexityGatekeeper(cfg.env.get("PERPLEXITY_API_KEY"))
+
 proc initDaemonServices(cfg: DonkeyConfig;
                         env: DaemonEnv;
                         log: Logger): DaemonServices =
@@ -459,6 +469,9 @@ proc initDaemonServices(cfg: DonkeyConfig;
   when defined(withPostgres) or defined(withSqlite):
     if result.globalSearchFn != nil:
       log.info("MAGMA semantic search enabled")
+  if daemonGatekeeper(cfg).gatekeeperAvailable:
+    log.info("gatekeeper on: messages about the past start with a search " &
+             "(Perplexity Decider 1.3; DONKEY_GATEKEEPER=off to disable)")
 
 proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
   result.telegramToken = cfg.env.get("TELEGRAM_BOT_TOKEN").strip()
@@ -1035,6 +1048,7 @@ func buildDaemonSessionServices(ctx: DaemonContext;
     fs = newFsAdapter(),
     reminders = newReminderStore(memory.paddocksDir).toReminderPort(),
     schedules = userSchedulePort(cfg),
+    gatekeeper = daemonGatekeeper(cfg),
     process = newProcessAdapter(),
     attachments = newAttachmentStore(),
   )

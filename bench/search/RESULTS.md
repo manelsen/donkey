@@ -340,3 +340,26 @@ recall's top 8 on the cached graphs: **53 of 60** (today's word list: 49 to
 52). The 4 ordering questions are all in. The temporal-reasoning misses left
 are "N days ago" questions, which count from a 2023 question date that
 recall's recency list cannot know.
+
+## The gatekeeper as a pre-search, 24/11/2026
+
+Condition `prebusca` uses Perplexity Decider 1.3 on its own endpoint. It
+classifies the message, and unless the route is "not about the past", it
+runs `session_search` with the message (ranked terms) and injects the call
+and its result before the model's first turn. This is provider-agnostic: no
+forced tool choice. MAGMA (default build), current master, DeepSeek, seeds
+7, 11 and 23, 48 runs per row:
+
+| Condition | Searched | Right | Facts | Never said | "When" |
+|---|---|---|---|---|---|
+| natural | 8% | 75% | 93% | 25% | 67% |
+| forced first search (earlier run) | 100% | 83% | 100% | — | — |
+| **pre-search with the gatekeeper** | 100% | **92%** | **100%** | **67%** | **100%** |
+
+**What the numbers show:**
+- **The gatekeeper fired on all 48 runs.**
+- **The pre-search beats forcing the model to search.** The search result
+  arrives before the model answers, and its "maybe said in other words,
+  say you don't remember" hint keeps it from denying things never said
+  (25% → 67%).
+- **Run-to-run noise:** natural shows 75% here against 79% the night before.
