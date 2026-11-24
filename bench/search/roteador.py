@@ -24,7 +24,8 @@ not" as a gatekeeper would use it), cost and latency; then recall's top 8
 with each router's routes (recencia -> the temporal policy, everything else
 -> the default), on the cached LongMemEval and Marta graphs.
 
-  python3 -I bench/search/roteador.py --lme-dados DIR --marta-dados DIR
+  python3 -I bench/search/roteador.py --lme-amostra amostra.json \
+      --lme-dados DIR --marta-dados DIR
 """
 import argparse, concurrent.futures as cf, json, os, re, subprocess, sys, threading, time
 import unicodedata
