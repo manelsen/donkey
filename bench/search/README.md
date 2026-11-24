@@ -57,6 +57,10 @@ categories:
 
 Not searching counts against the agent only through the answer it gives.
 
+`negou*` applies Supernova's later rule: on a never-said question, a denial
+in a doubting tone ("acho que você nunca me disse") is the approved tone,
+not a denial. It is reported next to `negou`, never in place of it.
+
 ## Keys
 
 `OPENROUTER_API_KEY` and `SUPERNOVA_PROVIDER_MISTRAL_API_KEY` (DeepSeek V4.1

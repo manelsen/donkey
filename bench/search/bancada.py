@@ -385,6 +385,21 @@ def rodar(args):
         list(ex.map(uma, tarefas))
 
 
+HESITACOES = ("acho que", "acredito que", "não lembro", "nao lembro", "não me lembro",
+              "nao me lembro", "não tenho certeza", "nao tenho certeza")
+
+
+def hesitante(d):
+    """Supernova's rule (BUSCA-bancada, "Critério do juiz"): about something
+    never said, a denial in a doubting tone ("acho que você nunca me disse")
+    is the approved tone, not a denial. Reported as `negou*`, next to the
+    official `negou`, so earlier runs stay comparable."""
+    if d.get("tipo") != "nunca":
+        return False
+    texto = (d.get("resposta") or "").lower()
+    return any(h in texto for h in HESITACOES)
+
+
 def resumo(args):
     from collections import defaultdict
     ## A resumed run appends a new line for a task that failed before; the
@@ -403,8 +418,8 @@ def resumo(args):
         for d in L:
             g[chave(d)].append(d)
         print(f"\n### {titulo}\n")
-        print("| grupo | n | buscou | **acertou** | acertou buscando | não lembra | negou | errou | inventou |")
-        print("|---|---|---|---|---|---|---|---|---|")
+        print("| grupo | n | buscou | **acertou** | acertou buscando | não lembra | negou | negou* | errou | inventou |")
+        print("|---|---|---|---|---|---|---|---|---|---|")
         for k in sorted(g, key=str):
             ds = g[k]
             n = len(ds)
@@ -412,7 +427,9 @@ def resumo(args):
             pc = lambda x: f"{100 * x / n:.0f}%"
             print(f"| {' / '.join(map(str, k))} | {n} | {pc(sum(1 for d in ds if d.get('buscou')))} | "
                   f"**{pc(c('acertou'))}** | {pc(sum(1 for d in ds if d['categoria'] == 'acertou' and d.get('buscou')))} | "
-                  f"{pc(c('nao_lembra'))} | {pc(c('negou'))} | {pc(c('errou'))} | {pc(c('inventou'))} |")
+                  f"{pc(c('nao_lembra'))} | {pc(c('negou'))} | "
+                  f"{pc(sum(1 for d in ds if d['categoria'] == 'negou' and not hesitante(d)))} | "
+                  f"{pc(c('errou'))} | {pc(c('inventou'))} |")
 
     mem = lambda d: d.get("memoria", "md")
     tabela(lambda d: (mem(d), d["modelo"], d["condicao"]), "Por memória, modelo e condição (todas as sementes)")
