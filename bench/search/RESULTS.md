@@ -227,3 +227,46 @@ Capture needs a reply, so these turns never become memories.
 
 The generator is left as it is, so this benchmark stays comparable with
 earlier runs and with Supernova's.
+
+## Recall depth on LongMemEval S, 24/11/2026
+
+PRD-recall item 3 (`longmemeval.py`). This is the 60 answerable questions of
+Supernova's sample (10 of each type) from LongMemEval S (Wu et al.,
+arXiv:2410.10813, MIT), English chat histories of about 115,000 tokens. Each
+question's history becomes a MAGMA graph the way automatic capture would fill
+it: about 220 memories, embedded with qwen3-embedding-8b. Donkey's recall
+then ranks the memories for the question. No LLM is involved.
+
+| Type | n | top 1 | top 8 | top 16 | top 40 | not in 40 |
+|---|---|---|---|---|---|---|
+| all | 60 | 29 | **47** | 50 | 51 | 9 |
+| knowledge-update | 10 | 4 | 10 | 10 | 10 | 0 |
+| multi-session | 10 | 4 | 9 | 9 | 9 | 1 |
+| single-session-assistant | 10 | 8 | 10 | 10 | 10 | 0 |
+| single-session-preference | 10 | 6 | 7 | 9 | 9 | 1 |
+| single-session-user | 10 | 6 | 9 | 9 | 10 | 0 |
+| temporal-reasoning | 10 | 1 | 2 | 3 | 3 | 7 |
+
+**The limit stays at 8.** Moving from 8 to 16 recovers 3 of 60 questions
+(5%), under the PRD's 10% bar. Depth is not where recall loses.
+
+**Questions that recall treats as temporal are where it loses.** All 9
+misses are questions recall classifies as about time ("first", "ago",
+"last", "recent"):
+
+| Classified as temporal | n | Answer in the top 8 |
+|---|---|---|
+| no | 47 | **45 (96%)** |
+| yes | 13 | **2 (15%)** |
+
+For such a question, recall cuts the weight of meaning to 0.30 and of
+literal terms to 0.20, and adds a list of the most recent memories with
+weight 0.40. That list buries the answer. Asked "Which event happened first,
+the purchase of the coffee maker or the malfunction of the stand mixer?",
+recall returns memories about linguistics and a company merger, while five
+memories about the coffee maker and the mixer stay out of the top 40.
+
+MAGMA (arXiv:2601.03236) uses time as a filter window taken from the
+question's time expression, and to order the results of "when" questions,
+not as a boost for recent memories. Fixing this is outside PRD-recall and is
+left for the maintainer (see the night's report).

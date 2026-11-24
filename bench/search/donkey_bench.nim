@@ -17,6 +17,11 @@
 ##                                   prints {"skipped": [line index, …]}: the
 ##                                   user turns automatic capture would not
 ##                                   keep, by their position in the corpus
+##   donkey_bench magma-rank <paddock> <sqlite> <k>
+##                                   reads one question per line and prints
+##                                   {"hits": [content, …]}: recall's top k,
+##                                   in rank order, as the memory agent asks
+##                                   for 8
 ##   donkey_bench magma-prompt <paddock> <sqlite>
 ##                                   reads one question per line and prints
 ##                                   {"system": …, "tools": […]} with the
@@ -176,6 +181,18 @@ proc captureCheckCmd(corpus: string) =
     if shouldSkipAutoMemoryCapture(m["text"].getStr, reply):
       skipped.add(%i)
   echo $(%*{"skipped": skipped})
+proc magmaRankCmd(paddock, sqlite: string; k: int) =
+  let memory = magmaMemory(paddock, sqlite)
+  let uid = UserId(paddock.extractFilename)
+  let searchFn = buildGlobalMagmaSearchFn(memory)
+  if searchFn == nil: quit("MAGMA search unavailable", 1)
+  var question = ""
+  while stdin.readLine(question):
+    var arr = newJArray()
+    for hit in searchFn(uid, question, k):
+      arr.add(%hit.content)
+    stdout.writeLine($(%*{"hits": arr}))
+    stdout.flushFile()
 
 when isMainModule:
   let args = commandLineParams()
@@ -184,4 +201,5 @@ when isMainModule:
   elif args.len >= 4 and args[0] == "magma-seed": magmaSeedCmd(args[1], args[2], args[3])
   elif args.len >= 3 and args[0] == "magma-prompt": magmaPromptCmd(args[1], args[2])
   elif args.len >= 2 and args[0] == "capture-check": captureCheckCmd(args[1])
+  elif args.len >= 4 and args[0] == "magma-rank": magmaRankCmd(args[1], args[2], parseInt(args[3]))
   else: quit("usage: donkey_bench prompt <paddock> | serve | magma-seed <paddock> <sqlite> <corpus> | magma-prompt <paddock> <sqlite>", 2)
