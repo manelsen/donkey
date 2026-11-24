@@ -147,12 +147,25 @@ class Donkey:
                              text=True, encoding="utf-8", check=True).stdout
         return json.loads(out)
 
+    def _pedir(self, linha):
+        self.p.stdin.write(linha)
+        self.p.stdin.flush()
+        return self.p.stdout.readline()
+
     def buscar(self, paddock, args):
+        linha = json.dumps({"paddock": paddock, "args": args}, ensure_ascii=False) + "\n"
         with self.trava:
-            self.p.stdin.write(json.dumps({"paddock": paddock, "args": args},
-                                          ensure_ascii=False) + "\n")
-            self.p.stdin.flush()
-            return json.loads(self.p.stdout.readline())["out"]
+            try:
+                resposta = self._pedir(linha)
+            except (BrokenPipeError, OSError):
+                resposta = ""
+            if not resposta:
+                ## The helper died: start another, once, so one crash does
+                ## not fail every task left in the run.
+                self.p = subprocess.Popen([self.binario, "serve"], stdin=subprocess.PIPE,
+                                          stdout=subprocess.PIPE, text=True, encoding="utf-8")
+                resposta = self._pedir(linha)
+            return json.loads(resposta)["out"]
 
 
 # ------------------------------------------------------------------ agente
@@ -309,7 +322,13 @@ def rodar(args):
 
 def resumo(args):
     from collections import defaultdict
-    L = [json.loads(l) for l in open(args.arquivo)]
+    ## A resumed run appends a new line for a task that failed before; the
+    ## last line of each task is the one that counts.
+    ultima = {}
+    for l in open(args.arquivo):
+        d = json.loads(l)
+        ultima[(d.get("semente"), d["modelo"], d["condicao"], d["pergunta"], d["rep"])] = d
+    L = list(ultima.values())
     erros = sum(1 for d in L if d.get("categoria") == "erro")
     L = [d for d in L if d.get("categoria") != "erro"]
 

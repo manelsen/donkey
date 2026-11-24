@@ -71,13 +71,15 @@ python3 -I bench/search/bancada.py rodar --modelos deepseek,nemotron,ernie \
 python3 -I bench/search/bancada.py resumo bench/search/out/base.jsonl
 ```
 
-The `--saida` file is the run log, one line per execution, with:
+The `--saida` file is the run log, one line per attempt, with:
 - seed, model, condition and question;
 - every tool call, with its arguments and its output (up to 2000 characters);
 - the answer;
 - the judge's verdict and reason.
 
-An interrupted run resumes where it stopped. Results are in `RESULTS.md`.
+An interrupted run resumes where it stopped. A task that failed (for
+example on a rate limit) is tried again, and the summary counts its last
+line. Results are in `RESULTS.md`.
 
 ## Limits
 
