@@ -270,6 +270,11 @@ func renderPhraseResults*(page: seq[PhraseMatch]; total, offset: int;
     result.add("none on this page.\n")
     if total == 0:
       result.add(NotFoundHint & "\n")
+    else:
+      ## Matches exist; this page is past them (only an offset >= total
+      ## gets here, since the first match of a page is always shown).
+      result.add("The offset is past the last match: use an offset below " &
+                 $total & ".\n")
     return
   result.add("showing " & $(offset + 1) & "-" & $(offset + shown) & "\n\n" & body)
   if offset + shown < total:

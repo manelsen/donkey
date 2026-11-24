@@ -233,6 +233,12 @@ proc runTests*() =
                                      offset = 0, phrase = "kappa", coverage = "all 1 sessions")
       check text.strip.endsWith(FoundHint)
 
+    test "a page past the last match points back, without either hint":
+      let text = renderPhraseResults(@[], total = 4, offset = 10, phrase = "kappa",
+                                     coverage = "all 1 sessions")
+      check "offset below 4" in text
+      check NotFoundHint notin text and FoundHint notin text
+
     test "the hints never claim something was not said":
       for hint in [NotFoundHint, FoundHint]:
         check "never said" in hint      ## named only as what not to say
