@@ -1,4 +1,4 @@
-## The pre-search: when the gatekeeper says a message is about the past, the
+## The pre-search: when the backtrail says a message is about the past, the
 ## turn starts with the result of `session_search` already in the history.
 
 import std/[json, os, strutils, unittest]
@@ -12,24 +12,24 @@ import donkey/core/log
 import donkey/core/pipeops
 import donkey/core/types
 import donkey/domain/message
-import donkey/ports/gatekeeper
+import donkey/ports/backtrail
 
 let base = getTempDir() / ("donkey_presearch_" & $getCurrentProcessId())
 let quiet = newLogger("test.presearch", lvlError)
 
-proc gate(route: MessageRoute): GatekeeperPort =
-  GatekeeperPort(classify: proc(message: string): Result[RouteDecision, string] {.gcsafe, raises: [].} =
+proc gate(route: MessageRoute): BacktrailPort =
+  BacktrailPort(classify: proc(message: string): Result[RouteDecision, string] {.gcsafe, raises: [].} =
     ok(RouteDecision(route: route, confidence: 0.9)))
 
-proc failing(): GatekeeperPort =
-  GatekeeperPort(classify: proc(message: string): Result[RouteDecision, string] {.gcsafe, raises: [].} =
+proc failing(): BacktrailPort =
+  BacktrailPort(classify: proc(message: string): Result[RouteDecision, string] {.gcsafe, raises: [].} =
     err("HTTP 503"))
 
 proc ctx(): NativeCtx =
   NativeCtx(uid: UserId("marta"), channel: ckTelegram, fs: newFsAdapter(),
             outbox: newAsyncQueue[OutboundMessage](), log: quiet, paddockDir: base)
 
-proc turn(port: GatekeeperPort; message: string; callId = "presearch-m1"): ConversationHistory =
+proc turn(port: BacktrailPort; message: string; callId = "presearch-m1"): ConversationHistory =
   var h = newHistory()
   h.addUser(message)
   waitFor preSearch(port, ctx(), newSessionState(), h, message, callId, quiet)
@@ -77,11 +77,11 @@ proc runTests*() =
     test "a message not about the past is left alone":
       check turn(gate(mrNow), "kkkkk").len == 1
 
-    test "a gatekeeper that fails leaves the turn as it would be without one":
+    test "a backtrail that fails leaves the turn as it would be without one":
       check turn(failing(), "qual é a senha do wifi?").len == 1
 
-    test "no gatekeeper, no pre-search":
-      check turn(GatekeeperPort(), "qual é a senha do wifi?").len == 1
+    test "no backtrail, no pre-search":
+      check turn(BacktrailPort(), "qual é a senha do wifi?").len == 1
 
 when isMainModule:
   runTests()

@@ -1,16 +1,16 @@
-## The gatekeeper, the pure part: the request Perplexity's decision model
+## The backtrail, the pure part: the request Perplexity's decision model
 ## gets, the decision read back, and whether a message needs a pre-search.
 
 import std/[json, strutils, unittest]
 import results
-import donkey/domain/memory/gatekeeper_pure
+import donkey/domain/memory/backtrail_pure
 
 proc runTests*() =
-  suite "gatekeeper":
+  suite "backtrail":
 
     test "the request asks one choice question over the four routes":
-      let j = gatekeeperRequest("qual é a senha do wifi?")
-      check j["model"].getStr == GatekeeperModel
+      let j = backtrailRequest("qual é a senha do wifi?")
+      check j["model"].getStr == BacktrailModel
       check j["state"].getStr == "qual é a senha do wifi?"
       let q = j["questions"]["route"]
       check q["type"].getStr == "choice"
@@ -18,7 +18,7 @@ proc runTests*() =
         check q["criteria"].hasKey(key)
 
     test "a decision is read with its route and confidence":
-      let r = parseGatekeeperResponse(parseJson("""{"answers":{"route":{"type":"choice",
+      let r = parseBacktrailResponse(parseJson("""{"answers":{"route":{"type":"choice",
         "choice":"order","probabilities":{"fact":0.01,"recent":0.0,"order":0.98,"now":0.01},
         "confidence":0.98}}}"""))
       check r.isOk
@@ -26,9 +26,9 @@ proc runTests*() =
       check r.get.confidence > 0.97
 
     test "an answer without the route or with an unknown one is an error":
-      check parseGatekeeperResponse(parseJson("""{"answers":{}}""")).isErr
-      check parseGatekeeperResponse(parseJson("""{"answers":{"route":{"choice":"maybe"}}}""")).isErr
-      check parseGatekeeperResponse(newJNull()).isErr
+      check parseBacktrailResponse(parseJson("""{"answers":{}}""")).isErr
+      check parseBacktrailResponse(parseJson("""{"answers":{"route":{"choice":"maybe"}}}""")).isErr
+      check parseBacktrailResponse(newJNull()).isErr
 
     test "only a message about the past gets a pre-search":
       check needsPreSearch(RouteDecision(route: mrFact))

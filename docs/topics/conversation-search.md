@@ -34,10 +34,11 @@ history (200 sessions), release build: an exact phrase takes about 0.6 s; a
 ranked query whose terms occur in nearly every line (the worst case) takes
 about 2 s.
 
-## Gatekeeper (opt-in)
+## Backtrail (opt-in)
 
-With `PERPLEXITY_API_KEY` set (store it with `donkey ctl secret set
-PERPLEXITY_API_KEY`), each message a person sends is first classified by
+Backtrail checks the trail already walked. With `PERPLEXITY_API_KEY` set
+(store it with `donkey ctl secret set PERPLEXITY_API_KEY`), each message a
+person sends is first classified by
 Perplexity Decider 1.3: something said before, a recent period, order or
 dates, or not about the past. For the first three, Donkey runs
 `session_search` with the message before the model's turn and gives the
@@ -59,8 +60,8 @@ false alarm on 30 ordinary messages (`bench/search/RESULTS.md`).
 | Data | Perplexity's own paid endpoint, not used for training |
 | Cost | about $4 per million messages |
 | Latency | about 0.3 s per message |
-| If it fails | a slow (2 s deadline, no retry) or failed classification means no pre-search for that message; the turn goes on as without a gatekeeper. The call blocks the event loop while it runs, as recall's embedding does |
-| Off | `DONKEY_GATEKEEPER=off`, or no key |
+| If it fails | a slow (2 s deadline, no retry) or failed classification means no pre-search for that message; the turn goes on as without Backtrail. The call blocks the event loop while it runs, as recall's embedding does |
+| Off | `DONKEY_BACKTRAIL=off`, or no key |
 
 Only the person's own messages are classified; scheduled jobs and heartbeats
 are not.
