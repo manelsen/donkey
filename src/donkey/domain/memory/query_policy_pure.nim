@@ -40,6 +40,11 @@ func defaultPolicy*(): QueryPolicy =
   QueryPolicy(intent: qiSemantic, semanticWeight: 0.5, lexicalWeight: 0.5,
               temporalWeight: 0.0, neighborWeight: 0.0)
 
+func temporalPolicy*(): QueryPolicy =
+  ## Recency and the memories next to the hits join meaning and terms.
+  QueryPolicy(intent: qiTemporal, semanticWeight: 0.30, lexicalWeight: 0.20,
+              temporalWeight: 0.40, neighborWeight: 0.10)
+
 func asksAboutTime*(query: string): bool =
   ## Matches whole words, not substrings: "contem" holds "ontem" and
   ## "elastic" holds "last", and neither is about time.
@@ -54,10 +59,4 @@ func asksAboutTime*(query: string): bool =
 func classifyQuery*(query: string): QueryPolicy =
   ## A query that asks about time also ranks by recency and pulls in the
   ## memories next to its hits.
-  result = defaultPolicy()
-  if asksAboutTime(query):
-    result.intent = qiTemporal
-    result.semanticWeight = 0.30
-    result.lexicalWeight  = 0.20
-    result.temporalWeight = 0.40
-    result.neighborWeight = 0.10
+  if asksAboutTime(query): temporalPolicy() else: defaultPolicy()

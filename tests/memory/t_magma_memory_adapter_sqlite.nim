@@ -9,6 +9,7 @@ when defined(withSqlite):
   import donkey/domain/memory/episode_pure
   import donkey/domain/memory/provenance_pure
   import donkey/domain/memory/recall_pure
+  import donkey/domain/memory/query_policy_pure
   import donkey/ports/memory
   import donkey/ports/multigraph_store
 
@@ -202,6 +203,23 @@ when defined(withSqlite):
       check hits.len == 2
       check hits.countIt(it.content == "a mamae acordou animada hoje") == 1
       check hits.anyIt(it.content.contains("operada"))
+
+    test "an explicit policy replaces the one recall would classify":
+      ## A router decides the policy; recall must not reclassify the text.
+      let a = newSqliteMagmaMemoryAdapter(dbPath, letterEmbedFn)
+      let uid = UserId("u1")
+      let monthsAgo = getTime().toUnix() - 90 * 86_400
+      check a.graph.insertNode(MagmaNode(
+        id: a.memId(uid), userId: $uid, nodeType: NtMemory,
+        content: "comprei a cafeteira nova",
+        embedding: letterEmbedFn("c"), timestamp: monthsAgo))
+      for i in 1 .. 20:
+        a.appendMemory(uid, "rotina do dia " & $i)
+      ## "first" makes the text temporal; the router says it is not.
+      let hits = a.searchWithRerank(uid, "coisa: which happened first?", 3,
+                                    policyOverride = some(defaultPolicy()))
+      check hits.len >= 1
+      check hits[0].content.contains("cafeteira")
 
     test "an old memory that answers the question beats recent ones that do not":
       ## Recall ranks by relevance, not age (MAGMA applies no time decay to

@@ -275,3 +275,56 @@ about 140 unrelated "neighbours", and only 47 of 60 answers made the top 8
 links form a chain. The seeding now chains in insertion order, and the 60
 graphs were relinked without re-embedding; the Marta graphs were already
 chains.
+
+## Who decides recall's policy: words or a decision model, 24/11/2026
+
+Recall classifies a message as "about time" by its words and then gives
+recency the largest weight, which mixes "which came first?" with "what did
+we talk about yesterday?". `roteador.py` compares six routers on 96 labelled
+messages:
+- the 60 answerable LongMemEval questions;
+- Marta's 16;
+- 20 ordinary messages, in Portuguese and English.
+
+There are four routes: `fato` (something said before), `recencia` (a recent
+period), `ordem` (when, which came first, time between) and `agora` (not
+about the past). The models all get the same instructions and option
+descriptions.
+
+| Router | Accuracy | `ordem` | `recencia` | Past caught | False alarms | Latency | $ per 1M messages |
+|---|---|---|---|---|---|---|---|
+| word list (today) | 59% | 0/6 | 7/8 | 66/66 | n/a, no `agora` route | 0 | 0 |
+| word list, split | 65% | 5/6 | 7/8 | 66/66 | n/a | 0 | 0 |
+| Perplexity flash (OpenRouter) | 85% | 6/6 | 6/8 | 61/66 | 0/30 | 0.19 s | 2.20 |
+| Perplexity `latest` (OpenRouter) | 96% | 6/6 | 7/8 | 64/66 | 0/30 | 0.26 s | 4.40 |
+| **Perplexity 1.3 (direct)** | 94% | 6/6 | 6/8 | 64/66 | **0/30** | 0.30 s | **4.14** |
+| Gemini Decision 1 | 95% | 6/6 | 8/8 | 63/66 | 0/30 | 0.26 s | 22.70 |
+
+**Recall's top 8 with each router's routes.** `recencia` gets the temporal
+policy and every other route the default. These are the cached graphs, with
+±3 noise from query embeddings.
+
+| Router | LongMemEval (60) | of them `ordem` | Marta facts (36) |
+|---|---|---|---|
+| word list (today) | 49 | 2/4 | 33 |
+| **word list, split** | 52 | **4/4** | **36** |
+| Perplexity flash | 54 | 4/4 | 35 |
+| Perplexity `latest` | 53 | 4/4 | 35 |
+| Gemini | 53 | 4/4 | 35 |
+
+**What it shows:**
+- **For recall, the free split matches the models.** Only the boundary
+  between `recencia` and everything else changes recall's policy, and the
+  split gets that right for ordering questions.
+- **The models' edge is the gatekeeper.** Perplexity 1.3 catches 64 of 66
+  questions about the past and fires on none of the 30 ordinary messages.
+- **On Marta the gatekeeper is the forced condition.** It fires on all 16
+  questions, so its effect is the forced condition already measured on
+  current code: 79% → 83% right, and facts 93% → 100%, in the default
+  install (MAGMA). Recall now finds most memories without a search, so the
+  gatekeeper is worth about 4 points there. With Markdown-only memory,
+  where search is the only way back, forcing it went from 24% to 77%.
+- **Perplexity against Gemini:** Perplexity 1.3 on its own endpoint matches
+  Gemini's accuracy at a fifth of the price, and its paid access does not
+  train on the data. It and the OpenRouter `latest` alias differ on 2 of 96
+  borderline messages.
