@@ -306,7 +306,8 @@ func stemOf*(term: string): string =
   if term.runeLen > StemRunes: term.runeSubStr(0, StemRunes) else: term
 
 func initRanker*(terms: seq[string]): Ranker =
-  ## Words are matched by their stems (`stemOf`); `terms` stay as given.
+  ## The ranker keeps the stems (`stemOf`), not the query words: matching,
+  ## document frequency and the snippet's anchor all use the stem.
   var stems: seq[string]
   for t in terms:
     stems.add(stemOf(t))
