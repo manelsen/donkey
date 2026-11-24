@@ -162,3 +162,32 @@ acordou animada hoje" took two slots.
 The one drop, Lisbon forced (3/3 → 1/3), is judge noise. All three answers
 say "searched, found nothing about Lisbon, maybe you told it another way",
 and the judge graded the same answer two ways.
+
+## session_search: a long word matches by its first five letters, 24/11/2026
+
+PRD-recall item 4. Ranked terms used to match only stored words that start
+with the whole query word, so "fisioterapia" could not find "fisio". A query
+word longer than five letters now matches by its first five ("operação" finds
+"operada"). Recall's literal terms keep the stricter rule from #154.
+
+Markdown memory, where search is the only way back to the past. DeepSeek,
+seeds 7, 11 and 23:
+
+| Condition | Before | After |
+|---|---|---|
+| forced | 69% | **77%** |
+| forced, facts | 67% | **80%** |
+| natural (3 repetitions, 144 runs) | 24% | 24% |
+| natural, facts (3 repetitions) | 13% | **20%** |
+
+**Per question, forced:**
+- physiotherapy: 0/3 → 2/3;
+- surgery: 0/3 → 2/3;
+- the exam ("concurso"): 0/3 → 1/3.
+
+**The natural row.** The first repetition showed 25% → 19%. Almost every
+loss was a run in which DeepSeek did not search this time, which the change
+cannot touch; whether it searches varies from run to run. With 2 more
+repetitions on both sides the two are level (24% and 24%). Answers right
+when it did search went from 27/43 to 29/42. The "before" side's first
+repetition predates #154, which barely touches this path.
