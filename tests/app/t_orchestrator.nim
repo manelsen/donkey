@@ -5,7 +5,7 @@
 ##   streamFactory:     StreamFactory() for all non-streaming tests
 
 import donkey/adapters/filesystem/fs_adapter
-import std/[json, os, strutils, unittest]
+import std/[json, options, os, strutils, unittest]
 import chronos
 import chronos/asyncsync
 import donkey/config/environment
@@ -13,6 +13,7 @@ import donkey/domain/agent_message
 import donkey/domain/message
 import donkey/domain/personality
 import donkey/domain/more_tools
+import donkey/domain/memory/query_policy_pure
 import donkey/core/log
 import donkey/core/debounce
 import donkey/core/pipeops
@@ -246,7 +247,8 @@ proc runTests*() =
         let inbox = newAsyncQueue[AgentMessage]()
         let outbox = newAsyncQueue[AgentMessage]()
         let searchFn: SearchFn =
-          proc(userId: UserId; query: string; limit: int): Future[seq[MemoryHit]] {.async.} =
+          proc(userId: UserId; query: string; limit: int;
+               policy: Option[QueryPolicy]): Future[seq[MemoryHit]] {.async.} =
             return @[MemoryHit(content: "Investigated retry amplification.", score: 0.9'f32, kind: "memory")]
         asyncSpawn runMemoryAgent(inbox, outbox, mem.toRuntimePort(), searchFn)
         await inbox.put(newTaskMsg("req3", tkLoadCtx, "u1", "retry spike"))
@@ -262,6 +264,40 @@ proc runTests*() =
       check prefsPos > memoryPos
       check "Relevant lessons" notin reply.text
 
+    test "loadCtx passes Backtrail's route to recall as its policy":
+      ## A recall request carries the route Backtrail gave the message; the
+      ## memory agent turns it into recall's policy. No route: no policy, and
+      ## recall decides by the words.
+      let tmpDir = getTempDir() / "donkey_test_mem_route"
+      removeDir(tmpDir)
+      defer: removeDir(tmpDir)
+
+      proc doTest(dir: string; route: string): Future[Option[QueryPolicy]] {.async.} =
+        createDir(dir / "u1")
+        writeFile(dir / "u1" / "USER.md", "# Alice")
+        let mem = MdFileAdapter(paddocksDir: dir)
+        let inbox = newAsyncQueue[AgentMessage]()
+        let outbox = newAsyncQueue[AgentMessage]()
+        let seen = new Option[QueryPolicy]
+        let searchFn: SearchFn =
+          proc(userId: UserId; query: string; limit: int;
+               policy: Option[QueryPolicy]): Future[seq[MemoryHit]] {.async.} =
+            seen[] = policy
+            return newSeq[MemoryHit]()
+        asyncSpawn runMemoryAgent(inbox, outbox, mem.toRuntimePort(), searchFn)
+        var task = newTaskMsg("req-route", tkLoadCtx, "u1", "o que falamos ontem?")
+        task.route = route
+        await inbox.put(task)
+        discard await outbox.get()
+        await inbox.put(newCancelMsg())
+        return seen[]
+
+      check (waitFor doTest(tmpDir, "recent")) == some(temporalPolicy())
+      removeDir(tmpDir)
+      check (waitFor doTest(tmpDir, "order")) == some(defaultPolicy())
+      removeDir(tmpDir)
+      check (waitFor doTest(tmpDir, "")).isNone
+
     test "loadCtx renders a dialogue hit as an ordered, bordered excerpt":
       let tmpDir = getTempDir() / "donkey_test_mem_excerpt"
       removeDir(tmpDir)
@@ -276,7 +312,8 @@ proc runTests*() =
         let inbox = newAsyncQueue[AgentMessage]()
         let outbox = newAsyncQueue[AgentMessage]()
         let searchFn: SearchFn =
-          proc(userId: UserId; query: string; limit: int): Future[seq[MemoryHit]] {.async.} =
+          proc(userId: UserId; query: string; limit: int;
+               policy: Option[QueryPolicy]): Future[seq[MemoryHit]] {.async.} =
             var hit = MemoryHit(
               id: "u1_m3", content: "- **User:** o prazo\n  **Response:** quinta",
               score: 0.9'f32, kind: "memory", timestamp: 200,

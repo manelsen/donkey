@@ -63,5 +63,10 @@ false alarm on 30 ordinary messages (`bench/search/RESULTS.md`).
 | If it fails | a slow (2 s deadline, no retry) or failed classification means no pre-search for that message; the turn goes on as without Backtrail. The call runs on a worker thread (app/blocking_executor), so other sessions keep being served while it waits |
 | Off | `DONKEY_BACKTRAIL=off`, or no key |
 
+The same route sets recall's policy for that message: recency weighs only
+for a recent period; a fact, an order or a date ranks by meaning and words.
+Without Backtrail, recall decides by the question's words (`docs/topics/memory.md`).
+Each message is classified once.
+
 Only the person's own messages are classified; scheduled jobs and heartbeats
 are not.

@@ -10,9 +10,10 @@
 ## 75% to 92% right. This module builds the request, reads the answer and
 ## decides; the HTTP is in adapters/decision/perplexity_backtrail. No I/O.
 
-import std/[json, strutils]
+import std/[json, options, strutils]
 import ../../core/pipeops
 import ./session_search_pure
+import ./query_policy_pure
 
 const
   BacktrailModel* = "pplx-decider-v1.3"
@@ -85,6 +86,20 @@ func preSearchCallId*(messageId: string): string =
   ## One id per turn: providers reject a conversation where two tool calls
   ## share an id, and every pre-searched turn adds one.
   if messageId.len == 0: PreSearchCallId else: PreSearchCallId & "-" & messageId
+
+func recallPolicyFor*(route: MessageRoute): QueryPolicy =
+  ## Recall's policy for a route: recency weighs only for a recent period;
+  ## a fact, an order or a date, or a message not about the past, ranks by
+  ## meaning and words.
+  if route == mrRecent: temporalPolicy() else: defaultPolicy()
+
+func recallPolicyForRoute*(name: string): Option[QueryPolicy] =
+  ## From the route's name, as it travels on a recall request. No route
+  ## (Backtrail off or failed): none, and recall decides by the words.
+  for route in MessageRoute:
+    if $route == name:
+      return some(recallPolicyFor(route))
+  none(QueryPolicy)
 
 func needsPreSearch*(d: RouteDecision): bool =
   d.route != mrNow

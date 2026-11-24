@@ -80,6 +80,7 @@ import donkey/ports/schedules
 import donkey/ports/backtrail
 import donkey/adapters/decision/perplexity_backtrail
 import donkey/app/blocking_executor
+import donkey/domain/memory/query_policy_pure
 import donkey/adapters/embedding/openrouter_embed
 import donkey/adapters/state/pairing_store
 import donkey/adapters/state/approval_store
@@ -876,7 +877,8 @@ proc buildGlobalSearchFn(memory: MdFileAdapter): SearchFn {.gcsafe.} =
     if vectorSearch == nil:
       return nil
     let key = memory.magmaEnv.get("OPENROUTER_API_KEY").strip
-    result = proc(userId: UserId; query: string; limit: int): Future[seq[MemoryHit]] {.async.} =
+    result = proc(userId: UserId; query: string; limit: int;
+                  policy: Option[QueryPolicy]): Future[seq[MemoryHit]] {.async.} =
       var embedding: seq[float32]
       if key.len > 0 and query.strip.len > 0:
         try:
@@ -885,7 +887,7 @@ proc buildGlobalSearchFn(memory: MdFileAdapter): SearchFn {.gcsafe.} =
             embedding = decodeEmbedding(raw.get).get(@[])
         except CatchableError:
           discard
-      return vectorSearch(userId, query, limit, embedding)
+      return vectorSearch(userId, query, limit, embedding, policy)
   else:
     discard
 
