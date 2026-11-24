@@ -328,3 +328,15 @@ policy and every other route the default. These are the cached graphs, with
   Gemini's accuracy at a fifth of the price, and its paid access does not
   train on the data. It and the OpenRouter `latest` alias differ on 2 of 96
   borderline messages.
+
+## Recall: recency only for questions about a recent period, 24/11/2026
+
+The router comparison's free split, made the rule. Only words about a recent
+period ("yesterday", "last", "ago", "today", "recently", "ontem", "último",
+"atrás", "passado") give recency its weight. Words about order or dates
+("first", "before", "after", "when", "quando", "antes", "primeira",
+"cronológica", "anterior") now rank by meaning and words. LongMemEval,
+recall's top 8 on the cached graphs: **53 of 60** (today's word list: 49 to
+52). The 4 ordering questions are all in. The temporal-reasoning misses left
+are "N days ago" questions, which count from a 2023 question date that
+recall's recency list cannot know.

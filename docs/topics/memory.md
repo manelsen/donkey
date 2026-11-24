@@ -206,9 +206,11 @@ by reciprocal rank, at equal weight:
 - **literal terms**: the words of the message, the same matching used by
   `session_search`. Names, error messages and file names are found here.
 
-A message that asks about time (`when`, `last`, `yesterday`; `quando`,
-`último`, `ontem`, ...) also ranks by recency and pulls in the memories next
-to its hits. The words are matched whole, in English and Portuguese. Age
+A message about a recent period (`yesterday`, `last`, `ago`, `recently`;
+`ontem`, `último`, `atrás`, `passado`, ...) also ranks by recency and pulls in
+the memories next to its hits. A message about order or a date (`first`,
+`before`, `when`; `quando`, `antes`, `primeira`) does not: "which came first?"
+needs both events found by what they are, not the newest memories. The words are matched whole, in English and Portuguese. Age
 does not lower relevance: a memory from months ago that answers the message
 ranks above last week's small talk, as in MAGMA, where time filters and
 orders "when" questions but never penalizes old memories. Without an
