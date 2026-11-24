@@ -116,6 +116,22 @@ proc runTests*() =
       check hit.seq == 2
       check "kappa" in hit.snippet
 
+    test "a long term matches words that share its first five letters":
+      ## "fisioterapia" for "sessões de fisio", "operação" for "operada": the
+      ## benchmark's forced searches failed on these (bench/search/RESULTS.md).
+      var r = initRanker(rankTerms("fisioterapia"))
+      r.add(msgs("s1", [("user", "as sessoes de fisio vao ser com a Marilia")]))
+      check r.topSessions(5).len == 1
+      var o = initRanker(rankTerms("operação"))
+      o.add(msgs("s1", [("user", "a mamae vai ser operada do quadril")]))
+      check o.topSessions(5).len == 1
+      check "operada" in o.topSessions(1)[0].snippet
+
+    test "a short term still needs the whole term at the start of a word":
+      var r = initRanker(rankTerms("wifi"))
+      r.add(msgs("s1", [("user", "o wi de casa caiu")]))
+      check r.topSessions(5).len == 0
+
     test "terms come from the query without short words":
       check rankTerms("o deploy de Kubernetes") == @["deploy", "kubernetes"]
       check rankTerms("de o") == @["de", "o"]

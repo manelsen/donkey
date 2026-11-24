@@ -298,8 +298,19 @@ func rankTerms*(query: string): seq[string] =
     if t.runeLen >= 3: result.add(t)
   if result.len == 0: result = all
 
+const StemRunes* = 5
+  ## A query word longer than this matches stored words by its first five
+  ## letters: "fisioterapia" finds "fisio", "operação" finds "operada".
+
+func stemOf*(term: string): string =
+  if term.runeLen > StemRunes: term.runeSubStr(0, StemRunes) else: term
+
 func initRanker*(terms: seq[string]): Ranker =
-  Ranker(terms: terms, df: newSeq[int](terms.len))
+  ## Words are matched by their stems (`stemOf`); `terms` stay as given.
+  var stems: seq[string]
+  for t in terms:
+    stems.add(stemOf(t))
+  Ranker(terms: stems, df: newSeq[int](terms.len))
 
 func countPrefixed*(folded, term: string): int =
   ## Words of `folded` that start with `term`.
