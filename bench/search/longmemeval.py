@@ -17,7 +17,7 @@ records where the first memory holding the answer (a turn marked
       --dados /tmp/donkey-lme --paralelo 8
   python3 -I bench/search/longmemeval.py resumo out/lme.jsonl
 """
-import argparse, concurrent.futures as cf, datetime as dt, json, os, subprocess, sys, threading
+import argparse, concurrent.futures as cf, datetime as dt, json, os, re, subprocess, sys, threading
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, AQUI)
@@ -27,8 +27,9 @@ K = 40
 
 
 def ts_ms(data):
-    ## "2023/04/25 (Tue) 10:21", UTC.
-    d = dt.datetime.strptime(data.split(" (")[0] + " " + data.split(") ")[1], "%Y/%m/%d %H:%M")
+    ## "2023/04/25 (Tue) 10:21", UTC; the weekday is optional.
+    texto = re.sub(r"\s*\([^)]*\)\s*", " ", data).strip()
+    d = dt.datetime.strptime(texto, "%Y/%m/%d %H:%M")
     return int(d.replace(tzinfo=dt.timezone.utc).timestamp() * 1000)
 
 
@@ -47,7 +48,8 @@ def corpus(d):
 def holds(memoria, ouro):
     ## A captured memory holds a gold turn when it contains its first 120
     ## characters (capture clips each side at 4000 characters).
-    return any(g.strip()[:120] in memoria for g in ouro)
+    ## An empty gold turn would be "in" every memory: it is not a match.
+    return any(g.strip() and g.strip()[:120] in memoria for g in ouro)
 
 
 def uma(d, binario, base):

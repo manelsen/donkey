@@ -95,16 +95,21 @@ proc magmaSeedCmd(paddock, sqlite, corpus: string) =
   for line in lines(corpus):
     if line.strip.len > 0: records.add(parseJson(line))
   var stored, skipped = 0
+  ## The temporal chain follows insertion order. `appendMemory` links to the
+  ## node with the latest time, which in live use is the previous one (time
+  ## only moves forward); a corpus whose sessions are not in date order
+  ## (LongMemEval) would link many memories to the same one and make a hub.
+  var prevId = ""
   proc put(text: string; ts: int64; session: string) =
     let nid = magma.memId(uid)
-    let prev = magma.graph.getLastNode($uid, nodeType = NtMemory)
     let ok = magma.graph.insertNode(MagmaNode(
       id: nid, userId: $uid, nodeType: NtMemory, content: text,
       embedding: magma.embedFn(text), timestamp: ts,
       meta: originToMeta(turnOrigin(session))))
     if not ok: quit("graph refused " & nid, 1)
-    if prev.isSome and prev.get().nodeType == NtMemory:
-      magma.graph.linkTemporal(prev.get().id, nid)
+    if prevId.len > 0:
+      magma.graph.linkTemporal(prevId, nid)
+    prevId = nid
   ## The two profile notes of MEMORY.md, as memories from before the history.
   let first = if records.len > 0: records[0]["ts"].getBiggestInt div 1000 - 86400 else: 0
   for note in readOrEmpty(paddock / "MEMORY.md").splitLines:

@@ -234,39 +234,44 @@ PRD-recall item 3 (`longmemeval.py`). This is the 60 answerable questions of
 Supernova's sample (10 of each type) from LongMemEval S (Wu et al.,
 arXiv:2410.10813, MIT), English chat histories of about 115,000 tokens. Each
 question's history becomes a MAGMA graph the way automatic capture would fill
-it: about 220 memories, embedded with qwen3-embedding-8b. Donkey's recall
-then ranks the memories for the question. No LLM is involved.
+it: about 220 memories, embedded with qwen3-embedding-8b and chained in
+insertion order. Donkey's recall then ranks the memories for the question.
+No LLM is involved.
 
 | Type | n | top 1 | top 8 | top 16 | top 40 | not in 40 |
 |---|---|---|---|---|---|---|
-| all | 60 | 29 | **47** | 50 | 51 | 9 |
+| all | 60 | 30 | **52** | 55 | 58 | 2 |
 | knowledge-update | 10 | 4 | 10 | 10 | 10 | 0 |
 | multi-session | 10 | 4 | 9 | 9 | 9 | 1 |
 | single-session-assistant | 10 | 8 | 10 | 10 | 10 | 0 |
 | single-session-preference | 10 | 6 | 7 | 9 | 9 | 1 |
 | single-session-user | 10 | 6 | 9 | 9 | 10 | 0 |
-| temporal-reasoning | 10 | 1 | 2 | 3 | 3 | 7 |
+| temporal-reasoning | 10 | 2 | 7 | 8 | 10 | 0 |
 
 **The limit stays at 8.** Moving from 8 to 16 recovers 3 of 60 questions
-(5%), under the PRD's 10% bar. Depth is not where recall loses.
+(5%), under the PRD's 10% bar.
 
-**Questions that recall treats as temporal are where it loses.** All 9
-misses are questions recall classifies as about time ("first", "ago",
-"last", "recent"):
+**Questions recall treats as about time are weaker:**
 
-| Classified as temporal | n | Answer in the top 8 |
+| Classified as temporal ("first", "ago", "last", "recent"…) | n | Answer in the top 8 |
 |---|---|---|
-| no | 47 | **45 (96%)** |
-| yes | 13 | **2 (15%)** |
+| no | 47 | 45 (96%) |
+| yes | 13 | 7 (54%) |
 
-For such a question, recall cuts the weight of meaning to 0.30 and of
-literal terms to 0.20, and adds a list of the most recent memories with
-weight 0.40. That list buries the answer. Asked "Which event happened first,
-the purchase of the coffee maker or the malfunction of the stand mixer?",
-recall returns memories about linguistics and a company merger, while five
-memories about the coffee maker and the mixer stay out of the top 40.
+For such a question, recall cuts meaning to 0.30 and literal terms to 0.20,
+and adds the most recent memories at 0.40. Part of the gap belongs to the
+dataset: "10 days ago" counts from the question's date, in 2023, while
+recall's recency list counts from today. A candidate (meaning and terms at
+0.50, recency and neighbours at 0.10 each) puts 10 of 13 in the top 8 with
+the other 47 unchanged. It is outside PRD-recall and is left for the
+maintainer.
 
-MAGMA (arXiv:2601.03236) uses time as a filter window taken from the
-question's time expression, and to order the results of "when" questions,
-not as a boost for recent memories. Fixing this is outside PRD-recall and is
-left for the maintainer (see the night's report).
+**A seeding bug, found and fixed during the run.** The first pass linked
+each memory to the one with the latest timestamp, as `appendMemory` does.
+LongMemEval's sessions are not in date order, so many memories linked to the
+same few, making hubs of up to 142 links. A time question then pulled in
+about 140 unrelated "neighbours", and only 47 of 60 answers made the top 8
+(2 of 10 temporal-reasoning). In live use time only moves forward and the
+links form a chain. The seeding now chains in insertion order, and the 60
+graphs were relinked without re-embedding; the Marta graphs were already
+chains.
