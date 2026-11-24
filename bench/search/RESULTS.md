@@ -191,3 +191,39 @@ cannot touch; whether it searches varies from run to run. With 2 more
 repetitions on both sides the two are level (24% and 24%). Answers right
 when it did search went from 27/43 to 29/42. The "before" side's first
 repetition predates #154, which barely touches this path.
+## Capture check, 24/11/2026
+
+`bancada.py captura` (PRD-recall item 5): which planted fact messages
+automatic capture would not keep, per seed.
+
+| Seed | User messages skipped | Of those, with no reply after them | Planted fact messages skipped |
+|---|---|---|---|
+| 7 | 830 of 1,913 (43%) | 784 | 8 |
+| 11 | 827 of 1,909 (43%) | 777 | 8 |
+| 23 | 822 of 1,911 (43%) | 782 | 8 |
+
+Almost all the skips come from the data, not from capture's rules: the
+generator ends many episodes on a user line, and the next episode opens with
+another, so the first line has no reply to pair with. Only about 50 per seed
+are skipped as trivial text ("bom dia", "obg"). In real use Donkey replies to
+every message, so a real graph would hold about 40% more of the user's
+messages than these. The MAGMA results here are, if anything, pessimistic.
+
+**Why.** All 8 are the last user line of a fact's episode, and the generator
+ends those episodes without a reply. For example:
+- "uns 8 meses. ela mora em Vitória";
+- "o ortopedista disse que são uns 3 meses de recuperação com fisioterapia".
+
+Capture needs a reply, so these turns never become memories.
+
+**What it means:**
+- **No question is affected.** Every answer key ("quadril", "Marília",
+  "concurso"…) sits in an earlier message of its episode, and that one is
+  captured.
+- **It is an artifact of the data.** In real use Donkey replies to every
+  message, so a turn like these would be captured.
+- **A real gap remains:** a turn whose reply failed (a provider error) is
+  never captured. That is a product question.
+
+The generator is left as it is, so this benchmark stays comparable with
+earlier runs and with Supernova's.

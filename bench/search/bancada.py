@@ -385,6 +385,21 @@ def rodar(args):
         list(ex.map(uma, tarefas))
 
 
+HESITACOES = ("acho que", "acredito que", "não lembro", "nao lembro", "não me lembro",
+              "nao me lembro", "não tenho certeza", "nao tenho certeza")
+
+
+def hesitante(d):
+    """Supernova's rule (BUSCA-bancada, "Critério do juiz"): about something
+    never said, a denial in a doubting tone ("acho que você nunca me disse")
+    is the approved tone, not a denial. Reported as `negou*`, next to the
+    official `negou`, so earlier runs stay comparable."""
+    if d.get("tipo") != "nunca":
+        return False
+    texto = (d.get("resposta") or "").lower()
+    return any(h in texto for h in HESITACOES)
+
+
 def resumo(args):
     from collections import defaultdict
     ## A resumed run appends a new line for a task that failed before; the
@@ -403,8 +418,8 @@ def resumo(args):
         for d in L:
             g[chave(d)].append(d)
         print(f"\n### {titulo}\n")
-        print("| grupo | n | buscou | **acertou** | acertou buscando | não lembra | negou | errou | inventou |")
-        print("|---|---|---|---|---|---|---|---|---|")
+        print("| grupo | n | buscou | **acertou** | acertou buscando | não lembra | negou | negou* | errou | inventou |")
+        print("|---|---|---|---|---|---|---|---|---|---|")
         for k in sorted(g, key=str):
             ds = g[k]
             n = len(ds)
@@ -412,7 +427,9 @@ def resumo(args):
             pc = lambda x: f"{100 * x / n:.0f}%"
             print(f"| {' / '.join(map(str, k))} | {n} | {pc(sum(1 for d in ds if d.get('buscou')))} | "
                   f"**{pc(c('acertou'))}** | {pc(sum(1 for d in ds if d['categoria'] == 'acertou' and d.get('buscou')))} | "
-                  f"{pc(c('nao_lembra'))} | {pc(c('negou'))} | {pc(c('errou'))} | {pc(c('inventou'))} |")
+                  f"{pc(c('nao_lembra'))} | {pc(c('negou'))} | "
+                  f"{pc(sum(1 for d in ds if d['categoria'] == 'negou' and not hesitante(d)))} | "
+                  f"{pc(c('errou'))} | {pc(c('inventou'))} |")
 
     mem = lambda d: d.get("memoria", "md")
     tabela(lambda d: (mem(d), d["modelo"], d["condicao"]), "Por memória, modelo e condição (todas as sementes)")
@@ -420,6 +437,37 @@ def resumo(args):
     tabela(lambda d: (mem(d), d["condicao"], d["tipo"]), "Por tipo de pergunta")
     tabela(lambda d: (mem(d), d["condicao"], d["pergunta"]), "Por pergunta")
     print(f"\n(execuções com erro, fora das tabelas: {erros})")
+
+
+def captura(args):
+    """Planted facts that automatic capture would not keep, per seed.
+
+    Recall can only find what capture stored. A fact message in a turn that
+    `shouldSkipAutoMemoryCapture` drops (trivial text, or no reply after it)
+    is out of reach of recall, whatever the ranking.
+    """
+    binario = compilar(os.path.join(AQUI, "out"))
+    total = 0
+    for semente in [int(s) for s in args.sementes.split(",")]:
+        historico = dados.gerar(args.mensagens, semente)
+        caminho = os.path.join(AQUI, "out", f"captura-s{semente}.jsonl")
+        with open(caminho, "w") as f:
+            for m in historico:
+                f.write(json.dumps({"role": m["role"], "text": m["content"], "ts": m["at"],
+                                    "session": "s"}, ensure_ascii=False) + "\n")
+        out = subprocess.run([binario, "capture-check", caminho], capture_output=True,
+                             text=True, encoding="utf-8", check=True).stdout
+        ## By position, not text: a repeated line must not stand for another.
+        pulados = set(json.loads(out)["skipped"])
+        perdidos = [(m["fato"], m["content"]) for i, m in enumerate(historico)
+                    if m.get("fato") and m["role"] == "user" and i in pulados]
+        usuario = sum(1 for m in historico if m["role"] == "user")
+        print(f"semente {semente}: capture skips {len(pulados)} of {usuario} user messages; "
+              f"planted fact messages skipped: {len(perdidos)}")
+        for fid, texto in perdidos:
+            print(f"  - {fid}: {texto}")
+        total += len(perdidos)
+    return total
 
 
 def main():
@@ -436,10 +484,13 @@ def main():
     r.add_argument("--paralelo", type=int, default=6)
     r.add_argument("--dados", default="/tmp/donkey-bancada")
     r.add_argument("--saida", required=True)
+    c = sub.add_parser("captura")
+    c.add_argument("--sementes", default="7,11,23")
+    c.add_argument("--mensagens", type=int, default=3000)
     s = sub.add_parser("resumo")
     s.add_argument("arquivo")
     a = p.parse_args()
-    {"rodar": rodar, "resumo": resumo}[a.cmd](a)
+    {"rodar": rodar, "resumo": resumo, "captura": captura}[a.cmd](a)
 
 
 if __name__ == "__main__":
