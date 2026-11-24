@@ -496,7 +496,18 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
         turnStreamFactory = StreamFactory()
       log.info($turnSetup.uid & " -> named agent " & agent.name &
                (if agent.provider.len > 0: " (" & agent.provider & ")" else: ""))
-  await memInbox.put(newTaskMsg(msg.id, tkLoadCtx, msg.userId, userPayload.text))
+  ## Backtrail classifies the person's message once: its route sets recall's
+  ## policy now and decides the pre-search below. A schedule or a heartbeat
+  ## is not asking about the conversation.
+  let route =
+    if msg.taskKind == tkUserMsg:
+      await classifyMessage(result.backtrail, userPayload.text, log)
+    else:
+      none(RouteDecision)
+  var recallTask = newTaskMsg(msg.id, tkLoadCtx, msg.userId, userPayload.text)
+  if route.isSome:
+    recallTask.route = $route.get.route
+  await memInbox.put(recallTask)
   let ctxReply = await awaitExpectedReply(memOut, msg.id, "MemoryAgent")
   var context = if ctxReply.kind == amkResult: ctxReply.text else: ""
   if userPayload.recentContext.len > 0:
@@ -539,7 +550,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   ## (app/presearch). Only the person's own messages: a schedule or a
   ## heartbeat is not asking about the conversation.
   if msg.taskKind == tkUserMsg:
-    history = await preSearch(result.backtrail, turnSetup.nativeCtx, state,
+    history = await preSearch(route, turnSetup.nativeCtx, state,
                               history, turnSetup.userText,
                               preSearchCallId(msg.id), log)
 

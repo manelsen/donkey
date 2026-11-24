@@ -1,9 +1,10 @@
 ## The backtrail, the pure part: the request Perplexity's decision model
 ## gets, the decision read back, and whether a message needs a pre-search.
 
-import std/[json, strutils, unittest]
+import std/[json, options, strutils, unittest]
 import results
 import donkey/domain/memory/backtrail_pure
+import donkey/domain/memory/query_policy_pure
 
 proc runTests*() =
   suite "backtrail":
@@ -56,6 +57,16 @@ proc runTests*() =
       check abs(back.get.confidence - 0.91) < 1e-9
       check decodeDecision("not json").isErr
       check decodeDecision("""{"route":"maybe"}""").isErr
+
+    test "only a question about a recent period gets recall's temporal policy":
+      check recallPolicyFor(mrRecent) == temporalPolicy()
+      for r in [mrFact, mrOrder, mrNow]:
+        check recallPolicyFor(r) == defaultPolicy()
+      check recallPolicyForRoute("recent") == some(temporalPolicy())
+      check recallPolicyForRoute("order") == some(defaultPolicy())
+      ## No route (Backtrail off or failed): recall decides by the words.
+      check recallPolicyForRoute("").isNone
+      check recallPolicyForRoute("maybe").isNone
 
     test "an empty message gets no pre-search query":
       check preSearchArgs("   ")["query"].getStr == ""

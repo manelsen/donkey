@@ -15,6 +15,7 @@ import ../domain/agent_message
 import ../core/pipeops
 import ../core/types
 import ../ports/memory
+import ../domain/memory/backtrail_pure
 
 func errorText(error: string): string =
   ## An error is an error even when the backend gave it no text.
@@ -48,7 +49,10 @@ proc runMemoryAgent*(inbox:     AsyncQueue[AgentMessage];
           if searchFn != nil and msg.payload.len > 0:
             ## Async: the question's embedding is computed on a worker
             ## thread, so recall does not stall the loop.
-            let recalled = renderRecall(await searchFn(userId, msg.payload, 8))
+            ## Backtrail's route, when the message had one, sets recall's
+            ## policy; otherwise recall decides by the words.
+            let recalled = renderRecall(await searchFn(userId, msg.payload, 8,
+                                                       recallPolicyForRoute(msg.route)))
             if recalled.len > 0:
               memSection = recalled
           let parts = @[ctx.userMd, memSection, ctx.preferencesMd]

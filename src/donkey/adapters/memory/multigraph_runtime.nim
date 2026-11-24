@@ -8,6 +8,7 @@ when defined(withPostgres) or defined(withSqlite):
   import ../../app/channel_prefs_parse
   import ../../core/memory_rerank_prefs
   import ../../ports/memory
+  import ../../domain/memory/query_policy_pure
   import ../../ports/embedding
   import ../../ports/reranking
   import ../../ports/ipc
@@ -304,11 +305,13 @@ when defined(withPostgres) or defined(withSqlite):
       return nil
     let magmaSearch = memory.newMagmaAdapter()
     result = proc(userId: UserId; query: string; limit: int;
-                  queryEmbedding: seq[float32]): seq[MemoryHit] {.gcsafe, raises: [].} =
+                  queryEmbedding: seq[float32];
+                  policy: Option[QueryPolicy]): seq[MemoryHit] {.gcsafe, raises: [].} =
       try:
         let ctx = memory.loadContext(userId)
         let rerankFn = buildMagmaRerankFn(memory.magmaEnv, ctx.preferencesMd)
         magmaSearch.searchWithRerank(userId, query, limit, rerankFn,
+                                     policyOverride = policy,
                                      queryEmbedding = some(queryEmbedding))
       except Exception:  ## effect boundary: callee raises are unannotated
         @[]

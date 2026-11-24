@@ -1,7 +1,7 @@
 ## The pre-search: when the backtrail says a message is about the past, the
 ## turn starts with the result of `session_search` already in the history.
 
-import std/[json, os, strutils, unittest]
+import std/[json, options, os, strutils, unittest]
 import chronos
 import chronos/asyncsync
 import donkey/adapters/filesystem/fs_adapter
@@ -32,7 +32,8 @@ proc ctx(): NativeCtx =
 proc turn(port: BacktrailPort; message: string; callId = "presearch-m1"): ConversationHistory =
   var h = newHistory()
   h.addUser(message)
-  waitFor preSearch(port, ctx(), newSessionState(), h, message, callId, quiet)
+  let decision = waitFor classifyMessage(port, message, quiet)
+  waitFor preSearch(decision, ctx(), newSessionState(), h, message, callId, quiet)
 
 proc runTests*() =
   suite "pre-search":
@@ -63,7 +64,8 @@ proc runTests*() =
       var h = turn(gate(mrFact), "qual é a senha do wifi?", preSearchCallId("m1"))
       h.addAssistant("girassol42")
       h.addUser("e o protocolo?")
-      h = waitFor preSearch(gate(mrFact), ctx(), newSessionState(), h, "e o protocolo?",
+      let second = waitFor classifyMessage(gate(mrFact), "e o protocolo?", quiet)
+      h = waitFor preSearch(second, ctx(), newSessionState(), h, "e o protocolo?",
                             preSearchCallId("m2"), quiet)
       var ids: seq[string]
       for m in h:
@@ -79,6 +81,11 @@ proc runTests*() =
 
     test "a backtrail that fails leaves the turn as it would be without one":
       check turn(failing(), "qual é a senha do wifi?").len == 1
+
+    test "a message is classified once; failure or no Backtrail gives no decision":
+      check (waitFor classifyMessage(gate(mrOrder), "o que veio primeiro?", quiet)).get.route == mrOrder
+      check (waitFor classifyMessage(failing(), "x", quiet)).isNone
+      check (waitFor classifyMessage(BacktrailPort(), "x", quiet)).isNone
 
     test "no backtrail, no pre-search":
       check turn(BacktrailPort(), "qual é a senha do wifi?").len == 1

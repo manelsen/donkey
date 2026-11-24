@@ -11,7 +11,7 @@
 ## A Backtrail that is missing, fails or says "not about the past" leaves
 ## the turn exactly as it would be without one.
 
-import std/json
+import std/[json, options]
 import chronos
 import ../core/log
 import ../core/pipeops
@@ -21,12 +21,13 @@ import ../ports/backtrail
 import ./native_tools
 import ./session_state
 
-proc preSearch*(backtrail: BacktrailPort; ctx: NativeCtx; state: SessionState;
-                history: ConversationHistory; message, callId: string;
-                log: Logger): Future[ConversationHistory] {.async.} =
-  ## `callId` is this turn's (`preSearchCallId`), unique in the session.
+proc classifyMessage*(backtrail: BacktrailPort; message: string;
+                      log: Logger): Future[Option[RouteDecision]] {.async.} =
+  ## The message's route, once per turn: it sets recall's policy and decides
+  ## the pre-search. None when Backtrail is off or fails (the turn goes on as
+  ## without it).
   if not backtrail.backtrailAvailable:
-    return history
+    return none(RouteDecision)
   var decision: Result[RouteDecision, string]
   try:
     decision = await backtrail.classify(message)
@@ -35,9 +36,15 @@ proc preSearch*(backtrail: BacktrailPort; ctx: NativeCtx; state: SessionState;
   except CatchableError as e:
     decision = err(Result[RouteDecision, string], e.msg)
   if decision.isErr:
-    log.warn("backtrail: " & decision.error & "; the turn goes on without a pre-search")
-    return history
-  if not needsPreSearch(decision.get):
+    log.warn("backtrail: " & decision.error & "; the turn goes on without it")
+    return none(RouteDecision)
+  return some(decision.get)
+
+proc preSearch*(decision: Option[RouteDecision]; ctx: NativeCtx; state: SessionState;
+                history: ConversationHistory; message, callId: string;
+                log: Logger): Future[ConversationHistory] {.async.} =
+  ## `callId` is this turn's (`preSearchCallId`), unique in the session.
+  if decision.isNone or not needsPreSearch(decision.get):
     return history
   let args = preSearchArgs(message)
   if args["query"].getStr.len == 0:

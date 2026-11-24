@@ -11,13 +11,14 @@
 ##     sessions/      — per-session conversation logs
 
 import chronos
-import std/json
+import std/[json, options]
 import ../core/pipeops
 import ../core/types
 import ../domain/memory/episode_pure
 import ../domain/memory/provenance_pure
 import ../domain/memory/recall_pure
 import ../domain/memory/session_search_pure
+import ../domain/memory/query_policy_pure
 import ../domain/message
 import ../domain/personality
 
@@ -60,12 +61,14 @@ type
     m.savePreferences(UserId, string)
     m.search(UserId, string, int) is seq[MemoryHit]
 
-  SearchFn* = proc(userId: UserId; query: string; limit: int): Future[seq[MemoryHit]]
+  SearchFn* = proc(userId: UserId; query: string; limit: int;
+                   policy: Option[QueryPolicy]): Future[seq[MemoryHit]]
     {.gcsafe, raises: [].}
   ## The memory agent's recall, async: the daemon embeds the question on a
   ## worker thread (app/blocking_executor) and searches with the vector, so
   ## recall never stalls the loop. Nil = no semantic search (fall back to
-  ## raw MEMORY.md).
+  ## raw MEMORY.md). `policy`: Backtrail's route, when known; none = recall
+  ## decides by the question's words.
 
   SyncSearchFn* = proc(userId: UserId; query: string; limit: int): seq[MemoryHit]
     {.gcsafe, raises: [].}
@@ -73,7 +76,8 @@ type
   ## and benchmarks that have no event loop to keep free.
 
   VectorSearchFn* = proc(userId: UserId; query: string; limit: int;
-                         queryEmbedding: seq[float32]): seq[MemoryHit]
+                         queryEmbedding: seq[float32];
+                         policy: Option[QueryPolicy]): seq[MemoryHit]
     {.gcsafe, raises: [].}
   ## Recall with the question's embedding already computed; an empty one
   ## ranks by literal terms alone.
