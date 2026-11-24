@@ -11,10 +11,11 @@
 ## worker, so no closure or `ref` built on the loop crosses the thread
 ## boundary (`sharesNothing` checks it at compile time). The design is the
 ## provider executor's (app/provider_executor, whose header explains it in
-## full), generalised to `string -> Result[string, string]`:
+## full), generalised to `I -> Result[O, string]`:
 ##
-## - the result travels through a per-job `Channel`, which moves GC-managed
-##   values between threads;
+## - input and result travel through per-job `Channel`s, which copy
+##   GC-managed values between threads; any plain type works (`OffLoopFn[I,
+##   O]`), so a channel's poll returns its own messages without a codec;
 ## - a shared, reference-counted control block lets the caller cancel
 ##   without waiting: the worker sees the flag and drops its result; the
 ##   last reference frees the block.
@@ -30,20 +31,27 @@ const
   BlockingPollIntervalMs = 5
 
 type
-  BlockingFn* = proc(input: string): Result[string, string] {.nimcall, gcsafe, raises: [].}
+  OffLoopFn*[I, O] = proc(input: I): Result[O, string] {.nimcall, gcsafe, raises: [].}
     ## Runs on a worker. `nimcall`: it captures nothing from the loop.
+    ## `I` and `O` are plain data (`sharesNothing`), copied across.
 
-  BlockingJobState = object
+  BlockingFn* = OffLoopFn[string, string]
+
+  BlockingJobState[I, O] = object
     lock:      Lock
     cancelled: bool
     done:      bool
     refs:      int
-    results:   Channel[Result[string, string]]
+    fn:        OffLoopFn[I, O]
+    inputs:    Channel[I]
+    results:   Channel[Result[O, string]]
 
   BlockingJob = object
-    fn:    BlockingFn
-    input: string
-    state: ptr BlockingJobState
+    ## What the queue carries: a typed runner, erased to one shape so one
+    ## pool serves every job type. `state` is a `ptr BlockingJobState[I, O]`
+    ## that only the matching `runJob[I, O]` reads.
+    run:   proc(state: pointer) {.nimcall, gcsafe, raises: [].}
+    state: pointer
 
 static:
   doAssert sharesNothing(BlockingJob),
@@ -55,7 +63,7 @@ var
   gBlockingPoolStarted = false
   gBlockingPoolAttempted = false
 
-proc releaseState(state: ptr BlockingJobState) {.gcsafe.} =
+proc releaseState[I, O](state: ptr BlockingJobState[I, O]) {.gcsafe.} =
   ## Drops one reference; the last owner drains, closes and frees.
   acquire(state[].lock)
   dec state[].refs
@@ -63,30 +71,37 @@ proc releaseState(state: ptr BlockingJobState) {.gcsafe.} =
   release(state[].lock)
   if remaining > 0:
     return
+  let input = state[].inputs.tryRecv()
+  if input.dataAvailable:
+    discard input.msg
   let leftover = state[].results.tryRecv()
   if leftover.dataAvailable:
     discard leftover.msg
+  state[].inputs.close()
   state[].results.close()
   deinitLock(state[].lock)
   deallocShared(state)
 
-proc runJob(job: sink BlockingJob) {.gcsafe.} =
-  let state = job.state
+proc isCancelled[I, O](state: ptr BlockingJobState[I, O]): bool {.gcsafe.} =
   acquire(state[].lock)
-  let cancelled = state[].cancelled
+  result = state[].cancelled
   release(state[].lock)
-  if cancelled:
+
+proc runJob[I, O](p: pointer) {.nimcall, gcsafe, raises: [].} =
+  let state = cast[ptr BlockingJobState[I, O]](p)
+  if state.isCancelled:
     releaseState(state)
     return
+  let input = state[].inputs.tryRecv()
   var value =
-    try:
-      job.fn(job.input)
-    except Exception as e:  ## effect boundary: callee raises are unannotated
-      err(Result[string, string], "blocking job raised: " & e.msg)
-  acquire(state[].lock)
-  let cancelledAfter = state[].cancelled
-  release(state[].lock)
-  if cancelledAfter:
+    if not input.dataAvailable:
+      err(Result[O, string], "blocking executor: input missing")
+    else:
+      try:
+        state[].fn(input.msg)
+      except Exception as e:  ## effect boundary: callee raises are unannotated
+        err(Result[O, string], "blocking job raised: " & e.msg)
+  if state.isCancelled:
     releaseState(state)
     return
   state[].results.send(value)
@@ -97,7 +112,8 @@ proc runJob(job: sink BlockingJob) {.gcsafe.} =
 
 proc blockingWorker() {.thread.} =
   while true:
-    runJob(gBlockingQueue.recv())
+    let job = gBlockingQueue.recv()
+    job.run(job.state)
 
 proc ensurePool(): Result[void, string] =
   ## Loop thread only. A failed start is not retried, so nothing is queued
@@ -125,31 +141,31 @@ proc ensurePool(): Result[void, string] =
   gBlockingPoolStarted = true
   ok()
 
-proc runOffLoop*(fn: BlockingFn; input: string): Future[Result[string, string]] {.async.} =
-  ## Runs `fn(input)` on a worker and awaits the result. Cancelling the
-  ## future marks the job cancelled and returns at once.
+proc awaitOffLoop[I, O](fn: OffLoopFn[I, O]; input: I): Future[Result[O, string]] {.async.} =
   if fn == nil:
-    return err(Result[string, string], "blocking executor: no function")
+    return err(Result[O, string], "blocking executor: no function")
   let pool = ensurePool()
   if pool.isErr:
-    return err(Result[string, string], pool.error)
-  let state = cast[ptr BlockingJobState](allocShared0(sizeof(BlockingJobState)))
+    return err(Result[O, string], pool.error)
+  let state = cast[ptr BlockingJobState[I, O]](allocShared0(sizeof(BlockingJobState[I, O])))
   if state == nil:
-    return err(Result[string, string], "blocking executor: out of memory")
+    return err(Result[O, string], "blocking executor: out of memory")
   initLock(state[].lock)
   state[].refs = 1
+  state[].fn = fn
   try:
+    state[].inputs.open(1)
     state[].results.open(1)
   except CatchableError as e:
-    deinitLock(state[].lock)
-    deallocShared(state)
-    return err(Result[string, string], "blocking executor: cannot open result channel: " & e.msg)
+    releaseState(state)
+    return err(Result[O, string], "blocking executor: cannot open channels: " & e.msg)
+  state[].inputs.send(input)
   state[].refs = 2
-  var job = BlockingJob(fn: fn, input: input, state: state)
+  let job = BlockingJob(run: runJob[I, O], state: state)
   if not gBlockingQueue.trySend(job):
     state[].refs = 1
     releaseState(state)
-    return err(Result[string, string],
+    return err(Result[O, string],
                "blocking executor saturated: queue full (" & $BlockingQueueDepth & ")")
   var completed = false
   try:
@@ -162,8 +178,8 @@ proc runOffLoop*(fn: BlockingFn; input: string): Future[Result[string, string]] 
         completed = true
         if received.dataAvailable:
           return received.msg
-        return err(Result[string, string], "blocking executor: result missing")
-      await sleepAsync(milliseconds(BlockingPollIntervalMs))
+        return err(Result[O, string], "blocking executor: result missing")
+      await sleepAsync(chronos.milliseconds(BlockingPollIntervalMs))
   finally:
     if not completed:
       acquire(state[].lock)
@@ -176,3 +192,13 @@ proc runOffLoop*(fn: BlockingFn; input: string): Future[Result[string, string]] 
         if leftover.dataAvailable:
           discard leftover.msg
     releaseState(state)
+
+proc runOffLoop*[I, O](fn: OffLoopFn[I, O]; input: I): Future[Result[O, string]] =
+  ## Runs `fn(input)` on a worker and awaits the result. Cancelling the
+  ## future marks the job cancelled and returns at once. `I` and `O` must
+  ## hold no `ref` and no closure: refused at compile time.
+  when not sharesNothing(I):
+    {.error: "runOffLoop: the input type holds a ref or a closure".}
+  when not sharesNothing(O):
+    {.error: "runOffLoop: the result type holds a ref or a closure".}
+  awaitOffLoop(fn, input)

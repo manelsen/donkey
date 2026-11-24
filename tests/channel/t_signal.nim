@@ -8,6 +8,8 @@ import donkey/adapters/identity/identity_resolver
 import donkey/domain/message
 import donkey/core/types
 import donkey/core/pipeops
+import chronos
+import donkey/app/blocking_executor
 import donkey/domain/channels/signal_pure
 
 # ── IdentityResolver (Signal) ──────────────────────────────────────────────────
@@ -80,6 +82,10 @@ proc runTests*() =
   # ── SignalAdapter construction ─────────────────────────────────────────────────
 
   suite "Signal polling off the daemon loop":
+
+    test "the poll runs on the shared blocking executor; a failure is an error":
+      let r = waitFor runOffLoop(pollSignal, getTempDir() / "donkey_no_such_signal.sock")
+      check r.isErr
 
     test "senders are resolved on the loop, after the poll":
       let path = getTempDir() / "donkey_test_ids_sig_polled.tsv"

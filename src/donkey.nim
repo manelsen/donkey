@@ -129,11 +129,17 @@ proc printVersion = echo versionText()
 proc printHelp = echo cliHelpText()
 
 # ── daemon ─────────────────────────────────────────────────────────────────────
+
+const TelegramLongPollSec = 10
+  ## Telegram holds getUpdates open until a message or this many seconds: a
+  ## message arrives at once, and an idle bot makes one request per 10 s. The
+  ## wait occupies one blocking-executor worker.
 ##
 ## Architecture (post-refactor):
 ##
 ##   globalOutbox: AsyncQueue[OutboundMessage] — all orchestrators write here.
-##   Daemon loop is async; Telegram uses pollTimeout=0 (non-blocking per iter).
+##   Daemon loop is async; Telegram's getUpdates long-polls on the blocking
+##   executor (app/blocking_executor), so the loop never waits for it.
 ##   Each iteration: drain globalOutbox → drain Discord → poll Telegram → yield.
 ##   Orchestrators are asyncSpawn tasks; debounce lives in collectWithDebounce
 ##   (withTimeout, timer-exact). Streaming runs on its own thread, which builds
@@ -252,37 +258,21 @@ type DaemonServices = object
 type
   PollResult = Result[seq[(string, InboundMessage)], string]
     ## Sender and message, unresolved: identities are resolved on the loop.
+    ## The polls run on the blocking executor and get plain data (IMAP access,
+    ## the signal-cli socket path), never the adapter.
 
-var
-  gEmailPollCh: Channel[PollResult]
-  gSignalPollCh: Channel[PollResult]
-  gEmailPollThread: ThreadHandle[EmailInbox]
-  gSignalPollThread: ThreadHandle[string]
-    ## The poll threads get plain data (IMAP access, the signal-cli socket
-    ## path), never the adapter: its identity resolver belongs to the loop.
-  gEmailPollOpened = false
-  gSignalPollOpened = false
-  gEmailPollInFlight = false
-  gSignalPollInFlight = false
-
-func pollFailure(msg: string): PollResult {.gcsafe.} =
-  err(msg)
-
-proc emailPollThread(box: EmailInbox) {.thread.} =
-  var res: PollResult
-  try:
-    res = fetchUnseen(box)
-  except CatchableError as e:
-    res = pollFailure(e.msg)
-  gEmailPollCh.send(res)
-
-proc signalPollThread(sockPath: string) {.thread.} =
-  var res: PollResult
-  try:
-    res = fetchPending(sockPath)
-  except CatchableError as e:
-    res = pollFailure(e.msg)
-  gSignalPollCh.send(res)
+proc takeFinished[T](poll: var Future[Result[T, string]]): Option[Result[T, string]] =
+  ## A channel poll's result once its job finished, clearing the slot for the
+  ## next poll; none while it is still running.
+  if poll == nil or not poll.finished:
+    return none(Result[T, string])
+  let value =
+    try:
+      poll.read()
+    except CatchableError as e:
+      err(Result[T, string], e.msg)
+  poll = nil
+  some(value)
 
 type DaemonRuntime = ref object
   globalOutbox:         AsyncQueue[OutboundMessage]
@@ -297,6 +287,11 @@ type DaemonRuntime = ref object
   presentationState:    PresentationState
   routeHealth:          RouteHealth
   lastReminderCheckMs:  int64
+  tgPoll:               Future[Result[HttpResponse, string]]
+    ## Telegram's getUpdates in flight on the blocking executor; nil between polls.
+  emailPoll:            Future[PollResult]
+  signalPoll:           Future[PollResult]
+    ## The email and Signal polls in flight on the blocking executor.
   lastEmailPollMs:      int64
   lastSignalPollMs:     int64
   lineReplay:           LineReplayCache
@@ -567,7 +562,7 @@ proc initDaemonAdapters(cfg: DonkeyConfig; env: DaemonEnv): DaemonAdapters =
   result.tg = newTelegramAdapter(
     env.telegramToken, env.identityPath,
     apiBase = cfg.env.get("DONKEY_TELEGRAM_API_BASE").strip(),
-    pollTimeout = 0, settings = telegramSettings(cfg.env))
+    pollTimeout = TelegramLongPollSec, settings = telegramSettings(cfg.env))
   result.dc = newDiscordAdapter(env.discordToken, env.identityPath,
                                 requireMention = discordRequireMention(cfg.env),
                                 allowedChannels = discordAllowedChannels(cfg.env))
@@ -1164,11 +1159,22 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
                          memory:       MdFileAdapter;
                          modelCatalogLoader: ModelCatalogLoader;
                          log:          Logger): bool =
-  let completeBuilder = makeCompleteBuilder()
-  let runtimePtr = addr runtime
-  var tgMsgs = tgAdapter.receive().valueOr:
+  ## getUpdates runs on the blocking executor; this drain starts it and, on
+  ## a later tick, takes its result. The offset and identities stay here.
+  if runtime.tgPoll == nil:
+    runtime.tgPoll = runOffLoop(fetchTelegramUpdates, tgAdapter.pollRequest())
+    return false
+  let finished = runtime.tgPoll.takeFinished()
+  if finished.isNone:
+    return false
+  let fetched = finished.get
+  var tgMsgs = tgAdapter.acceptTelegramUpdates(fetched).valueOr:
     log.error("telegram receive: " & error)
     return false
+  ## The offset moved: the next long poll can start now.
+  runtime.tgPoll = runOffLoop(fetchTelegramUpdates, tgAdapter.pollRequest())
+  let completeBuilder = makeCompleteBuilder()
+  let runtimePtr = addr runtime
 
   for msg in tgMsgs.mitems:
     let auth = authorizeResolvedInbound(
@@ -1490,52 +1496,42 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
     drainEmail = proc(): bool =
       if ctx.adapters.em.imapHost.len == 0:
         return false
-      if gEmailPollInFlight:
-        let (hasResult, polled) = gEmailPollCh.tryRecv()
-        if hasResult:
-          gEmailPollInFlight = false
-          joinAndFree(gEmailPollThread)
-          if polled.isErr:
-            log.warn("email poll: " & polled.error)
-            return false
-          for msg in ctx.adapters.em.resolvePolled(polled.value):
-            fallback(msg)
-          return polled.value.len > 0
-        return false
+      if ctx.runtime.emailPoll != nil:
+        let finished = ctx.runtime.emailPoll.takeFinished()
+        if finished.isNone:
+          return false
+        let polled = finished.get
+        if polled.isErr:
+          log.warn("email poll: " & polled.error)
+          return false
+        for msg in ctx.adapters.em.resolvePolled(polled.value):
+          fallback(msg)
+        return polled.value.len > 0
       let now = nowMs()
       if now - ctx.runtime.lastEmailPollMs < EmailPollIntervalMs:
         return false
       ctx.runtime.lastEmailPollMs = now
-      if not gEmailPollOpened:
-        gEmailPollCh.open(1)
-        gEmailPollOpened = true
-      gEmailPollInFlight = true
-      gEmailPollThread = spawnThread(emailPollThread, ctx.adapters.em.inbox)
+      ctx.runtime.emailPoll = runOffLoop(pollEmail, ctx.adapters.em.inbox)
       false,
     drainSignal = proc(): bool =
       if ctx.adapters.signal.account.len == 0:
         return false
-      if gSignalPollInFlight:
-        let (hasResult, polled) = gSignalPollCh.tryRecv()
-        if hasResult:
-          gSignalPollInFlight = false
-          joinAndFree(gSignalPollThread)
-          if polled.isErr:
-            log.warn("signal poll: " & polled.error)
-            return false
-          for msg in ctx.adapters.signal.resolvePolled(polled.value):
-            fallback(msg)
-          return polled.value.len > 0
-        return false
+      if ctx.runtime.signalPoll != nil:
+        let finished = ctx.runtime.signalPoll.takeFinished()
+        if finished.isNone:
+          return false
+        let polled = finished.get
+        if polled.isErr:
+          log.warn("signal poll: " & polled.error)
+          return false
+        for msg in ctx.adapters.signal.resolvePolled(polled.value):
+          fallback(msg)
+        return polled.value.len > 0
       let now = nowMs()
       if now - ctx.runtime.lastSignalPollMs < SignalPollIntervalMs:
         return false
       ctx.runtime.lastSignalPollMs = now
-      if not gSignalPollOpened:
-        gSignalPollCh.open(1)
-        gSignalPollOpened = true
-      gSignalPollInFlight = true
-      gSignalPollThread = spawnThread(signalPollThread, ctx.adapters.signal.sockPath)
+      ctx.runtime.signalPoll = runOffLoop(pollSignal, ctx.adapters.signal.sockPath)
       false,
   )
 

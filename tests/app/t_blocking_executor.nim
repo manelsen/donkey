@@ -16,6 +16,22 @@ proc slow(input: string): Result[string, string] {.nimcall, gcsafe, raises: [].}
 proc failing(input: string): Result[string, string] {.nimcall, gcsafe, raises: [].} =
   err("refused: " & input)
 
+type
+  Mailbox = object
+    host: string
+    port: int
+  Letter = object
+    sender, text: string
+
+proc fetchLetters(box: Mailbox): Result[seq[Letter], string] {.nimcall, gcsafe, raises: [].} =
+  ok(@[Letter(sender: "ana@" & box.host, text: "porta " & $box.port)])
+
+type Holder = ref object
+  value: string
+
+proc givesRef(input: string): Result[Holder, string] {.nimcall, gcsafe, raises: [].} =
+  ok(Holder(value: input))
+
 proc ticker(stop: ref bool): Future[int] {.async.} =
   var ticks = 0
   while not stop[]:
@@ -54,6 +70,15 @@ proc runTests*() =
       waitFor allFutures(fs)
       for f in fs: check f.read.isOk
       check (Moment.now() - started).milliseconds < 800
+
+    test "a job takes and returns any plain data, not only strings":
+      ## Channels poll with their own types (a mailbox in, messages out)
+      ## without writing a codec for the trip.
+      let r = waitFor runOffLoop(fetchLetters, Mailbox(host: "x.org", port: 993))
+      check r.get == @[Letter(sender: "ana@x.org", text: "porta 993")]
+
+    test "a ref can not cross to a worker":
+      check not compiles(runOffLoop(givesRef, "x"))
 
     test "a cancelled job does not crash the worker or leak into the next one":
       let f = runOffLoop(slow, "gone")
