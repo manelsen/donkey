@@ -301,7 +301,7 @@ func rankTerms*(query: string): seq[string] =
 func initRanker*(terms: seq[string]): Ranker =
   Ranker(terms: terms, df: newSeq[int](terms.len))
 
-func countPrefixed(folded, term: string): int =
+func countPrefixed*(folded, term: string): int =
   ## Words of `folded` that start with `term`.
   var at = folded.find(term)
   while at >= 0:

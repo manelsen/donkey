@@ -20,7 +20,7 @@ import ../../domain/memory/query_policy_pure
 export query_policy_pure  ## the policy lives in the domain; kept visible here
 
 when defined(withPostgres) or defined(withSqlite):
-  import std/[json, strutils, times, algorithm, options, tables]
+  import std/[json, sets, strutils, times, algorithm, options, tables]
   when defined(withPostgres):
     import ./magma_graph
   when defined(withSqlite):
@@ -618,9 +618,17 @@ when defined(withPostgres) or defined(withSqlite):
 
     var hits: seq[MemoryHit]
     var expanded = 0
+    ## One slot per content: the same words captured many times (filler said
+    ## every week) would otherwise fill the recall and push facts out. The
+    ## best-ranked copy stays.
+    var seenContent = initHashSet[string]()
     for entry in rankedMemories:
       if hits.len >= limit:
         break
+      let key = entry.content.strip
+      if key in seenContent:
+        continue
+      seenContent.incl(key)
       var hit = MemoryHit(
         content: entry.content,
         score: entry.finalScore,

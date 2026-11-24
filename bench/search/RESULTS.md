@@ -130,3 +130,35 @@ decay removed:
   memory ("levei a mamãe no médico pra renovar receita") take three of the
   eight slots. Accent folding and dropping duplicate contents from recall are
   the next fixes.
+
+## Recall: accents, word starts and one slot per content, 24/11/2026
+
+PRD-recall items 1 and 2, measured together because they interact. MAGMA,
+DeepSeek, seeds 7, 11 and 23, 48 runs per row:
+
+| Condition | No decay (#153) | + accents | + accents, word starts | **+ one slot per content** |
+|---|---|---|---|---|
+| natural | 67% | 65% | 65% | **79%** |
+| natural, facts | 83% | 80% | 83% | **93%** |
+| forced | 85% | 77% | 81% | **83%** |
+| forced, facts | 100% | 90% | 90% | **100%** |
+
+**Accents alone broke something else.** Recall's literal terms matched
+substrings, so the folded "mae" (from "mãe") also matched "mamae", which
+appears in a third of Marta's messages. That filler pushed the surgery
+memory out of the 8: 3 of 3 became 0 of 3, in both conditions.
+
+**Word starts.** A term now matches words that start with it, as in
+`session_search`'s ranked mode: "mae" no longer matches "mamae", while
+"deploy" still matches "deployments". That was not enough. The surgery
+memory sat at the edge of the 8, and two identical copies of "a mamae
+acordou animada hoje" took two slots.
+
+**One slot per content** brought it back. Per question, against #153:
+- **allergy, natural:** 0/3 → 3/3, the target;
+- **"when did I tell you about the cardiologist", natural:** 1/3 → 3/3;
+- **surgery:** 3/3, unchanged in both conditions.
+
+The one drop, Lisbon forced (3/3 → 1/3), is judge noise. All three answers
+say "searched, found nothing about Lisbon, maybe you told it another way",
+and the judge graded the same answer two ways.
