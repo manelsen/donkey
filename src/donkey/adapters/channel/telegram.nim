@@ -937,15 +937,43 @@ proc registerBotCommands*(a: TelegramAdapter): Result[void, string] =
   discard ? a.post("setMyCommands", %* {"commands": cmds})
   ok()
 
-proc receive*(a: var TelegramAdapter): Result[seq[InboundMessage], string] =
-  ## Long-polls getUpdates and returns new user messages.
-  ## Advances update offset.
-  ## Preserves Telegram file_id for later download via getFile.
+type TelegramPoll* = object
+  ## One getUpdates call as plain data, so it can run on a worker
+  ## (app/blocking_executor) that builds its own HTTP client.
+  url*:        string
+  timeoutSec*: int          ## Telegram's wait plus the usual HTTP timeout
+  proxyUrl*:   string
+  allowlist*:  seq[string]
+
+func pollRequest*(a: TelegramAdapter): TelegramPoll =
+  ## The next getUpdates call, from the current offset.
+  TelegramPoll(
+    url: a.apiUrl("getUpdates") & "?offset=" & $a.offset &
+         "&timeout=" & $a.pollTimeout &
+         "&allowed_updates=[\"message\",\"callback_query\"]",
+    timeoutSec: a.pollTimeout + max(a.settings.httpTimeoutSec, 1),
+    proxyUrl: a.settings.proxyUrl,
+    allowlist: telegramApiAllowlist(a.apiBaseValue))
+
+proc fetchTelegramUpdates*(poll: TelegramPoll): Result[HttpResponse, string]
+                          {.nimcall, gcsafe, raises: [].} =
+  ## The blocking half, for a worker: one attempt, so a slow poll is simply
+  ## the next one's turn.
   try:
-    let url = a.apiUrl("getUpdates") & "?offset=" & $a.offset &
-              "&timeout=" & $a.pollTimeout &
-              "&allowed_updates=[\"message\",\"callback_query\"]"
-    let resp = ? a.http.get(url)
+    newStdHttpAdapter(timeout = poll.timeoutSec, maxRetries = 1,
+                      proxy = poll.proxyUrl, allowlist = poll.allowlist,
+                      retryNonIdempotent = false).get(poll.url)
+  except CatchableError as e:
+    err("TelegramAdapter.receive: " & e.msg)
+
+proc acceptTelegramUpdates*(a: var TelegramAdapter;
+                            response: Result[HttpResponse, string]):
+                            Result[seq[InboundMessage], string] =
+  ## The loop's half: parses the updates, advances the offset, resolves
+  ## identities and remembers chat ids. Preserves Telegram file_id for later
+  ## download via getFile.
+  try:
+    let resp = ? response
     let j = ? parseTgResp("getUpdates", resp)
     let updates = j["result"]
     var msgs: seq[InboundMessage]
@@ -970,6 +998,10 @@ proc receive*(a: var TelegramAdapter): Result[seq[InboundMessage], string] =
     ok(msgs)
   except CatchableError as e:
     err("TelegramAdapter.receive: " & e.msg)
+
+proc receive*(a: var TelegramAdapter): Result[seq[InboundMessage], string] =
+  ## Both halves in one blocking call, for code that is not on the loop.
+  a.acceptTelegramUpdates(a.http.get(a.pollRequest().url))
 
 proc ack*(a: TelegramAdapter; msgId: string) =
   ## No-op: Telegram offset is advanced during receive().

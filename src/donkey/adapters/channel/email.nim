@@ -316,6 +316,15 @@ proc fetchUnseen*(box: EmailInbox): Result[seq[PolledEmail], string] =
   discard s.imapCmd("LOGOUT")
   ok(polled)
 
+proc pollEmail*(box: EmailInbox): Result[seq[PolledEmail], string]
+               {.nimcall, gcsafe, raises: [].} =
+  ## The poll as a job for the daemon's blocking executor
+  ## (app/blocking_executor): a failure comes back as an error.
+  try:
+    fetchUnseen(box)
+  except Exception as e:  ## effect boundary: callee raises are unannotated
+    err("email poll: " & e.msg)
+
 proc resolvePolled*(a: EmailAdapter; polled: seq[PolledEmail]): seq[InboundMessage] =
   ## Resolves each sender to a user. Runs on the daemon loop, where the
   ## identity resolver lives.

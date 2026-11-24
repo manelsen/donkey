@@ -14,6 +14,7 @@ g0	tests/adapters/channel/t_qq_runtime.nim
 g0	tests/adapters/channel/t_telegram_api_base.nim
 g0	tests/adapters/channel/t_telegram_media_upload.nim
 g0	tests/adapters/channel/t_telegram_runtime.nim
+g0	tests/adapters/channel/t_telegram_poll.nim
 g0	tests/adapters/channel/t_discord_command_replies.nim
 g0	tests/adapters/channel/t_requester_only_routes.nim
 g0	tests/adapters/channel/t_requester_only_send_paths.nim

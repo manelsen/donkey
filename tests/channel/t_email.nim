@@ -9,6 +9,8 @@ import donkey/core/types
 import donkey/domain/channels/email_pure
 import donkey/domain/message
 import donkey/infra/thread_handle
+import chronos
+import donkey/app/blocking_executor
 
 # ── IdentityResolver (Email) ───────────────────────────────────────────────────
 
@@ -64,6 +66,12 @@ proc runTests*() =
       check box.port == 1993
       check box.user == "user@example.com"
       check box.password == "secret"
+
+    test "the poll runs on the shared blocking executor; a failure is an error":
+      ## Port 1 refuses at once: the job reports it, it does not raise.
+      let r = waitFor runOffLoop(pollEmail, EmailInbox(host: "127.0.0.1", port: 1,
+                                                       user: "u", password: "p"))
+      check r.isErr
 
     test "senders are resolved on the loop, after the poll":
       let path = getTempDir() / "donkey_test_ids_em_polled.tsv"

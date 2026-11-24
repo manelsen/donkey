@@ -76,6 +76,15 @@ proc fetchPending*(sockPath: string): Result[seq[PolledSignal], string] =
     polled.add((r.rawId, r.toInbound(UserId(""))))
   ok(polled)
 
+proc pollSignal*(sockPath: string): Result[seq[PolledSignal], string]
+                {.nimcall, gcsafe, raises: [].} =
+  ## The poll as a job for the daemon's blocking executor
+  ## (app/blocking_executor): a failure comes back as an error.
+  try:
+    fetchPending(sockPath)
+  except Exception as e:  ## effect boundary: callee raises are unannotated
+    err("signal poll: " & e.msg)
+
 proc resolvePolled*(a: SignalAdapter; polled: seq[PolledSignal]): seq[InboundMessage] =
   ## Resolves each sender to a user, on the daemon loop.
   for (sender, msg) in polled:
