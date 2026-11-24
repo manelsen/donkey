@@ -3,8 +3,10 @@
 ## Covers the file-backed session registry and outbound delivery ledger, plus
 ## the invariant that a broken persistence sink never blocks the hot path.
 
-import std/[json, os, strutils, tables, unittest]
+import std/[json, options, os, strutils, tables, unittest]
 import donkey/adapters/state/runtime_store
+import donkey/app/blocking_executor
+import chronos
 import donkey/app/outbound_runtime
 import donkey/app/session_manager
 import donkey/core/log
@@ -339,7 +341,7 @@ proc runTests*() =
       check store.ledgerLastCompactError().len > 0
       check "schema_version" in readFile(dir / DeliveryLedgerFileName)
 
-    test "dedicated worker compacts outside the event loop":
+    test "compaction runs as a blocking-executor job, off the loop":
       let dir = freshDir("ledger-worker")
       defer: cleanup(dir)
 
@@ -359,14 +361,10 @@ proc runTests*() =
       check ledger.markSent("worker-expired", now - 2 * day).isOk
 
       let before = store.ledgerLastCompactMs()
-      let workerRes = startLedgerCompactionWorker(addr store, 1.0)
-      check workerRes.isOk
-      let worker = workerRes.get()
-      check worker != nil
-      defer: stopLedgerCompactionWorker(worker)
-
-      sleep(2300)
-      stopLedgerCompactionWorker(worker)
+      sleep(5)
+      let done = waitFor runOffLoop(compactLedgerJob,
+                                    LedgerCompactionJob(store: addr store, force: true))
+      check done.isOk
       check store.ledgerLastCompactMs() > before
 
       let loaded = store.deliveryLedger().loadAll()
@@ -376,6 +374,22 @@ proc runTests*() =
       let raw = readFile(dir / DeliveryLedgerFileName)
       check "worker-pending" in raw
       check "worker-expired" notin raw
+
+    test "a failed compaction job is reported to the loop":
+      ## The daemon reads failures from the store (tryCompactError), as it
+      ## did from the old worker. A ledger written by a newer Donkey is left
+      ## alone, and that is reported.
+      let dir = freshDir("ledger-job-error")
+      defer: cleanup(dir)
+      var store = newRuntimeStateStore(dir, ledgerCompactIntervalSec = 3600.0)
+      discard store.tryCompactError()
+      writeFile(dir / DeliveryLedgerFileName,
+        "\n" & $(%* {"id": "future", "channel": "future-channel",
+                      "state": "sent", "updated_at_ms": epochMs()}) & "\n")
+      let done = waitFor runOffLoop(compactLedgerJob,
+                                    LedgerCompactionJob(store: addr store, force: true))
+      check done.isErr
+      check store.tryCompactError().isSome
 
     test "compaction on a missing ledger is a no-op":
       let dir = freshDir("ledger-none")

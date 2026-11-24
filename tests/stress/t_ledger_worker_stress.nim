@@ -1,7 +1,10 @@
-## Stress: ledger compaction worker racing with delivery appends.
+## Stress: a ledger compaction job (on the blocking executor) racing with
+## delivery appends.
 
 import std/[atomics, monotimes, os, strutils, times, unittest]
+import chronos
 import donkey/adapters/state/runtime_store
+import donkey/app/blocking_executor
 import donkey/core/pipeops
 import donkey/core/types
 import donkey/ports/runtime_state
@@ -23,11 +26,9 @@ var
   gHookEntered:    Channel[bool]
   gHookRelease:    Channel[bool]
   gProbeStarted:   Channel[bool]
-  gStopReturned:   Atomic[bool]
   gReaderErrors:   Atomic[int]
   gStopReader:     Atomic[bool]
   gProbeOk:        bool
-  gWorkerToStop:   LedgerCompactionWorker
 
 proc blockingHook() {.gcsafe, raises: [].} =
   if not gHookEnabled.load():
@@ -82,10 +83,6 @@ proc readerWorker(_: int) {.thread.} =
         discard gReaderErrors.fetchAdd(1)
       sleep(1)
 
-proc stopWorker(_: int) {.thread.} =
-  {.cast(gcsafe).}:
-    stopLedgerCompactionWorker(gWorkerToStop)
-    gStopReturned.store(true)
 
 
 gHookEntered.open(1)
@@ -116,18 +113,21 @@ suite "ledger worker stress":
 
     store.onCompactStart = blockingHook
     store.onAppendStart = appendStartHook
-    let workerRes = startLedgerCompactionWorker(addr store, 1.0)
-    check workerRes.isOk
-    let worker = workerRes.get()
-    check worker != nil
-    defer: stopLedgerCompactionWorker(worker)
-
     var reader: Thread[int]
     createThread(reader, readerWorker, 0)
 
     var threads: array[4, Thread[AppendArg]]
     for i in 0 ..< threads.len:
       createThread(threads[i], appendWorker, AppendArg(worker: i))
+
+    ## Compaction of a missing ledger returns before the hook: start the job
+    ## once the appenders have written it.
+    var waitedForLedger = 0
+    while gAppendCount[0].load() == 0 and waitedForLedger < 5000:
+      sleep(5)
+      waitedForLedger += 5
+    let job = runOffLoop(compactLedgerJob,
+                         LedgerCompactionJob(store: addr store, force: true))
 
     discard gHookEntered.recv()
     check gHookEnabled.load()
@@ -159,8 +159,7 @@ suite "ledger worker stress":
       joinThread(threads[i])
 
     let started = getMonoTime()
-    stopLedgerCompactionWorker(worker)
-    stopLedgerCompactionWorker(worker)  # idempotent
+    check (waitFor job).isOk
     check inMilliseconds(getMonoTime() - started) < 2000
     check store.ledgerLastCompactError().len == 0
 
@@ -182,7 +181,7 @@ suite "ledger worker stress":
       check record.state == dlsSent
       check record.id == "probe" or record.id.startsWith("w")
 
-  test "stop waits for an actively running compaction":
+  test "the job finishes only after its compaction (shutdown awaits it)":
     let dir = stressDir / "stop"
     removeDir(dir)
     defer: removeDir(dir)
@@ -197,30 +196,17 @@ suite "ledger worker stress":
       createdAtMs: old, updatedAtMs: old)).isOk
 
     gHookEnabled.store(true)
-    gStopReturned.store(false)
     store.onCompactStart = blockingHook
-    let workerRes = startLedgerCompactionWorker(addr store, 1.0)
-    check workerRes.isOk
-    let worker = workerRes.get()
-    check worker != nil
+    let job = runOffLoop(compactLedgerJob,
+                         LedgerCompactionJob(store: addr store, force: true))
 
     discard gHookEntered.recv()
-
-    gWorkerToStop = worker
-    var stopper: Thread[int]
-    createThread(stopper, stopWorker, 0)
-    var waited = 0
-    while not worker.stopping.load() and waited < 2000:
-      sleep(1)
-      waited += 1
-    check worker.stopping.load()
-    check not gStopReturned.load()
+    waitFor sleepAsync(chronos.milliseconds(100))
+    check not job.finished   ## the daemon's shutdown awaits this future
 
     gHookEnabled.store(false)
     gHookRelease.send(true)
-    joinThread(stopper)
-    gWorkerToStop = nil
-    check gStopReturned.load()
+    check (waitFor job).isOk
     check store.ledgerLastCompactError().len == 0
 
     let loaded = store.deliveryLedger().loadAll()

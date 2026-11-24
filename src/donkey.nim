@@ -284,7 +284,9 @@ type DaemonRuntime = ref object
     ## the daemon loop.
   stateStore:           RuntimeStateStore
   ledger:               DeliveryLedgerPort
-  ledgerWorker:         LedgerCompactionWorker
+  ledgerCompaction:     Future[Result[bool, string]]
+    ## The ledger compaction in flight on the blocking executor; it holds a
+    ## pointer to `stateStore`, so shutdown awaits it.
   presentationState:    PresentationState
   routeHealth:          RouteHealth
   lastReminderCheckMs:  int64
@@ -1691,12 +1693,19 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   if ctx.runtime.stateStore != nil:
     let compactionSec = ctx.runtime.stateStore.ledgerCompactIntervalSec()
     if compactionSec > 0:
-      let workerRes = startLedgerCompactionWorker(
-        addr ctx.runtime.stateStore, max(1.0, compactionSec))
-      if workerRes.isErr:
-        log.warn("ledger compaction worker: " & workerRes.error)
-      else:
-        ctx.runtime.ledgerWorker = workerRes.get()
+      ## Off the loop on the blocking executor, one at a time; failures
+      ## reach the loop through `tryCompactError`.
+      let runtime = ctx.runtime
+      startPeriodicTask(proc() {.gcsafe.} =
+        if runtime.ledgerCompaction == nil or runtime.ledgerCompaction.finished:
+          runtime.ledgerCompaction = runOffLoop(compactLedgerJob,
+            LedgerCompactionJob(store: addr runtime.stateStore, force: true))
+        else:
+          ## A compaction longer than the whole interval is stuck or the
+          ## ledger is huge: say so instead of skipping in silence.
+          newLogger("ledger").warn("ledger compaction still running after a " &
+                                   "full interval; this tick is skipped"),
+        intervalSec = max(1, compactionSec.int), name = "ledger-compaction")
   let heartbeatOutboxFn: HeartbeatOutboxFn = proc(userId, channel, taskPayload: string) {.gcsafe.} =
     let uid = UserId(userId)
     let ck =
@@ -1802,7 +1811,9 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   finally:
     log.info("daemon shutdown: stopping background workers")
     stopSchedulerTask(schedulerTask)
-    stopLedgerCompactionWorker(ctx.runtime.ledgerWorker)
+    if ctx.runtime.ledgerCompaction != nil and not ctx.runtime.ledgerCompaction.finished:
+      ## The job writes through a pointer to the store: let it finish.
+      discard await ctx.runtime.ledgerCompaction
     stopSlackSocketMode()
     stopWebhookReceiver()
     ## LINE events were acked with 200 when queued, so LINE will not redeliver
