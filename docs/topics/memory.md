@@ -214,7 +214,10 @@ needs both events found by what they are, not the newest memories. The words are
 does not lower relevance: a memory from months ago that answers the message
 ranks above last week's small talk, as in MAGMA, where time filters and
 orders "when" questions but never penalizes old memories. Without an
-embedding provider the literal terms still rank.
+embedding provider the literal terms still rank. The question's embedding is an HTTP call
+of about two seconds; the daemon makes it on a worker thread
+(`app/blocking_executor`), so recall never stalls other sessions while it
+waits.
 
 ## Memory Origin
 

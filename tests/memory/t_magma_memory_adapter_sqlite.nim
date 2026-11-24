@@ -237,6 +237,23 @@ when defined(withSqlite):
       check hits.len >= 1
       check hits[0].content.contains("cafeteira")
 
+    test "recall uses a query vector computed elsewhere, without embedding again":
+      ## The daemon embeds the question on a worker thread and passes the
+      ## vector in: recall must not make a second, blocking call.
+      var calls = 0
+      let a = newSqliteMagmaMemoryAdapter(dbPath, letterEmbedFn)
+      let uid = UserId("u1")
+      a.appendMemory(uid, "cafeteira nova")
+      a.appendMemory(uid, "zebra no zoo")
+      a.embedFn = proc(text: string): seq[float32] {.gcsafe.} =
+        inc calls
+        letterEmbedFn(text)
+      let hits = a.searchWithRerank(uid, "qualquer coisa", 1, nil, none(QueryPolicy),
+                                    some(letterEmbedFn("zebra")))
+      check calls == 0
+      check hits.len == 1
+      check hits[0].content.contains("zebra")
+
     test "an old memory that answers the question beats recent ones that do not":
       ## Recall ranks by relevance, not age (MAGMA applies no time decay to
       ## relevance; time is a filter for "when" questions). With a 30-day

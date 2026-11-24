@@ -1,7 +1,7 @@
 ## multigraph_runtime — MAGMA wiring for the app entrypoint.
 
 when defined(withPostgres) or defined(withSqlite):
-  import std/[os, strutils]
+  import std/[options, os, strutils]
   import ../../core/types
   import ../../config/environment
   import ../../core/providers/smart_routing
@@ -297,7 +297,23 @@ when defined(withPostgres) or defined(withSqlite):
     exportContextToDir(ctx, outDir)
     echo "Exported " & uuid & " to " & outDir
 
-  proc buildGlobalMagmaSearchFn*(memory: MdFileAdapter): SearchFn {.gcsafe, raises: [].} =
+  proc buildGlobalMagmaVectorSearchFn*(memory: MdFileAdapter): VectorSearchFn {.gcsafe, raises: [].} =
+    ## Recall with the question's vector computed by the caller (the daemon
+    ## does it on a worker thread). The SQLite reads stay here: local, fast.
+    if not memory.hasMagmaBackend:
+      return nil
+    let magmaSearch = memory.newMagmaAdapter()
+    result = proc(userId: UserId; query: string; limit: int;
+                  queryEmbedding: seq[float32]): seq[MemoryHit] {.gcsafe, raises: [].} =
+      try:
+        let ctx = memory.loadContext(userId)
+        let rerankFn = buildMagmaRerankFn(memory.magmaEnv, ctx.preferencesMd)
+        magmaSearch.searchWithRerank(userId, query, limit, rerankFn,
+                                     queryEmbedding = some(queryEmbedding))
+      except Exception:  ## effect boundary: callee raises are unannotated
+        @[]
+
+  proc buildGlobalMagmaSearchFn*(memory: MdFileAdapter): SyncSearchFn {.gcsafe, raises: [].} =
     if not memory.hasMagmaBackend:
       return nil
     let magmaSearch = memory.newMagmaAdapter()

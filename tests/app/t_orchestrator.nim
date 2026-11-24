@@ -246,8 +246,8 @@ proc runTests*() =
         let inbox = newAsyncQueue[AgentMessage]()
         let outbox = newAsyncQueue[AgentMessage]()
         let searchFn: SearchFn =
-          proc(userId: UserId; query: string; limit: int): seq[MemoryHit] {.gcsafe, raises: [].} =
-            @[MemoryHit(content: "Investigated retry amplification.", score: 0.9'f32, kind: "memory")]
+          proc(userId: UserId; query: string; limit: int): Future[seq[MemoryHit]] {.async.} =
+            return @[MemoryHit(content: "Investigated retry amplification.", score: 0.9'f32, kind: "memory")]
         asyncSpawn runMemoryAgent(inbox, outbox, mem.toRuntimePort(), searchFn)
         await inbox.put(newTaskMsg("req3", tkLoadCtx, "u1", "retry spike"))
         let reply = await outbox.get()
@@ -276,7 +276,7 @@ proc runTests*() =
         let inbox = newAsyncQueue[AgentMessage]()
         let outbox = newAsyncQueue[AgentMessage]()
         let searchFn: SearchFn =
-          proc(userId: UserId; query: string; limit: int): seq[MemoryHit] {.gcsafe, raises: [].} =
+          proc(userId: UserId; query: string; limit: int): Future[seq[MemoryHit]] {.async.} =
             var hit = MemoryHit(
               id: "u1_m3", content: "- **User:** o prazo\n  **Response:** quinta",
               score: 0.9'f32, kind: "memory", timestamp: 200,
@@ -284,7 +284,7 @@ proc runTests*() =
             hit.after = @[MemoryHit(
               id: "u1_m4", content: "- **User:** não, é sexta\n  **Response:** anotado",
               kind: "memory", timestamp: 300, origin: turnOrigin("s1"))]
-            @[hit, MemoryHit(content: "gosta de Nim", score: 0.5'f32, kind: "memory")]
+            return @[hit, MemoryHit(content: "gosta de Nim", score: 0.5'f32, kind: "memory")]
         asyncSpawn runMemoryAgent(inbox, outbox, mem.toRuntimePort(), searchFn)
         await inbox.put(newTaskMsg("req4", tkLoadCtx, "u1", "qual o prazo"))
         let reply = await outbox.get()

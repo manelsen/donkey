@@ -80,6 +80,7 @@ import donkey/ports/schedules
 import donkey/ports/backtrail
 import donkey/adapters/decision/perplexity_backtrail
 import donkey/app/blocking_executor
+import donkey/adapters/embedding/openrouter_embed
 import donkey/adapters/state/pairing_store
 import donkey/adapters/state/approval_store
 import donkey/adapters/secrets/vault
@@ -865,8 +866,26 @@ proc startOptionalQQGateway(qqAdapter: var QQChannelAdapter;
     discard
 
 proc buildGlobalSearchFn(memory: MdFileAdapter): SearchFn {.gcsafe.} =
+  ## The memory agent's recall. The question's embedding is an HTTP call
+  ## that blocks until its deadline, so it runs on a worker
+  ## (app/blocking_executor); the SQLite search then runs here with the
+  ## vector. Without an embedding key, or when the call fails, recall ranks
+  ## by literal terms, as it already did when embedding was unavailable.
   when defined(withPostgres) or defined(withSqlite):
-    result = buildGlobalMagmaSearchFn(memory)
+    let vectorSearch = buildGlobalMagmaVectorSearchFn(memory)
+    if vectorSearch == nil:
+      return nil
+    let key = memory.magmaEnv.get("OPENROUTER_API_KEY").strip
+    result = proc(userId: UserId; query: string; limit: int): Future[seq[MemoryHit]] {.async.} =
+      var embedding: seq[float32]
+      if key.len > 0 and query.strip.len > 0:
+        try:
+          let raw = await runOffLoop(openRouterEmbedJob, $(%*{"key": key, "text": query}))
+          if raw.isOk:
+            embedding = decodeEmbedding(raw.get).get(@[])
+        except CatchableError:
+          discard
+      return vectorSearch(userId, query, limit, embedding)
   else:
     discard
 

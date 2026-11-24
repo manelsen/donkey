@@ -10,6 +10,7 @@
 ##     SOLUTIONS.md   — reusable solutions
 ##     sessions/      — per-session conversation logs
 
+import chronos
 import std/json
 import ../core/pipeops
 import ../core/types
@@ -59,9 +60,23 @@ type
     m.savePreferences(UserId, string)
     m.search(UserId, string, int) is seq[MemoryHit]
 
-  SearchFn* = proc(userId: UserId; query: string; limit: int): seq[MemoryHit]
+  SearchFn* = proc(userId: UserId; query: string; limit: int): Future[seq[MemoryHit]]
     {.gcsafe, raises: [].}
-  ## Closure form of the search operation. Nil = no semantic search (fall back to raw MEMORY.md).
+  ## The memory agent's recall, async: the daemon embeds the question on a
+  ## worker thread (app/blocking_executor) and searches with the vector, so
+  ## recall never stalls the loop. Nil = no semantic search (fall back to
+  ## raw MEMORY.md).
+
+  SyncSearchFn* = proc(userId: UserId; query: string; limit: int): seq[MemoryHit]
+    {.gcsafe, raises: [].}
+  ## The same search, blocking (embeds on the caller's thread): for tools
+  ## and benchmarks that have no event loop to keep free.
+
+  VectorSearchFn* = proc(userId: UserId; query: string; limit: int;
+                         queryEmbedding: seq[float32]): seq[MemoryHit]
+    {.gcsafe, raises: [].}
+  ## Recall with the question's embedding already computed; an empty one
+  ## ranks by literal terms alone.
 
   SearchSessionsFn* = proc(userId: UserId; query: string; limit: int;
                            includeMemory: bool): Result[seq[SessionHit], string]
