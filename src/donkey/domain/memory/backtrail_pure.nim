@@ -65,6 +65,22 @@ proc parseBacktrailResponse*(j: JsonNode): Result[RouteDecision, string] =
       return ok(RouteDecision(route: route, confidence: answer{"confidence"}.getFloat(0.0)))
   err("backtrail: unknown route '" & choice & "'")
 
+proc encodeDecision*(d: RouteDecision): string =
+  ## The decision as text, to cross from the worker thread to the loop.
+  $(%*{"route": $d.route, "confidence": d.confidence})
+
+proc decodeDecision*(text: string): Result[RouteDecision, string] =
+  var j: JsonNode
+  try:
+    j = parseJson(text)
+  except CatchableError as e:
+    return err("backtrail: unreadable decision: " & e.msg)
+  let route = j{"route"}.getStr("")
+  for r in MessageRoute:
+    if $r == route:
+      return ok(RouteDecision(route: r, confidence: j{"confidence"}.getFloat(0.0)))
+  err("backtrail: unknown route '" & route & "'")
+
 func preSearchCallId*(messageId: string): string =
   ## One id per turn: providers reject a conversation where two tool calls
   ## share an id, and every pre-searched turn adds one.

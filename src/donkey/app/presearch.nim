@@ -27,7 +27,13 @@ proc preSearch*(backtrail: BacktrailPort; ctx: NativeCtx; state: SessionState;
   ## `callId` is this turn's (`preSearchCallId`), unique in the session.
   if not backtrail.backtrailAvailable:
     return history
-  let decision = backtrail.classify(message)
+  var decision: Result[RouteDecision, string]
+  try:
+    decision = await backtrail.classify(message)
+  except CancelledError as e:
+    raise e
+  except CatchableError as e:
+    decision = err(Result[RouteDecision, string], e.msg)
   if decision.isErr:
     log.warn("backtrail: " & decision.error & "; the turn goes on without a pre-search")
     return history

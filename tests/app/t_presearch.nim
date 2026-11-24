@@ -18,12 +18,12 @@ let base = getTempDir() / ("donkey_presearch_" & $getCurrentProcessId())
 let quiet = newLogger("test.presearch", lvlError)
 
 proc gate(route: MessageRoute): BacktrailPort =
-  BacktrailPort(classify: proc(message: string): Result[RouteDecision, string] {.gcsafe, raises: [].} =
-    ok(RouteDecision(route: route, confidence: 0.9)))
+  BacktrailPort(classify: proc(message: string): Future[Result[RouteDecision, string]] {.async.} =
+    return ok(Result[RouteDecision, string], RouteDecision(route: route, confidence: 0.9)))
 
 proc failing(): BacktrailPort =
-  BacktrailPort(classify: proc(message: string): Result[RouteDecision, string] {.gcsafe, raises: [].} =
-    err("HTTP 503"))
+  BacktrailPort(classify: proc(message: string): Future[Result[RouteDecision, string]] {.async.} =
+    return err(Result[RouteDecision, string], "HTTP 503"))
 
 proc ctx(): NativeCtx =
   NativeCtx(uid: UserId("marta"), channel: ckTelegram, fs: newFsAdapter(),

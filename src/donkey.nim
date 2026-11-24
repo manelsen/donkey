@@ -79,6 +79,7 @@ import donkey/adapters/state/schedule_store
 import donkey/ports/schedules
 import donkey/ports/backtrail
 import donkey/adapters/decision/perplexity_backtrail
+import donkey/app/blocking_executor
 import donkey/adapters/state/pairing_store
 import donkey/adapters/state/approval_store
 import donkey/adapters/secrets/vault
@@ -448,7 +449,21 @@ proc daemonBacktrail(cfg: DonkeyConfig): BacktrailPort =
   ## endpoint (paid access, not used for training) to be classified.
   if cfg.env.get("DONKEY_BACKTRAIL").strip.toLowerAscii in ["off", "0", "false", "no"]:
     return BacktrailPort()
-  perplexityBacktrail(cfg.env.get("PERPLEXITY_API_KEY"))
+  let key = cfg.env.get("PERPLEXITY_API_KEY").strip
+  if key.len == 0:
+    return BacktrailPort()
+  ## The HTTP runs on a worker (app/blocking_executor): only the key and the
+  ## message cross, as text; the loop keeps serving while Perplexity answers.
+  BacktrailPort(classify: proc(message: string): Future[Result[RouteDecision, string]]
+                              {.async.} =
+    var raw: Result[string, string]
+    try:
+      raw = await runOffLoop(perplexityBacktrailJob, $(%*{"key": key, "message": message}))
+    except CatchableError as e:
+      raw = err(Result[string, string], e.msg)
+    if raw.isErr:
+      return err(Result[RouteDecision, string], raw.error)
+    return decodeDecision(raw.get))
 
 proc initDaemonServices(cfg: DonkeyConfig;
                         env: DaemonEnv;
