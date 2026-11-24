@@ -17,6 +17,11 @@
 ##                                   prints {"skipped": [line index, …]}: the
 ##                                   user turns automatic capture would not
 ##                                   keep, by their position in the corpus
+##   donkey_bench magma-rank <paddock> <sqlite> <k>
+##                                   reads one question per line and prints
+##                                   {"hits": [content, …]}: recall's top k,
+##                                   in rank order, as the memory agent asks
+##                                   for 8
 ##   donkey_bench magma-prompt <paddock> <sqlite>
 ##                                   reads one question per line and prints
 ##                                   {"system": …, "tools": […]} with the
@@ -90,16 +95,21 @@ proc magmaSeedCmd(paddock, sqlite, corpus: string) =
   for line in lines(corpus):
     if line.strip.len > 0: records.add(parseJson(line))
   var stored, skipped = 0
+  ## The temporal chain follows insertion order. `appendMemory` links to the
+  ## node with the latest time, which in live use is the previous one (time
+  ## only moves forward); a corpus whose sessions are not in date order
+  ## (LongMemEval) would link many memories to the same one and make a hub.
+  var prevId = ""
   proc put(text: string; ts: int64; session: string) =
     let nid = magma.memId(uid)
-    let prev = magma.graph.getLastNode($uid, nodeType = NtMemory)
     let ok = magma.graph.insertNode(MagmaNode(
       id: nid, userId: $uid, nodeType: NtMemory, content: text,
       embedding: magma.embedFn(text), timestamp: ts,
       meta: originToMeta(turnOrigin(session))))
     if not ok: quit("graph refused " & nid, 1)
-    if prev.isSome and prev.get().nodeType == NtMemory:
-      magma.graph.linkTemporal(prev.get().id, nid)
+    if prevId.len > 0:
+      magma.graph.linkTemporal(prevId, nid)
+    prevId = nid
   ## The two profile notes of MEMORY.md, as memories from before the history.
   let first = if records.len > 0: records[0]["ts"].getBiggestInt div 1000 - 86400 else: 0
   for note in readOrEmpty(paddock / "MEMORY.md").splitLines:
@@ -176,6 +186,18 @@ proc captureCheckCmd(corpus: string) =
     if shouldSkipAutoMemoryCapture(m["text"].getStr, reply):
       skipped.add(%i)
   echo $(%*{"skipped": skipped})
+proc magmaRankCmd(paddock, sqlite: string; k: int) =
+  let memory = magmaMemory(paddock, sqlite)
+  let uid = UserId(paddock.extractFilename)
+  let searchFn = buildGlobalMagmaSearchFn(memory)
+  if searchFn == nil: quit("MAGMA search unavailable", 1)
+  var question = ""
+  while stdin.readLine(question):
+    var arr = newJArray()
+    for hit in searchFn(uid, question, k):
+      arr.add(%hit.content)
+    stdout.writeLine($(%*{"hits": arr}))
+    stdout.flushFile()
 
 when isMainModule:
   let args = commandLineParams()
@@ -184,4 +206,5 @@ when isMainModule:
   elif args.len >= 4 and args[0] == "magma-seed": magmaSeedCmd(args[1], args[2], args[3])
   elif args.len >= 3 and args[0] == "magma-prompt": magmaPromptCmd(args[1], args[2])
   elif args.len >= 2 and args[0] == "capture-check": captureCheckCmd(args[1])
+  elif args.len >= 4 and args[0] == "magma-rank": magmaRankCmd(args[1], args[2], parseInt(args[3]))
   else: quit("usage: donkey_bench prompt <paddock> | serve | magma-seed <paddock> <sqlite> <corpus> | magma-prompt <paddock> <sqlite>", 2)

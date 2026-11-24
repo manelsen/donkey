@@ -227,3 +227,51 @@ Capture needs a reply, so these turns never become memories.
 
 The generator is left as it is, so this benchmark stays comparable with
 earlier runs and with Supernova's.
+
+## Recall depth on LongMemEval S, 24/11/2026
+
+PRD-recall item 3 (`longmemeval.py`). This is the 60 answerable questions of
+Supernova's sample (10 of each type) from LongMemEval S (Wu et al.,
+arXiv:2410.10813, MIT), English chat histories of about 115,000 tokens. Each
+question's history becomes a MAGMA graph the way automatic capture would fill
+it: about 220 memories, embedded with qwen3-embedding-8b and chained in
+insertion order. Donkey's recall then ranks the memories for the question.
+No LLM is involved.
+
+| Type | n | top 1 | top 8 | top 16 | top 40 | not in 40 |
+|---|---|---|---|---|---|---|
+| all | 60 | 30 | **52** | 55 | 58 | 2 |
+| knowledge-update | 10 | 4 | 10 | 10 | 10 | 0 |
+| multi-session | 10 | 4 | 9 | 9 | 9 | 1 |
+| single-session-assistant | 10 | 8 | 10 | 10 | 10 | 0 |
+| single-session-preference | 10 | 6 | 7 | 9 | 9 | 1 |
+| single-session-user | 10 | 6 | 9 | 9 | 10 | 0 |
+| temporal-reasoning | 10 | 2 | 7 | 8 | 10 | 0 |
+
+**The limit stays at 8.** Moving from 8 to 16 recovers 3 of 60 questions
+(5%), under the PRD's 10% bar.
+
+**Questions recall treats as about time are weaker:**
+
+| Classified as temporal ("first", "ago", "last", "recent"…) | n | Answer in the top 8 |
+|---|---|---|
+| no | 47 | 45 (96%) |
+| yes | 13 | 7 (54%) |
+
+For such a question, recall cuts meaning to 0.30 and literal terms to 0.20,
+and adds the most recent memories at 0.40. Part of the gap belongs to the
+dataset: "10 days ago" counts from the question's date, in 2023, while
+recall's recency list counts from today. A candidate (meaning and terms at
+0.50, recency and neighbours at 0.10 each) puts 10 of 13 in the top 8 with
+the other 47 unchanged. It is outside PRD-recall and is left for the
+maintainer.
+
+**A seeding bug, found and fixed during the run.** The first pass linked
+each memory to the one with the latest timestamp, as `appendMemory` does.
+LongMemEval's sessions are not in date order, so many memories linked to the
+same few, making hubs of up to 142 links. A time question then pulled in
+about 140 unrelated "neighbours", and only 47 of 60 answers made the top 8
+(2 of 10 temporal-reasoning). In live use time only moves forward and the
+links form a chain. The seeding now chains in insertion order, and the 60
+graphs were relinked without re-embedding; the Marta graphs were already
+chains.
