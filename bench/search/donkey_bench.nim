@@ -9,6 +9,17 @@
 ##   donkey_bench serve              reads {"paddock": …, "args": {…}} per line,
 ##                                   runs the real `session_search` through
 ##                                   `executeNativeTool`, prints {"out": …}
+##   donkey_bench magma-seed <paddock> <sqlite> <corpus.jsonl>
+##                                   fills a MAGMA SQLite graph the way
+##                                   Donkey's automatic capture would have:
+##                                   one memory per substantive turn
+##   donkey_bench magma-prompt <paddock> <sqlite>
+##                                   reads one question per line and prints
+##                                   {"system": …, "tools": […]} with the
+##                                   memory agent's recall for that question
+##
+## MAGMA reads the embedding key (OPENROUTER_API_KEY) and the
+## DONKEY_MEMORY_* knobs from the process environment.
 ##
 ## Not part of the build; compiled by bench/search/bancada.py.
 
@@ -25,25 +36,106 @@ import donkey/core/log
 import donkey/core/types
 import donkey/domain/message
 import donkey/domain/personality
+import donkey/config/environment
+import donkey/ports/memory
+import donkey/domain/memory/capture_pure
+import donkey/domain/memory/provenance_pure
+import donkey/domain/memory/recall_pure
+import donkey/adapters/memory/magma_memory_adapter
+import donkey/adapters/memory/multigraph_runtime
+import donkey/ports/multigraph_store
 
 const AgentName = "Donkey"
 
 proc readOrEmpty(path: string): string =
   if fileExists(path): readFile(path) else: ""
 
-proc promptCmd(paddock: string) =
+proc promptJson(context: string): string =
   let tools = nativeSessionTools()
   let system = buildSystemBase(PersonalityTraits(), AgentName, orchToolsSuffix(tools))
-  ## The memory agent's context: USER.md, MEMORY.md, PREFERENCES.md joined.
-  let context = @[readOrEmpty(paddock / "USER.md"), readOrEmpty(paddock / "MEMORY.md"),
-                  readOrEmpty(paddock / "PREFERENCES.md")].join("\n")
   let req = buildPrompt(system, newHistory(), context, tools)
   var arr = newJArray()
   for t in tools:
     arr.add(%*{"type": "function", "function": {
       "name": t.name, "description": t.description,
       "parameters": parseJson(t.schemaJson)}})
-  echo $(%*{"system": req.system, "tools": arr})
+  $(%*{"system": req.system, "tools": arr})
+
+proc promptCmd(paddock: string) =
+  ## The memory agent's context without a graph: USER.md, MEMORY.md and
+  ## PREFERENCES.md joined.
+  echo promptJson(@[readOrEmpty(paddock / "USER.md"), readOrEmpty(paddock / "MEMORY.md"),
+                    readOrEmpty(paddock / "PREFERENCES.md")].join("\n"))
+
+proc magmaMemory(paddock, sqlite: string): MdFileAdapter =
+  MdFileAdapter(paddocksDir: paddock.parentDir, magmaSqlitePath: sqlite,
+                magmaEnv: magmaEnvironment(readEnvironment()))
+
+proc magmaSeedCmd(paddock, sqlite, corpus: string) =
+  ## One memory per turn that Donkey's capture keeps (`shouldSkipAutoMemoryCapture`,
+  ## `formatAutoMemoryEntry`, `turnOrigin`), written as `appendMemory` writes
+  ## it except for the time: the turn's own, not the moment of seeding, so
+  ## recall by time sees four months, not one minute.
+  let memory = magmaMemory(paddock, sqlite)
+  let uid = UserId(paddock.extractFilename)
+  let magma = memory.newMagmaAdapter()
+  if magma == nil: quit("MAGMA unavailable", 1)
+  discard magma.saveUserMd(uid, readOrEmpty(paddock / "USER.md"))
+  discard magma.savePreferences(uid, readOrEmpty(paddock / "PREFERENCES.md"))
+  var lines: seq[JsonNode]
+  for line in lines(corpus):
+    if line.strip.len > 0: lines.add(parseJson(line))
+  var stored, skipped = 0
+  proc put(text: string; ts: int64; session: string) =
+    let nid = magma.memId(uid)
+    let prev = magma.graph.getLastNode($uid, nodeType = NtMemory)
+    let ok = magma.graph.insertNode(MagmaNode(
+      id: nid, userId: $uid, nodeType: NtMemory, content: text,
+      embedding: magma.embedFn(text), timestamp: ts,
+      meta: originToMeta(turnOrigin(session))))
+    if not ok: quit("graph refused " & nid, 1)
+    if prev.isSome and prev.get().nodeType == NtMemory:
+      magma.graph.linkTemporal(prev.get().id, nid)
+  ## The two profile notes of MEMORY.md, as memories from before the history.
+  let first = if lines.len > 0: lines[0]["ts"].getBiggestInt div 1000 - 86400 else: 0
+  for note in readOrEmpty(paddock / "MEMORY.md").splitLines:
+    if note.startsWith("- "):
+      put(note, first, "profile")
+  var i = 0
+  while i < lines.len:
+    let m = lines[i]
+    if m["role"].getStr == "user":
+      let reply = if i + 1 < lines.len and lines[i + 1]["role"].getStr == "assistant":
+                    lines[i + 1]["text"].getStr else: ""
+      if shouldSkipAutoMemoryCapture(m["text"].getStr, reply):
+        inc skipped
+      else:
+        let at = if reply.len > 0: lines[i + 1] else: m
+        put(formatAutoMemoryEntry(m["text"].getStr, reply),
+            at["ts"].getBiggestInt div 1000, at["session"].getStr)
+        inc stored
+        if stored mod 100 == 0:
+          stderr.writeLine("seeded " & $stored)
+    inc i
+  echo $(%*{"stored": stored, "skipped": skipped})
+
+proc magmaPromptCmd(paddock, sqlite: string) =
+  ## What the memory agent builds for each question (`tkLoadCtx`): the
+  ## graph's context, with the memory part replaced by the recall of 8
+  ## memories for the question when there is any.
+  let memory = magmaMemory(paddock, sqlite)
+  let uid = UserId(paddock.extractFilename)
+  let searchFn = buildGlobalMagmaSearchFn(memory)
+  if searchFn == nil: quit("MAGMA search unavailable", 1)
+  var question = ""
+  while stdin.readLine(question):
+    let ctx = memory.loadContext(uid)
+    var memSection = ctx.memoryMd
+    let recalled = renderRecall(searchFn(uid, question, 8))
+    if recalled.len > 0:
+      memSection = recalled
+    stdout.writeLine(promptJson(@[ctx.userMd, memSection, ctx.preferencesMd].join("\n")))
+    stdout.flushFile()
 
 proc serveCmd() =
   let log = newLogger("bench", lvlError)
@@ -70,4 +162,6 @@ when isMainModule:
   let args = commandLineParams()
   if args.len >= 2 and args[0] == "prompt": promptCmd(args[1])
   elif args.len >= 1 and args[0] == "serve": serveCmd()
-  else: quit("usage: donkey_bench prompt <paddock> | serve", 2)
+  elif args.len >= 4 and args[0] == "magma-seed": magmaSeedCmd(args[1], args[2], args[3])
+  elif args.len >= 3 and args[0] == "magma-prompt": magmaPromptCmd(args[1], args[2])
+  else: quit("usage: donkey_bench prompt <paddock> | serve | magma-seed <paddock> <sqlite> <corpus> | magma-prompt <paddock> <sqlite>", 2)

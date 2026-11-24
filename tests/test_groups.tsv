@@ -216,7 +216,6 @@ g2	tests/domain/media/t_audio_pure.nim
 g2	tests/domain/memory/t_capture_pure.nim
 g2	tests/domain/memory/t_chunking.nim
 g2	tests/domain/memory/t_commitment_pure.nim
-g2	tests/domain/memory/t_decay.nim
 g2	tests/domain/memory/t_graph_pure.nim
 g2	tests/domain/memory/t_ingest_pure.nim
 g2	tests/domain/memory/t_provenance_pure.nim

@@ -178,6 +178,23 @@ when defined(withSqlite):
       check hits.len == 3
       check hits.anyIt(it.content.contains("zarabatana"))
 
+    test "an old memory that answers the question beats recent ones that do not":
+      ## Recall ranks by relevance, not age (MAGMA applies no time decay to
+      ## relevance; time is a filter for "when" questions). With a 30-day
+      ## half-life a four-month-old fact lost to last week's small talk.
+      let a = newSqliteMagmaMemoryAdapter(dbPath, letterEmbedFn)
+      let uid = UserId("u1")
+      let fourMonthsAgo = getTime().toUnix() - 120 * 86_400
+      check a.graph.insertNode(MagmaNode(
+        id: a.memId(uid), userId: $uid, nodeType: NtMemory,
+        content: "wifi novo: a senha e girassol42",
+        embedding: letterEmbedFn("w"), timestamp: fourMonthsAgo))
+      for i in 1 .. 10:
+        a.appendMemory(uid, "wow, que dia comprido " & $i)
+      let hits = a.search(uid, "wifi senha", 3)
+      check hits.len >= 1
+      check hits[0].content.contains("girassol42")
+
     test "search works when no embedding is available":
       proc noEmbedFn(text: string): seq[float32] {.gcsafe.} = @[]
       let a = newSqliteMagmaMemoryAdapter(dbPath, noEmbedFn)

@@ -79,3 +79,54 @@ condition they are 10%, all on questions where it did not search.
 
 The log of every run (calls, outputs, answers, verdicts) is
 `out/base.jsonl`, regenerated with the command in the README.
+
+## MAGMA, the default build, 24/11/2026
+
+`--memoria magma`: each seed's graph holds about 1,085 memories, one per
+substantive turn, as automatic capture would have stored them: embedded with
+`qwen/qwen3-embedding-8b` and stamped with the turn's own time. Before each
+question the memory agent recalls 8 memories for it, as it does on every
+message. Rerank is off, as it is by default. DeepSeek, seeds 7, 11 and 23,
+48 runs per row.
+
+| Memory | Condition | Searched | **Right** | Doesn't remember | Denied |
+|---|---|---|---|---|---|
+| Markdown only | natural | 27% | **25%** | 62% | 10% |
+| Markdown only | forced search | 100% | **69%** | 25% | 4% |
+| MAGMA, 30-day decay | natural | 31% | **31%** | 54% | 10% |
+| MAGMA, 30-day decay | forced search | 100% | **79%** | 15% | 4% |
+| **MAGMA, no decay** | natural | 15% | **67%** | 23% | 8% |
+| **MAGMA, no decay** | forced search | 100% | **85%** | 2% | 8% |
+
+Fact questions alone (30 per row):
+
+| Setup | natural | forced |
+|---|---|---|
+| Markdown only | 13% | 67% |
+| MAGMA, 30-day decay | 23% | 87% |
+| **MAGMA, no decay** | **83%** | **100%** |
+
+**The decay was the problem.** Recall multiplied every score by a 30-day
+half-life, so a four-month-old memory kept about 6% of its score. By plain
+cosine similarity the right memory was first (wifi 0.67 and allergy 0.68,
+against 0.58 for the filler), but after the decay last week's small talk
+filled the recall. MAGMA itself (arXiv:2601.03236) applies no time decay to
+relevance: time is a filter and an order for "when" questions. With the
+decay removed:
+- **Without searching:** recall answers fact questions on its own (83%, with
+  the agent searching 3% of them).
+- **Paraphrases:** "cirurgia" for "operada" goes from 0 of 3 to 3 of 3 in
+  both conditions. Embeddings bridge what words cannot.
+
+**What is left:**
+- **Never-said questions** (25% natural, 50% forced). Most misses are graded
+  "denied" for answers such as "you always said 'my boss', you never told me
+  the name". That is a reasonable answer about something never said, but the
+  judge's rubric (Supernova's, unchanged so the runs stay comparable) marks a
+  confident "you never told me" as a denial.
+- **Allergy, natural, 0 of 3.** Recall's literal-term matching folds case
+  but not accents. Marta wrote "mamae é alergica" and the question says
+  "alérgica", so the words do not match, while identical copies of a filler
+  memory ("levei a mamãe no médico pra renovar receita") take three of the
+  eight slots. Accent folding and dropping duplicate contents from recall are
+  the next fixes.
