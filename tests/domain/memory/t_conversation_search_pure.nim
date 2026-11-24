@@ -200,6 +200,13 @@ proc runTests*() =
       check phraseMatchesIn("s1", content, 7, "kappa", 0)[0].msg.seq == 2
       check phraseMatchesIn("s1", content, 7, "kappa", 0)[0].msg.tsMs == 7
 
+    test "a negative number reads the same on both paths":
+      let content = "{\"role\":\"user\",\"text\":\"kappa\",\"ts\":-5,\"seq\":-3}\n"
+      let fast = phraseMatchesIn("s1", content, 9, "kappa", 0)[0].msg
+      let full = parseTranscriptMessages("s1", content, 9)[0]
+      check fast.seq == full.seq
+      check fast.tsMs == full.tsMs
+
     test "ranking from the file agrees with ranking the messages":
       var a = initRanker(@["deploy"])
       var b = initRanker(@["deploy"])

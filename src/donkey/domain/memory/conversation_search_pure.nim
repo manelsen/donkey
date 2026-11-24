@@ -434,6 +434,8 @@ func intField(line, key: string): int64 =
   let at = line.find(tag)
   if at < 0: return 0
   var i = at + tag.len
+  ## A negative or non-numeric value reads as absent (0), as the full parser's
+  ## callers treat it: the position or the fallback time is used instead.
   while i < line.len and line[i] in Digits:
     result = result * 10 + int64(ord(line[i]) - ord('0'))
     inc i
