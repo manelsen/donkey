@@ -221,6 +221,22 @@ when defined(withSqlite):
       check hits.len >= 1
       check hits[0].content.contains("cafeteira")
 
+    test "a question about order still finds the memory that answers it":
+      ## Its meaning points at one old memory; twenty recent ones do not
+      ## answer it. "first" asks about order, not about a recent period.
+      let a = newSqliteMagmaMemoryAdapter(dbPath, letterEmbedFn)
+      let uid = UserId("u1")
+      let monthsAgo = getTime().toUnix() - 90 * 86_400
+      check a.graph.insertNode(MagmaNode(
+        id: a.memId(uid), userId: $uid, nodeType: NtMemory,
+        content: "comprei a cafeteira nova",
+        embedding: letterEmbedFn("c"), timestamp: monthsAgo))
+      for i in 1 .. 20:
+        a.appendMemory(uid, "rotina do dia " & $i)
+      let hits = a.search(uid, "coisa: which happened first?", 3)
+      check hits.len >= 1
+      check hits[0].content.contains("cafeteira")
+
     test "an old memory that answers the question beats recent ones that do not":
       ## Recall ranks by relevance, not age (MAGMA applies no time decay to
       ## relevance; time is a filter for "when" questions). With a 30-day
