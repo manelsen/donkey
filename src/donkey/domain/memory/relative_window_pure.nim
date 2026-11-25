@@ -10,7 +10,9 @@
 ## - N days, weeks or months ago / há N … / N … atrás, in digits or words:
 ##   a day for days, the 7 days around the date for weeks, the 15 around it
 ##   for months;
-## - last week / semana passada, last month / mês passado;
+## - last week / semana passada: 14 to 6 days ago (the 7 days before the
+##   current 7, and a day of slack for a question asked on the boundary);
+##   last month / mês passado: 60 to 29 days ago, likewise;
 ## - in the last N days, weeks or months / nos últimos N …: then until now.
 ##
 ## Days are UTC days. No match, no window: the question is ranked as before.
