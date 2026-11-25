@@ -4,8 +4,9 @@
 ## decides the weight of each list from the wording of the query. No I/O: the
 ## adapter only runs the searches the policy asks for.
 
-import std/strutils
+import std/[options, strutils]
 import ./session_search_pure
+import ./relative_window_pure
 
 type
   QueryIntent* = enum
@@ -59,7 +60,11 @@ func asksAboutRecentPeriod*(query: string): bool =
   false
 
 func classifyQuery*(query: string): QueryPolicy =
-  ## A query about a recent period also ranks by recency and pulls in the
-  ## memories next to its hits; any other query, including one about order
-  ## or a date, ranks by meaning and words.
-  if asksAboutRecentPeriod(query): temporalPolicy() else: defaultPolicy()
+  ## A query about a recent period, or naming a relative date ("há 3 dias"),
+  ## also ranks by recency and pulls in the memories next to its hits; any
+  ## other query, including one about order or a date, ranks by meaning and
+  ## words. (Whether a relative date is present does not depend on "now".)
+  if asksAboutRecentPeriod(query) or relativeWindow(query, 0).isSome:
+    temporalPolicy()
+  else:
+    defaultPolicy()

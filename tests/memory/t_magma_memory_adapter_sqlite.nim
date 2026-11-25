@@ -237,6 +237,27 @@ when defined(withSqlite):
       check hits.len >= 1
       check hits[0].content.contains("cafeteira")
 
+    test "a question about a relative date ranks by recency inside that period":
+      ## "há 3 dias" means that day: today's twenty memories are the newest,
+      ## but the one from three days ago is what the question is about.
+      let a = newSqliteMagmaMemoryAdapter(dbPath, letterEmbedFn)
+      let uid = UserId("u1")
+      let now = getTime().toUnix()
+      let today = now - (now mod 86_400)
+      check a.graph.insertNode(MagmaNode(
+        id: a.memId(uid), userId: $uid, nodeType: NtMemory,
+        content: "planejamos a viagem a Lisboa",
+        embedding: letterEmbedFn("p"), timestamp: today - 3 * 86_400 + 3_600))
+      check a.graph.insertNode(MagmaNode(
+        id: a.memId(uid), userId: $uid, nodeType: NtMemory,
+        content: "consertamos a bicicleta",
+        embedding: letterEmbedFn("c"), timestamp: today - 10 * 86_400))
+      for i in 1 .. 20:
+        a.appendMemory(uid, "rotina do dia " & $i)
+      let hits = a.search(uid, "o que falamos há 3 dias?", 3)
+      check hits.len >= 1
+      check hits[0].content.contains("Lisboa")
+
     test "recall uses a query vector computed elsewhere, without embedding again":
       ## The daemon embeds the question on a worker thread and passes the
       ## vector in: recall must not make a second, blocking call.

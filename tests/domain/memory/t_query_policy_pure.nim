@@ -60,5 +60,14 @@ proc runTests*() =
                     "linguagens de programação", ""]:
         check not asksAboutRecentPeriod(query)
 
+proc runRelativeDateTests*() =
+  suite "a relative date makes a question temporal":
+    test "há 3 dias, two weeks ago, semana passada":
+      check classifyQuery("o que falamos há 3 dias?").intent == qiTemporal
+      check classifyQuery("what did I say two weeks ago").intent == qiTemporal
+      check classifyQuery("o que fizemos semana passada").intent == qiTemporal
+      check classifyQuery("qual é a senha do wifi?").intent == qiSemantic
+
 when isMainModule:
   runTests()
+  runRelativeDateTests()

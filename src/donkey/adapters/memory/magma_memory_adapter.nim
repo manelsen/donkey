@@ -16,6 +16,7 @@ import ../../domain/memory/commitment_pure
 import ../../domain/memory/episode_pure
 import ../../domain/memory/provenance_pure
 import ../../domain/memory/query_policy_pure
+import ../../domain/memory/relative_window_pure
 
 export query_policy_pure  ## the policy lives in the domain; kept visible here
 
@@ -540,11 +541,20 @@ when defined(withPostgres) or defined(withSqlite):
           addSignal(node.get(), lexical = rrfScoreWeighted(
             rank, policy.lexicalWeight))
 
-    let recentNodes = a.graph.queryByTimeRange(uid, 0, getTime().toUnix() + 1,
+    let nowSec = getTime().toUnix()
+    let recentNodes = a.graph.queryByTimeRange(uid, 0, nowSec + 1,
                                                limit = recentTopK,
                                                nodeType = NtMemory)
     if policy.intent == qiTemporal:
-      for rank, node in recentNodes:
+      ## A relative date ("há 3 dias", "last week") names a period: recency
+      ## counts inside it, not over all time, where today would win.
+      let window = relativeWindow(query, nowSec)
+      let temporalNodes =
+        if window.isSome:
+          a.graph.queryByTimeRange(uid, window.get.fromSec, window.get.toSec,
+                                   limit = recentTopK, nodeType = NtMemory)
+        else: recentNodes
+      for rank, node in temporalNodes:
         if node.nodeType == NtMemory:
           addSignal(node, temporal = rrfScoreWeighted(rank, policy.temporalWeight))
       for hit in semanticHits:
