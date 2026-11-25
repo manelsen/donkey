@@ -8,7 +8,7 @@ type
   ChannelKind* = enum
     ## Identifies which messaging channel a message arrived on / should be sent to.
     ckTelegram, ckDiscord, ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp,
-    ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli, ckLine
+    ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli, ckLine, ckTeams
 
   ChannelPrefs* = object
     ## User preferences for a channel. Defined in core so app/domain can use it
@@ -74,3 +74,4 @@ func `$`*(k: ChannelKind): string =
   of ckEmail:      "email"
   of ckCli:        "cli"
   of ckLine:       "line"
+  of ckTeams:      "teams"
