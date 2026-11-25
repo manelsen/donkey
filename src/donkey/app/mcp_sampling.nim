@@ -99,7 +99,9 @@ proc samplingHandler*(serverName, identity: string; deps: SamplingDeps): Samplin
       recordToolCall("sampling:" & serverName, float(epochMs() - started), ok = false)
       return err("the model failed: " & completion.error)
     let resp = completion.get
-    deps.budget[].spend(identity, resp.inputTokens + resp.outputTokens - reserved, started)
+    ## A provider that reports no usage is charged what was reserved.
+    let used = resp.inputTokens + resp.outputTokens
+    deps.budget[].spend(identity, (if used > 0: used else: reserved) - reserved, started)
     recordToolCall("sampling:" & serverName, float(epochMs() - started), ok = true)
     deps.log.info("mcp sampling: " & serverName & " for " & call.userId & " (" &
                   $(resp.inputTokens + resp.outputTokens) & " tokens)")

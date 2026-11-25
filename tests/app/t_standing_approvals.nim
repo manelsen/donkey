@@ -83,6 +83,18 @@ proc runTests*() =
       check again.revoke("u1", "sampling:abc").isOk
       check not newStandingApprovals(Tmp / "persist" / "standing_approvals.json").toStandingPort().has("u1", "sampling:abc")
 
+    test "'always' that could not be kept says it was only this time":
+      removeDir(Tmp / "nolookup")
+      var port = newApprovalStore(Tmp / "nolookup" / "approvals.json").toApprovalPort()
+      port.lookup = nil
+      let standing = newStandingApprovals(Tmp / "nolookup" / "s.json").toStandingPort()
+      configureApprovalService(port, @[], timeoutSec = 10.0, standing = standing)
+      defer: resetApprovalService()
+      let request = port.create("u1", "telegram", "sampling:abc", "x", 60_000).get
+      let reply = tryHandleApprovalInput(UserId("u1"), approvalAlwaysCallbackData(request.id)).get
+      check "desta vez" in reply
+      check not standing.has("u1", "sampling:abc")
+
     test "ctl lists and revokes what stands":
       let (_, standing) = setup("ctl")
       defer: resetApprovalService()

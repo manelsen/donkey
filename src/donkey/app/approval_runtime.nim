@@ -271,11 +271,12 @@ proc tryHandleApprovalInput*(userId: UserId; text: string): Option[string] {.gcs
     let res = service.store.decide(id, $userId, true, admin = false)
     if res.isErr:
       return some("Erro: " & res.error)
-    if service.standing.hasStanding and service.store.lookup != nil:
-      let request = service.store.lookup(id)
-      if request.isOk:
-        service.standing.grant($userId, request.get.toolName).isOkOr:
-          return some("✅ Aprovado desta vez; não foi possível guardar para sempre: " & error)
+    if not service.standing.hasStanding or service.store.lookup == nil:
+      return some("✅ Aprovado desta vez; aprovações permanentes não estão disponíveis.")
+    let request = service.store.lookup(id).valueOr:
+      return some("✅ Aprovado desta vez; não foi possível guardar para sempre: " & error)
+    service.standing.grant($userId, request.toolName).isOkOr:
+      return some("✅ Aprovado desta vez; não foi possível guardar para sempre: " & error)
     return some("✅ Aprovado, e não pergunto mais neste caso.")
   let callback = parseApprovalCallback(value)
   if callback.isSome:

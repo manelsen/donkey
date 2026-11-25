@@ -28,6 +28,7 @@ proc request(text = "2+2?"; maxTokens = 50): JsonNode =
 type Model = ref object
   calls: int
   lastReq: CompletionRequest
+  silent: bool   ## a provider that reports no usage
 
 proc deps(m: Model; outbox: AsyncQueue[OutboundMessage]; cap = 10_000): SamplingDeps =
   SamplingDeps(
@@ -37,6 +38,8 @@ proc deps(m: Model; outbox: AsyncQueue[OutboundMessage]; cap = 10_000): Sampling
         {.cast(gcsafe).}:
           inc m.calls
           m.lastReq = req
+        if m.silent:
+          return ok(CompletionResponse(text: "4"))
         return ok(CompletionResponse(text: "4", inputTokens: 10, outputTokens: 5)),
     budget: new(SamplingBudget),
     dailyTokenCap: cap,
@@ -155,6 +158,19 @@ proc runTests*() =
       let person2 = press(outbox, "allow")
       check (waitFor handler("sampling/createMessage", request(maxTokens = 1_000), call)).isOk
       discard waitFor person2
+
+    test "a provider that reports no usage is charged what was reserved":
+      fresh("silent")
+      defer: resetApprovalService()
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let m = Model(silent: true)
+      let handler = samplingHandler("fs", serverIdentity("npx", @["fs"]),
+                                    deps(m, outbox, cap = 1_500))
+      let person = press(outbox, "allow")
+      check (waitFor handler("sampling/createMessage", request(maxTokens = 1_000), call)).isOk
+      discard waitFor person
+      let again = waitFor handler("sampling/createMessage", request(maxTokens = 1_000), call)
+      check again.isErr and "daily" in again.error
 
     test "other requests from the server are not supported":
       fresh("other")
