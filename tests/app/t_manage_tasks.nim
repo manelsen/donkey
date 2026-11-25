@@ -74,6 +74,22 @@ proc runTests*() =
       check act(dir, ManageTasksContext(action: "add", title: "a")).isErr
       check readFile(dir / "tasks.json") == "{broken"
 
+    test "a view that cannot be written does not undo the saved change":
+      let dir = paddock("view")
+      defer: removeDir(dir)
+      createDir(dir / "TASKS.md")   ## a directory where the view should go
+      let r = act(dir, ManageTasksContext(action: "add", title: "a"))
+      check r.isOk
+      check "t1" in readFile(dir / "tasks.json")
+
+    test "the reply to add names the task on one line":
+      let dir = paddock("reply")
+      defer: removeDir(dir)
+      let r = act(dir, ManageTasksContext(action: "add", title: "- ligar -",
+                                          assignee: "@x", due: "2027-02-01")).get
+      check '\n' notin r
+      check "t1" in r and "- ligar -" in r and "@x" in r and "2027-02-01" in r
+
     test "the tool is dispatched for real and denied to subagents":
       let dir = paddock("dispatch")
       defer: removeDir(dir)

@@ -119,6 +119,16 @@ proc runTests*() =
       check back.isOk
       check back.get == b
 
+    test "a stale next_id cannot hand out an id already on the board":
+      let edited = """{"next_id":1,"tasks":[{"id":"t5","title":"a","state":"todo"}]}"""
+      let b = parseBoard(edited).get
+      let (_, t) = b.addTask("b", nowMs = 0).get
+      check t.id == "t6"
+
+    test "two tasks with one id are refused":
+      check parseBoard("""{"next_id":3,"tasks":[{"id":"t1","title":"a","state":"todo"},""" &
+                       """{"id":"t1","title":"b","state":"done"}]}""").isErr
+
     test "a damaged file is refused, not guessed":
       check parseBoard("nope").isErr
       check parseBoard("""{"tasks":[{"id":"t1"}]}""").isErr

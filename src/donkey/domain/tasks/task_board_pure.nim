@@ -231,7 +231,14 @@ proc parseBoard*(text: string): Result[TaskBoard, string] =
     if not item{"notes"}.isNil and item["notes"].kind == JArray:
       for n in item["notes"]:
         t.notes.add TaskNote(atMs: n{"at_ms"}.getBiggestInt, text: n{"text"}.getStr)
+    if b.indexOf(t.id) >= 0:
+      return err("tasks.json has two tasks with the id " & t.id)
     b.tasks.add t
+    ## A next_id behind the ids already used (an edited file) must not hand
+    ## out one of them again.
+    if t.id.startsWith("t"):
+      try: b.nextId = max(b.nextId, parseInt(t.id[1 .. ^1]) + 1)
+      except ValueError: discard
   ok(b)
 
 proc parseDueDate*(text: string): Result[int64, string] =

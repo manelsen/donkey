@@ -24,8 +24,12 @@ proc loadBoard*(fs: FsRuntimePort; paddockDir: string): Result[TaskBoard, string
   parseBoard(text)
 
 proc saveBoard(fs: FsRuntimePort; paddockDir: string; b: TaskBoard): Result[void, string] =
+  ## tasks.json is the record; TASKS.md only a view of it. Once the record is
+  ## written the change is made, whatever happens to the view (it is written
+  ## again at the next change).
   ? fs.writeFile(paddockDir & "/" & BoardFile, boardJson(b))
-  fs.writeFile(paddockDir & "/" & BoardView, renderMarkdown(b))
+  discard fs.writeFile(paddockDir & "/" & BoardView, renderMarkdown(b))
+  ok()
 
 proc listing(b: TaskBoard; state, assignee: string): Result[string, string] =
   var filter = none(TaskState)
@@ -54,7 +58,12 @@ proc performManageTasks*(fs: FsRuntimePort; paddockDir: string;
       added = ? added.assignTask(task.id, ctx.assignee, nowMs).mapErr(
         proc(e: string): string = "Error: " & e)
     next = added
-    reply = "Added " & taskLine(next.find(task.id).get).strip(chars = {'-', ' '})
+    reply = "Added " & task.id & ": " & task.title
+    if ctx.assignee.strip.len > 0:
+      reply.add " (" & ctx.assignee.strip.toLowerAscii & ")"
+    if due > 0:
+      reply.add ", due " & dateOf(due)
+    reply.add "."
   of "move":
     let state = ? parseTaskState(ctx.state).mapErr(proc(e: string): string = "Error: " & e)
     next = ? board.moveTask(ctx.id, state, nowMs).mapErr(proc(e: string): string = "Error: " & e)
