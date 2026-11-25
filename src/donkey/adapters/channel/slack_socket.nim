@@ -4,16 +4,17 @@
 ## `apps.connections.open`; the bot token remains responsible for outbound
 ## messages. Envelopes are acked after the payload is queued, and the Slack
 ## runtime drains the same module-level queue used by the webhook receiver.
+##
+## The connection's lifecycle (thread, backoff, idle timeout, ping/pong,
+## stop) is adapters/network/persistent_socket's; this module is the
+## protocol: find the URL, read envelopes, ack them.
 
-import std/[atomics, json, locks, monotimes, net, os, strutils, times, uri]
-when defined(posix):
-  import std/posix
+import std/[json, net, strutils, uri]
 import ../../core/log
 import ../../core/pipeops
 import ../../ports/http
 import ./slack
-import ./ws_client
-import ../../infra/thread_handle
+import ../network/persistent_socket
 
 const
   SlackSocketReconnectMinMs = 1_000
@@ -21,37 +22,21 @@ const
   SlackSocketIdleTimeoutMs  = 120_000
 
 type
-  SlackSocketControl = object
-    ## What the daemon and the reader thread share: in shared memory behind a
-    ## pointer, so neither side holds a ref the other one also counts.
-    stop:     Atomic[bool]
-    fdLock:   Lock
-    activeFd: SocketHandle
-
   SlackHttpFactory* = proc(): HttpRuntimePort {.nimcall, gcsafe.}
-    ## Builds the reader thread's HTTP port. Called on that thread, so the
+    ## Builds the connection thread's HTTP port. Called on that thread, so the
     ## port's closures are never shared with the daemon loop.
 
-  SlackSocketArgs = object
-    ## Plain data only (spawnThread checks it): the thread builds its HTTP
-    ## port and its logger itself.
+  SlackSocketConfig = object
+    ## Plain data, copied to the connection thread.
     appToken:    string
     httpFactory: SlackHttpFactory
-    logger:      LogSpec
-    control:     ptr SlackSocketControl
 
-  SlackSocketMode* = ref object
-    ## Built and used by the reader thread only.
-    appToken: string
-    http:     HttpRuntimePort
-    logger:   Logger
-    control:  ptr SlackSocketControl
+  SlackSocketState = object
+    ## Lives on the connection thread.
+    http: HttpRuntimePort
 
-var
-  gSlackSocketThread: ThreadHandle[SlackSocketArgs]
-  gSlackSocketControl: ptr SlackSocketControl
-    ## Pointers hold nothing the GC owns: gcsafe to touch from the daemon.
-  gSlackSocketStarted = false
+var gSlackSocket: PersistentSocket[SlackSocketConfig, SlackSocketState]
+  ## Pointers only: gcsafe to touch from the daemon.
 
 func envelopeId(envelope: JsonNode): string =
   if envelope == nil or envelope.kind != JObject:
@@ -91,16 +76,17 @@ proc handleSlackSocketEnvelope*(envelope: JsonNode): bool =
     discard
   true
 
-proc openSocketUrl(client: SlackSocketMode): Result[string, string] =
-  if client.http.postNoRedirect == nil:
+proc openSocketUrl(http: HttpRuntimePort; appToken: string): Result[string, string]
+                  {.gcsafe, raises: [].} =
+  if http.postNoRedirect == nil:
     return err("apps.connections.open needs an HTTP port with postNoRedirect")
   var resp: Result[HttpResponse, string]
   try:
-    resp = client.http.postNoRedirect(
+    resp = http.postNoRedirect(
       SlackApiBase & "/apps.connections.open", "",
-      @[("Authorization", "Bearer " & client.appToken),
+      @[("Authorization", "Bearer " & appToken),
         ("Content-Type", "application/x-www-form-urlencoded")])
-  except CatchableError as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     return err("apps.connections.open failed: " & e.msg)
   if resp.isErr:
     return err("apps.connections.open failed: " & resp.error)
@@ -120,159 +106,78 @@ proc openSocketUrl(client: SlackSocketMode): Result[string, string] =
   except CatchableError as e:
     err("apps.connections.open response: " & e.msg)
 
-proc sleepOrStop(client: SlackSocketMode; ms: int): bool =
-  var waited = 0
-  while waited < ms and not client.control.stop.load():
-    sleep(1000)
-    waited += 1000
-  not client.control.stop.load()
-
-proc runSlackSocket(args: SlackSocketArgs) {.thread.} =
-  let client = SlackSocketMode(appToken: args.appToken,
-                               http: args.httpFactory(),
-                               logger: args.logger.toLogger,
-                               control: args.control)
-  var backoff = SlackSocketReconnectMinMs
-  while not client.control.stop.load():
-    let urlRes = client.openSocketUrl()
-    if urlRes.isErr:
-      client.logger.warn("slack socket: " & urlRes.error)
-      if not client.sleepOrStop(backoff):
-        break
-      backoff = min(backoff * 2, SlackSocketReconnectMaxMs)
-      continue
-
-    let socketUrl = parseUri(urlRes.get())
-    let port =
-      if socketUrl.port.len > 0:
-        try: Port(parseInt(socketUrl.port))
-        except ValueError: Port(443)
-      else:
-        Port(443)
-    let path =
-      if socketUrl.path.len > 0: socketUrl.path else: "/"
-    let fullPath =
-      if socketUrl.query.len > 0: path & "?" & socketUrl.query else: path
-
-    var ws: WsClient
+proc slackLocate(cfg: SlackSocketConfig; state: var SlackSocketState;
+                 log: Logger): Result[SocketTarget, string] {.nimcall, gcsafe, raises: [CatchableError].} =
+  if state.http.postNoRedirect == nil:
     try:
-      let onSocket = proc(sock: Socket) {.gcsafe.} =
-        acquire(client.control.fdLock)
-        client.control.activeFd = sock.getFd
-        release(client.control.fdLock)
-      ws = wsConnect(socketUrl.hostname, port, fullPath,
-                     timeoutMs = 10_000, onSocket = onSocket)
-    except CatchableError as e:
-      acquire(client.control.fdLock)
-      client.control.activeFd = SocketHandle(-1)
-      release(client.control.fdLock)
-      client.logger.warn("slack socket: connect failed: " & e.msg)
-      if not client.sleepOrStop(backoff):
-        break
-      backoff = min(backoff * 2, SlackSocketReconnectMaxMs)
-      continue
+      state.http = cfg.httpFactory()
+    except Exception as e:  ## effect boundary: callee raises are unannotated
+      return err("slack socket: cannot build its HTTP port: " & e.msg)
+  let url = ? openSocketUrl(state.http, cfg.appToken)
+  let socketUrl = parseUri(url)
+  let port =
+    if socketUrl.port.len > 0:
+      try: Port(parseInt(socketUrl.port))
+      except ValueError: Port(443)
+    else:
+      Port(443)
+  let path = if socketUrl.path.len > 0: socketUrl.path else: "/"
+  ok(SocketTarget(host: socketUrl.hostname, port: port, useTls: true,
+                  path: if socketUrl.query.len > 0: path & "?" & socketUrl.query
+                        else: path))
 
-    client.logger.info("slack socket: connected")
-    backoff = SlackSocketReconnectMinMs
-    var lastActivity = getMonoTime()
-    var reopen = false
-    while not client.control.stop.load() and not reopen:
-      let frameRes = ws.recvFrame(1000)
-      if frameRes.isErr:
-        if frameRes.error == "timeout":
-          if inMilliseconds(getMonoTime() - lastActivity) >=
-             SlackSocketIdleTimeoutMs:
-            client.logger.warn("slack socket: idle timeout; reconnecting")
-            reopen = true
-          else:
-            continue
-        else:
-          client.logger.warn("slack socket: " & frameRes.error)
-          reopen = true
-        continue
-      let frame = frameRes.get()
-      lastActivity = getMonoTime()
-      try:
-        case frame.opcode
-        of WsOpcodeText:
-          var envelope: JsonNode
-          try:
-            envelope = parseJson(frame.data)
-          except CatchableError as e:
-            client.logger.warn("slack socket: invalid envelope: " & e.msg)
-            continue
-          if envelope.getOrDefault("type").getStr("") == "hello":
-            continue
-          let id = envelopeId(envelope)
-          let keepOpen = handleSlackSocketEnvelope(envelope)
-          ## Ack after the payload is queued, so a crash before queueing
-          ## leaves the event eligible for redelivery.
-          if id.len > 0:
-            ws.sendFrame($ %* {"envelope_id": id})
-          if not keepOpen:
-            reopen = true
-        of WsOpcodePing:
-          ws.sendFrame(frame.data, WsOpcodePong)
-        of WsOpcodeClose:
-          reopen = true
-        else:
-          discard
-      except CatchableError as e:
-        client.logger.warn("slack socket: " & e.msg)
-        reopen = true
+proc slackOpened(cfg: SlackSocketConfig; state: var SlackSocketState; ws: WsClient;
+                 log: Logger): SessionStep {.nimcall, gcsafe, raises: [CatchableError].} =
+  ssKeep
 
-    acquire(client.control.fdLock)
-    client.control.activeFd = SocketHandle(-1)
-    release(client.control.fdLock)
-    wsClose(ws)
-    if not client.control.stop.load():
-      if not client.sleepOrStop(1000):
-        break
+proc slackFrame(cfg: SlackSocketConfig; state: var SlackSocketState; ws: WsClient;
+                frame: WsFrame; log: Logger): SessionStep {.nimcall, gcsafe, raises: [CatchableError].} =
+  if frame.opcode != WsOpcodeText:
+    return ssKeep
+  var envelope: JsonNode
+  try:
+    envelope = parseJson(frame.data)
+  except CatchableError as e:
+    log.warn("slack socket: invalid envelope: " & e.msg)
+    return ssKeep
+  if envelope.getOrDefault("type").getStr("") == "hello":
+    return ssKeep
+  let id = envelopeId(envelope)
+  let keepOpen = handleSlackSocketEnvelope(envelope)
+  ## Ack after the payload is queued, so a crash before queueing leaves the
+  ## event eligible for redelivery.
+  if id.len > 0:
+    ws.sendFrame($ %* {"envelope_id": id})
+  if keepOpen: ssKeep else: ssReconnect
+
+proc slackTick(cfg: SlackSocketConfig; state: var SlackSocketState; ws: WsClient;
+               nowMs: int64; log: Logger): SessionStep {.nimcall, gcsafe, raises: [CatchableError].} =
+  ssKeep
+
+const SlackSocketProtocol = SocketProtocol[SlackSocketConfig, SlackSocketState](
+  locate: slackLocate, opened: slackOpened, frame: slackFrame, tick: slackTick)
 
 proc startSlackSocketMode*(appToken: string;
                            httpFactory: SlackHttpFactory;
                            logger: Logger): Result[void, string] {.gcsafe, raises: [].} =
-  ## Starts the Socket Mode reader thread. Requires the app-level token; the
-  ## bot token is validated by the gateway caller because it is only needed
-  ## for outbound messages.
+  ## Starts Socket Mode. Requires the app-level token; the bot token is
+  ## validated by the gateway caller because it is only needed for outbound
+  ## messages.
   if appToken.len == 0:
     return err("SLACK_APP_TOKEN is empty")
   if httpFactory == nil:
     return err("Slack Socket Mode needs an HTTP port factory")
-  if gSlackSocketStarted:
+  if gSlackSocket.running:
     return err("Slack Socket Mode is already started")
-
-  let control = cast[ptr SlackSocketControl](allocShared0(sizeof(SlackSocketControl)))
-  control.stop.store(false)
-  control.activeFd = SocketHandle(-1)
-  initLock(control.fdLock)
-  try:
-    gSlackSocketThread = spawnThread(runSlackSocket,
-      SlackSocketArgs(appToken: appToken, httpFactory: httpFactory,
-                      logger: logger.spec, control: control))
-  except CatchableError as e:
-    deinitLock(control.fdLock)
-    deallocShared(control)
-    return err("cannot start Slack Socket Mode: " & e.msg)
-  gSlackSocketControl = control
-  gSlackSocketStarted = true
+  gSlackSocket = ? startPersistentSocket("slack socket", SlackSocketProtocol,
+    SlackSocketConfig(appToken: appToken, httpFactory: httpFactory),
+    SocketPolicy(reconnectMinMs: SlackSocketReconnectMinMs,
+                 reconnectMaxMs: SlackSocketReconnectMaxMs,
+                 idleTimeoutMs: SlackSocketIdleTimeoutMs,
+                 recvTimeoutMs: 1_000),
+    logger)
   ok()
 
 proc stopSlackSocketMode*() =
-  ## Stops the reader thread. Safe to call when Socket Mode was never started.
-  if not gSlackSocketStarted:
-    return
-  let control = gSlackSocketControl
-  control.stop.store(true)
-  when defined(posix):
-    ## Wake a blocked SSL_read so shutdown does not depend on frame timing.
-    acquire(control.fdLock)
-    if control.activeFd != SocketHandle(-1):
-      discard posix.shutdown(posix.SocketHandle(control.activeFd),
-                            posix.SHUT_RDWR)
-    release(control.fdLock)
-  joinAndFree(gSlackSocketThread)
-  deinitLock(control.fdLock)
-  deallocShared(control)
-  gSlackSocketControl = nil
-  gSlackSocketStarted = false
+  ## Stops Socket Mode. Safe to call when it was never started.
+  gSlackSocket.stop()

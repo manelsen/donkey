@@ -132,7 +132,11 @@ proc sendFrame*(ws: WsClient; data: string; opcode = WsOpcodeText) =
   for i, c in data:
     frame.add(char(int(c) xor int(mask[i mod 4])))
 
-  ws.sock.send(frame)
+  ## No SafeDisconn: with it, Nim's send(string) swallows EPIPE/ECONNRESET
+  ## without advancing and loops forever, so a heartbeat or a close frame to
+  ## a dropped connection would spin a gateway thread at full CPU. A dead
+  ## peer raises instead, and the caller reconnects.
+  ws.sock.send(frame, flags = {})
 
 proc recvFrameRaw(ws: WsClient; timeoutMs = 1000;
                   frameTimeoutMs = 10_000;
