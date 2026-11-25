@@ -23,6 +23,7 @@ import ../filesystem/fs_adapter
 import ../../app/credential_runtime
 import ../../app/preference_commands
 import ./model_catalog_ui
+import ../../app/task_board
 
 when defined(withPostgres) or defined(withSqlite):
   import ../../adapters/memory/magma_memory_adapter
@@ -330,6 +331,11 @@ template guarded(body: untyped): untyped =
   except CatchableError as e:
     err(e.msg)
 
+proc taskBoardText*(memory: MdFileAdapter; userId: UserId): Result[string, string] =
+  ## /tasks: the board in the person's paddock, as the agent keeps it.
+  let board = ? loadBoard(newFsAdapter(), memory.paddockDir(userId))
+  ok(renderMarkdown(board))
+
 proc newCommandServices*(memory: MdFileAdapter;
                          completeBuilder: proc(preferencesMd: string): CompleteFn {.gcsafe.};
                          modelCatalogLoader: ModelCatalogLoader;
@@ -351,6 +357,8 @@ proc newCommandServices*(memory: MdFileAdapter;
       guarded: pingProvider(memory, userId, completeBuilder),
     memoryView: proc(userId: UserId): Result[string, string] {.gcsafe.} =
       guarded: buildMemoryViewText(memory, userId),
+    taskBoard: proc(userId: UserId): Result[string, string] {.gcsafe.} =
+      guarded: taskBoardText(memory, userId),
     clearMemory: proc(userId: UserId): Result[void, string] {.gcsafe.} =
       try:
         memory.clearMemory(userId)

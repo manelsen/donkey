@@ -135,7 +135,9 @@ proc dispatchUiCommand*(env: CommandEnv; req: CommandDispatchRequest): CommandOu
   of cmdBudget: fromResult(rtUi, s.budget(userId, value))
   of cmdVerbose, cmdExec, cmdQueue, cmdUsage, cmdTts:
     replied(rtUi, buildDeferredUiCommandText(req.command.kind))
-  of cmdTasks:  replied(rtUi, buildTasksText())
+  of cmdTasks:
+    if s.taskBoard != nil: fromResult(rtUi, s.taskBoard(userId))
+    else: replied(rtUi, buildTasksText())
   of cmdAgents:
     let counts = if s.toolCounts != nil: s.toolCounts() else: ToolCounts()
     replied(rtUi, buildAgentsText(counts.tools, counts.clients))

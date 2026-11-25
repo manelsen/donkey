@@ -128,10 +128,9 @@ func buildConfigText*(prefs: ChannelPrefs; withButtons = true): string =
   footer
 
 func buildTasksText*(): string =
-  "🕒 *Tarefas Ativas*\n\n" &
-  "- `deliverDueReminders`: Entrega de lembretes agendados (Ativo)\n" &
-  "- `heartbeatLoop`: Verificação de saúde do sistema (Ativo)\n\n" &
-  "Nenhuma outra tarefa em execução no momento."
+  ## /tasks where the task board cannot be read (no paddock for this channel).
+  "O quadro de tarefas não está disponível aqui. Peça ao agente: " &
+    "\"mostre minhas tarefas\"."
 
 func buildAgentsText*(toolsCount, toolClientsCount: int): string =
   "🤖 *Agentes & Ferramentas*\n\n" &

@@ -188,6 +188,7 @@ const
   SubagentHardDeniedTools* = [
     "manage_agents",
     "manage_schedules",
+    "manage_tasks",
     "ask_agent",
     "convene_agents",
     "bash",
