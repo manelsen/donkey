@@ -79,6 +79,7 @@ import ./provider_executor
 import ./review_runtime
 import ../core/security/dm_policy
 import ../infra/queue/nonblocking
+import ../ports/turn_journal
 
 # Re-export public API from extracted modules
 export onboarding
@@ -155,6 +156,8 @@ type OrchestratorState = object
   subagents*:     SubagentManager
   stopGeneration*: uint64
   sessionId*:     string
+  journal*:       TurnJournalPort ## turns in flight, for resuming after a crash
+  turnId*:        string          ## the journal id of the turn running now
 
 func newOrchestratorState*(): OrchestratorState =
   OrchestratorState(
@@ -414,6 +417,37 @@ proc handleControlTask(globalOutbox: AsyncQueue[OutboundMessage];
 
 # ── User turn handler ─────────────────────────────────────────────────────────
 
+proc effectHook(journal: TurnJournalPort; turnId: string;
+                log: Logger): BeforeEffectFn =
+  ## The turn journal's write-ahead for one turn's tools.
+  if not journal.hasTurnJournal or turnId.len == 0:
+    return nil
+  result = proc(toolName: string) {.gcsafe, raises: [].} =
+    journal.markEffect(turnId, toolName).isOkOr:
+      log.warn("turn journal: " & error)
+
+proc beginJournalledTurn(journal: TurnJournalPort; msg: AgentMessage;
+                         log: Logger): string =
+  ## Records a person's turn before it runs and returns its journal id; ""
+  ## when nothing is journalled. Background turns fire again on their own,
+  ## and an API turn's caller is gone after a crash.
+  if not journal.hasTurnJournal or msg.taskKind != tkUserMsg or
+      isApiUserId(UserId(msg.userId)):
+    return ""
+  let startedMs = epochMs()
+  let record = TurnRecord(
+    id: (if msg.resumeOf.len > 0: msg.resumeOf
+         else: newTurnId(startedMs, msg.userId, msg.id)),
+    userId: msg.userId, channel: msg.channel, replyTo: msg.replyTo,
+    payload: msg.payload,
+    preview: turnPreview(decodeUserPayload(msg.payload).text),
+    startedMs: startedMs,
+    resumes: (if msg.resumeOf.len > 0: 1 else: 0))
+  journal.begin(record).isOkOr:
+    log.warn("turn journal: " & error)
+    return ""
+  record.id
+
 proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
                     memInbox: AsyncQueue[AgentMessage];
                     toolInbox: AsyncQueue[AgentMessage];
@@ -448,6 +482,9 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
     paddockDir, typingFn, log,
     sandboxMode, sandboxRuntimeCmd, sandboxImage, msg, result)
   turnSetup.nativeCtx.asyncCompleteFn = asyncCompleteFn
+  ## Before the subagent runtime copies the context: a child's tools are
+  ## this turn's effects too.
+  turnSetup.nativeCtx.beforeEffect = effectHook(result.journal, result.turnId, log)
   attachSubagentRuntime(turnSetup.nativeCtx, result.subagents)
 
   if turnSetup.isNewUser and not isApiUserId(turnSetup.uid):
@@ -757,11 +794,19 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
       not onboarding_runtime.safeHasCompletedBootstrap(memory, uid):
     return
 
+  ## The journal record is removed when the turn returns, answered, failed
+  ## or stopped. A crash (or an exception) leaves it for the next start.
+  result.turnId = beginJournalledTurn(result.journal, msg, log)
+  let turnId = result.turnId
   result = await handleUserTurn(
     globalOutbox, memInbox, toolInbox, memOut, toolOut, session, memory,
     completeFn, errorExplainFn, http, fs, streamFactory, tools, webAllowlist, toolWebPolicy, paddockDir, typingFn, log,
     providerLabel, sandboxMode, sandboxRuntimeCmd, sandboxImage, toolsSuffix,
     state, msg, result, asyncCompleteFn, reviewRt = reviewRt)
+  if turnId.len > 0:
+    result.journal.finish(turnId).isOkOr:
+      log.warn("turn journal: " & error)
+  result.turnId = ""
   if result.onboarding.phase == opDone:
     result =
       result |>->
@@ -922,7 +967,8 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
                       backtrail:     BacktrailPort = BacktrailPort();
                       streamRouting: StreamRouting = StreamRouting();
                       process:        ProcessRuntimePort = unavailableProcess();
-                      attachments:    AttachmentStorePort = unavailableAttachments()): Future[void] {.async.} =
+                      attachments:    AttachmentStorePort = unavailableAttachments();
+                      journal:        TurnJournalPort = TurnJournalPort()): Future[void] {.async.} =
   ## Persistent actor. Loops: debounce → memory → LLM → reply → repeat.
   ## `env` is the snapshot tool and turn settings are read from.
   if daemonShuttingDown():
@@ -948,6 +994,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
   stateRuntime.streamRouting = streamRouting
   stateRuntime.process = process
   stateRuntime.attachments = attachments
+  stateRuntime.journal = journal
   stateRuntime.subagents = newSubagentManager(subagentWorkspace)
   stateRuntime.stopGeneration = currentSessionStopGeneration()
   let sessionId   = $nowMs()

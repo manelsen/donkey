@@ -116,6 +116,7 @@ type
   ListSubagentsFn* = proc(): seq[SubagentInfo] {.gcsafe, raises: [].}
   CancelSubagentFn* = proc(subagentId: string):
       Future[bool] {.gcsafe, raises: [].}
+  BeforeEffectFn* = proc(toolName: string) {.gcsafe, raises: [].}
 
   NativeCtx* = object
     uid*:          UserId
@@ -161,6 +162,9 @@ type
     awaitSubagent*: AwaitSubagentFn
     listSubagents*: ListSubagentsFn
     cancelSubagent*: CancelSubagentFn
+    beforeEffect*: BeforeEffectFn
+      ## Called before a tool with an effect runs (the turn journal's
+      ## write-ahead, app/orchestrator); nil when nothing is journalled.
 
   NativeToolCategoryHandler = proc(tc: ToolCallRequest;
                                    ctx: NativeCtx;
