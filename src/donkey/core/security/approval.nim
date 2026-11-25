@@ -43,6 +43,18 @@ func isValidApprovalId*(id: string): bool =
 func approvalCallbackData*(id: string; approved: bool): string =
   "approval:" & id & (if approved: ":allow" else: ":deny")
 
+func approvalAlwaysCallbackData*(id: string): string =
+  ## The "always" button: approve now, and let the approval stand for that
+  ## person and key (PRD-roadmap E5.2).
+  "approval:" & id & ":always"
+
+func parseAlwaysCallback*(data: string): Option[string] =
+  let parts = data.strip.split(':')
+  if parts.len == 3 and parts[0] == "approval" and parts[2] == "always" and
+      isValidApprovalId(parts[1]):
+    return some(parts[1])
+  none(string)
+
 func parseApprovalCallback*(data: string): Option[tuple[id: string; approved: bool]] =
   let parts = data.strip.split(':')
   if parts.len != 3 or parts[0] != "approval":

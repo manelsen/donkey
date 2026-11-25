@@ -23,6 +23,7 @@ type
     store:     ApprovalStorePort
     tools:     seq[string]
     timeoutMs: int64
+    standing:  StandingApprovalPort   ## approvals that stand (E5.2)
 
 var gApprovalService* {.threadvar.}: ApprovalService
   ## Configured at startup on the main thread, which then runs the daemon loop
@@ -48,12 +49,17 @@ proc parseApprovalTools*(raw: string): seq[string] =
 
 proc configureApprovalService*(store: ApprovalStorePort;
                                tools: seq[string];
-                               timeoutSec = 300.0) =
+                               timeoutSec = 300.0;
+                               standing = StandingApprovalPort()) =
   gApprovalService = ApprovalService(
     store:     store,
     tools:     tools,
     timeoutMs: int64(max(10.0, timeoutSec) * 1000.0),
+    standing:  standing,
   )
+
+proc standingApprovals*(service: ApprovalService): StandingApprovalPort =
+  if service.isNil: StandingApprovalPort() else: service.standing
 
 proc configureApprovalServiceFromEnv*(store: ApprovalStorePort; env: Environment) =
   var timeoutSec = 300.0
@@ -133,6 +139,42 @@ proc cancelPendingApprovals*(userId: UserId) {.gcsafe, raises: [].} =
     for request in pending.get():
       discard service.store.decide(request.id, $userId, false, admin = true)
 
+proc awaitDecision(service: ApprovalService; request: ApprovalRequest;
+                   userId: UserId; log: Logger;
+                   shouldStop: proc(): bool {.gcsafe, raises: [].}):
+                   Future[ApprovalDecision] {.async.} =
+  ## Polls the store until the request is decided, expires or the turn stops.
+  let deadline = epochMs() + service.timeoutMs
+  while epochMs() < deadline:
+    if shouldStop != nil and shouldStop():
+      log.info("approval cancelled by stop id=" & request.id)
+      discard service.store.decide(request.id, $userId, approved = false,
+                                   admin = true)
+      return adDenied
+    let status = service.store.status(request.id)
+    if status.isOk:
+      case status.get()
+      of apsApproved:
+        log.info("approval approved id=" & request.id)
+        return adApproved
+      of apsDenied:
+        log.info("approval denied id=" & request.id)
+        return adDenied
+      of apsExpired:
+        return adTimeout
+      of apsPending:
+        discard
+    elif status.error.contains("not found"):
+      return adTimeout
+    else:
+      log.warn("approval status failed: " & status.error)
+    await sleepAsync(chronos.milliseconds(500))
+
+  discard service.store.decide(request.id, "", false, admin = true)
+  log.warn("approval timed out id=" & request.id)
+  return adTimeout
+
+
 proc requestAndWait*(service: ApprovalService;
                      userId: UserId;
                      channel: ChannelKind;
@@ -163,35 +205,48 @@ proc requestAndWait*(service: ApprovalService;
     keyboard: approvalKeyboard(request),
   ))
 
-  let deadline = epochMs() + service.timeoutMs
-  while epochMs() < deadline:
-    if shouldStop != nil and shouldStop():
-      log.info("approval cancelled by stop id=" & request.id)
-      discard service.store.decide(request.id, $userId, approved = false,
-                                   admin = true)
-      return adDenied
-    let status = service.store.status(request.id)
-    if status.isOk:
-      case status.get()
-      of apsApproved:
-        log.info("approval approved id=" & request.id)
-        return adApproved
-      of apsDenied:
-        log.info("approval denied id=" & request.id)
-        return adDenied
-      of apsExpired:
-        return adTimeout
-      of apsPending:
-        discard
-    elif status.error.contains("not found"):
-      return adTimeout
-    else:
-      log.warn("approval status failed: " & status.error)
-    await sleepAsync(chronos.milliseconds(500))
+  return await awaitDecision(service, request, userId, log, shouldStop)
 
-  discard service.store.decide(request.id, "", false, admin = true)
-  log.warn("approval timed out id=" & request.id)
-  adTimeout
+func standingApprovalMessage(title: string; request: ApprovalRequest): string =
+  "⚠️ *Aprovação necessária: " & escapeMarkdownInline(title) & "*\n\n" &
+  escapeMarkdownInline(request.summary) & "\n\n" &
+  "*Sempre* deixa de perguntar para este caso; revogue com " &
+  "`donkey ctl approvals standing revoke`.\n" &
+  "Expira em " & $((request.expiresAtMs - request.createdAtMs) div 1000) & "s."
+
+func standingApprovalKeyboard(request: ApprovalRequest): seq[seq[(string, string)]] =
+  @[@[
+    ("✅ Desta vez", approvalCallbackData(request.id, true)),
+    ("♾️ Sempre", approvalAlwaysCallbackData(request.id)),
+    ("❌ Negar", approvalCallbackData(request.id, false)),
+  ]]
+
+proc requestStandingApproval*(service: ApprovalService;
+                              userId: UserId;
+                              channel: ChannelKind;
+                              outbox: AsyncQueue[OutboundMessage];
+                              key, title, summary: string;
+                              log: Logger;
+                              shouldStop: proc(): bool {.gcsafe, raises: [].} = nil):
+                              Future[ApprovalDecision] {.async.} =
+  ## Always asks, whatever the tool list, unless an approval stands for this
+  ## person and `key`: once, always (it then stands) or deny. Without an
+  ## approval service there is nobody to ask, so it is denied.
+  if service == nil:
+    return adDenied
+  if service.standing.hasStanding and service.standing.has($userId, key):
+    log.info("approval stands user=" & $userId & " key=" & key)
+    return adApproved
+  let created = service.store.create($userId, $channel, key, summary, service.timeoutMs)
+  if created.isErr:
+    log.warn("approval create failed: " & created.error)
+    return adDenied
+  let request = created.get()
+  log.info("approval requested id=" & request.id & " key=" & key & " user=" & $userId)
+  await outbox.put(OutboundMessage(userId: userId, channel: channel,
+    text: standingApprovalMessage(title, request),
+    keyboard: standingApprovalKeyboard(request)))
+  return await awaitDecision(service, request, userId, log, shouldStop)
 
 proc tryHandleApprovalInput*(userId: UserId; text: string): Option[string] {.gcsafe.} =
   ## Handles `/approve`, `/deny`, `/poll` and inline callback data. Returns
@@ -209,6 +264,18 @@ proc tryHandleApprovalInput*(userId: UserId; text: string): Option[string] {.gcs
     if res.isErr:
       return some("Erro: " & res.error)
     return some(if approved: "✅ Aprovado." else: "❌ Negado.")
+  let always = parseAlwaysCallback(value)
+  if always.isSome:
+    let id = always.get
+    let res = service.store.decide(id, $userId, true, admin = false)
+    if res.isErr:
+      return some("Erro: " & res.error)
+    if service.standing.hasStanding and service.store.lookup != nil:
+      let request = service.store.lookup(id)
+      if request.isOk:
+        service.standing.grant($userId, request.get.toolName).isOkOr:
+          return some("✅ Aprovado desta vez; não foi possível guardar para sempre: " & error)
+    return some("✅ Aprovado, e não pergunto mais neste caso.")
   let callback = parseApprovalCallback(value)
   if callback.isSome:
     let (id, approved) = callback.get
