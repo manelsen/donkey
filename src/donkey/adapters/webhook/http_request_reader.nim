@@ -19,7 +19,9 @@ import ./webhook_ingress
 export webhook_ingress.WebhookRequest
 
 const
-  MaxWebhookBodyBytes*       = 2 * 1024 * 1024
+  MaxWebhookBodyBytes*       = 3 * 1024 * 1024
+    ## Meta documents WhatsApp Cloud webhooks of up to 3 MB (hermes WA-002);
+    ## LINE keeps its own 1 MiB per-route limit.
   MaxWebhookHeaderLines*     = 64
   MaxWebhookHeaderBytes*     = 64 * 1024
   MaxWebhookLineBytes*       = 8192

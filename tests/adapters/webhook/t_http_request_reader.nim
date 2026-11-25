@@ -105,6 +105,11 @@ proc runTests*() =
       check r.isErr
       check r.error == "body too large"
 
+    test "the limit fits Meta's largest webhook payload (3 MB)":
+      ## WhatsApp Cloud API webhooks can carry up to 3 MB; a smaller cap
+      ## answers 413 and Meta drops the batch after retrying (hermes WA-002).
+      check MaxWebhookBodyBytes >= 3 * 1000 * 1000
+
     test "Content-Length above caller limit is rejected":
       let r = withRequest("POST / HTTP/1.1\r\nContent-Length: 11\r\n\r\nhello world",
                           maxBody = 10)

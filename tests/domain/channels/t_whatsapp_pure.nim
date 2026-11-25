@@ -236,6 +236,21 @@ proc runTests*() =
       }
       check parseWebhook(makeWebhook(@[msg])).len == 0
 
+    test "contentless envelopes start no turn: system, reaction, unsupported (WA-003)":
+      ## Meta sends number and BSUID changes as type=system, emoji taps as
+      ## reaction, and what it cannot render as unsupported/unknown.
+      let msgs = @[
+        %* {"from": "5511", "id": "wamid.s", "type": "system",
+            "system": {"body": "User changed number", "type": "user_changed_number"}},
+        %* {"from": "5511", "id": "wamid.r", "type": "reaction",
+            "reaction": {"message_id": "wamid.1", "emoji": "👍"}},
+        %* {"from": "5511", "id": "wamid.u", "type": "unsupported",
+            "errors": [{"code": 131051}]},
+        %* {"from": "5511", "id": "wamid.k", "type": "unknown"},
+        %* {"from": "5511", "id": "wamid.e", "type": "text", "text": {"body": ""}},
+      ]
+      check parseWebhook(makeWebhook(msgs)).len == 0
+
     test "missing entry array returns empty":
       check parseWebhook(%* {"object": "whatsapp_business_account"}).len == 0
 
