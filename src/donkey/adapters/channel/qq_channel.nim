@@ -170,3 +170,7 @@ proc startGateway*(a: var QQChannelAdapter) =
   else:
     discard
 
+proc stopQQOfficialGateway*() =
+  ## Closes the QQ official gateway at shutdown. Safe when it never started.
+  qq_official.stopGateway()
+

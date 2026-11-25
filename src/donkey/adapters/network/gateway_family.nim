@@ -11,11 +11,11 @@
 import std/[json, random]
 import ../../core/log
 import ../../core/pipeops
-import ../../domain/channels/discord_pure
+import ../../domain/channels/gateway_pure
 import ../channel/ws_client
 import ./persistent_socket
 
-export discord_pure.CloseAction, discord_pure.HeartbeatStep
+export gateway_pure
 
 type
   FamilyState* = object

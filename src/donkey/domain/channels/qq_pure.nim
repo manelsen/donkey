@@ -34,6 +34,7 @@ import std/[json, net, strutils]
 import ../../core/pipeops
 import ../../core/security/webhook_auth
 import ../../domain/message
+import ./gateway_pure
 
 # ── Domain types ──────────────────────────────────────────────────────────────
 
@@ -222,3 +223,17 @@ func oneBotListenerCheck*(host, secret: string): Result[void, string] =
   else:
     err("QQ OneBot webhook on " & host & " requires QQ_ONEBOT_SECRET " &
         "(or bind to 127.0.0.1)")
+
+func qqOfficialCloseAction*(code: int): CloseAction =
+  ## QQ official's gateway close codes, from the table at
+  ## bot.q.qq.com/wiki/develop/api-v2/dev-prepare/error-trace/websocket.html:
+  ## codes that allow neither RESUME nor IDENTIFY stop (4914 delisted and
+  ## 4915 banned say not to connect at all); codes that allow only IDENTIFY
+  ## start a new session; 4008 and 4009 may resume. The page's catch-all
+  ## ("其他错误，请重新发起 identify") covers other gateway codes; a close
+  ## outside 4000-4999 is a network drop and resumes.
+  case code
+  of 4001, 4002, 4010, 4011, 4012, 4013, 4014, 4914, 4915: caStop
+  of 4008, 4009: caResume
+  of 4000, 4003 .. 4007, 4015 .. 4913, 4916 .. 4999: caNewSession
+  else: caResume

@@ -15,7 +15,7 @@
 ## it is created on the thread and lives there across reconnections, so it
 ## may hold what the thread builds itself (an HTTP port, a logger).
 
-import std/[atomics, locks, monotimes, net, os, random, times]
+import std/[atomics, locks, monotimes, net, os, random, strutils, times, uri]
 when defined(posix):
   import std/posix
 import ../../core/log
@@ -82,6 +82,26 @@ type
     ## keep it in a module global and touch it from gcsafe code.
     control: ptr SocketControl
     thread:  ThreadHandle[SocketArgs[C, S]]
+
+proc socketTargetOf*(url: string): Result[SocketTarget, string] =
+  ## A gateway URL as a target: `wss://` (assumed when the scheme is
+  ## missing), the host, the port when the URL names one (443 otherwise) and
+  ## the path with its query. Plain `ws://` is refused: gateways carry tokens.
+  let full = if "://" in url: url else: "wss://" & url
+  let parsed =
+    try: parseUri(full)
+    except CatchableError as e: return err("bad gateway URL " & url & ": " & e.msg)
+  if parsed.scheme != "wss":
+    return err("gateway URL is not wss: " & url)
+  if parsed.hostname.len == 0:
+    return err("gateway URL has no host: " & url)
+  var port = 443
+  if parsed.port.len > 0:
+    try: port = parseInt(parsed.port)
+    except ValueError: return err("bad port in gateway URL: " & url)
+  let path = if parsed.path.len > 0: parsed.path else: "/"
+  ok(SocketTarget(host: parsed.hostname, port: Port(port), useTls: true,
+                  path: if parsed.query.len > 0: path & "?" & parsed.query else: path))
 
 func defaultSocketPolicy*(): SocketPolicy =
   SocketPolicy(reconnectMinMs: 1_000, reconnectMaxMs: 60_000,
