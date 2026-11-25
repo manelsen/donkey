@@ -244,6 +244,10 @@ proc mcpTokenSource*(dir, serverUrl: string; http = HttpRuntimePort();
                  "run `donkey ctl mcp login " & serverUrl & "`")
     var secret = ""
     if rec.authMethod != camNone:
+      if rec.clientSecretEnv.len == 0:
+        return err("oauth: the login for " & serverUrl & " uses a client secret " &
+                   "but names no variable for it; log in again with " &
+                   "--client-id and --client-secret-env")
       secret = if secretOf != nil: secretOf(rec.clientSecretEnv) else: ""
       if secret.len == 0:
         return err("oauth: the client secret variable " & rec.clientSecretEnv &

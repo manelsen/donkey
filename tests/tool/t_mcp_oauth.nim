@@ -3,7 +3,7 @@
 ## (RFC 8414), dynamic client registration (RFC 7591) and resource indicators
 ## (RFC 8707). The PKCE value is RFC 7636's own example (Appendix B).
 
-import std/[json, os, posix, sequtils, strutils, unittest, uri]
+import std/[base64, json, os, posix, sequtils, strutils, unittest, uri]
 import donkey/adapters/tool/mcp_http_client
 import donkey/adapters/tool/mcp_oauth
 import donkey/core/pipeops
@@ -179,6 +179,12 @@ proc runTests*() =
       check basicClientAuth("s6BhdRkqt3", "7Fjfp0ZBr1KtDRbnfVdmIw") ==
             "Basic czZCaGRSa3F0Mzo3RmpmcDBaQnIxS3REUmJuZlZkbUl3"
 
+    test "each part is form-encoded before Basic: space, plus, percent, colon":
+      ## RFC 6749 2.3.1: application/x-www-form-urlencoded, so a space is "+"
+      ## and a literal "+" is "%2B"; a ":" in the id cannot split the pair.
+      let header = basicClientAuth("my app:1", "a b+c%d")
+      check header == "Basic " & base64.encode("my+app%3A1:a+b%2Bc%25d")
+
     test "how the client authenticates at the token endpoint":
       let none = AuthServerMeta()
       check clientAuthMethodFor(none, hasSecret = false).get == camNone
@@ -265,6 +271,18 @@ proc runTests*() =
       discard completeMcpLogin(p, Redirect & "?code=c&state=" & p.state, fakePort(f), 1000).get
       check "client_secret=s3cr3t" in f.posts[^1][1]
       check header(f.posts[^1][2], "Authorization") == ""
+
+    test "a confidential record without a variable name says to log in again":
+      removeDir(StoreDir)
+      let f = FakeAuth()
+      discard saveMcpOAuth(StoreDir, McpOAuthRecord(serverUrl: Server, clientId: "app-42",
+        resource: Server, tokenEndpoint: "https://auth.example.test/token",
+        authMethod: camBasic,
+        tokens: OAuthTokens(accessToken: "old", refreshToken: "rt", expiresAt: 10)))
+      let r = mcpTokenSource(StoreDir, Server, fakePort(f), clock = proc(): int64 = 1000)(false)
+      check r.isErr
+      check "--client-secret-env" in r.error
+      check f.tokenCalls == 0
 
     test "a refresh without the secret's variable says which one is missing":
       removeDir(StoreDir)
