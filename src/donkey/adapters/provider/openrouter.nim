@@ -17,6 +17,7 @@ import ../../core/app_meta
 import ../../core/json_helpers
 import ../../ports/http
 import ./provider_http
+import ./sse
 
 const
   OpenRouterEndpoint*    = "https://openrouter.ai/api/v1/chat/completions"
@@ -215,54 +216,7 @@ proc makeStreamFn*(a: OpenRouterAdapter): StreamFn =
       let body = $adapter.buildStreamBody(req)
       let resp = ? postProviderStream(adapter.http, "OpenRouter", profile.endpoint, body, headers)
 
-      var accumulated = ""
-      var reasoning = ""
-      var inputTokens = 0
-      var outputTokens = 0
-      var toolAcc = initTable[int, ToolCallRequest]()
-      var toolOrder: seq[int] = @[]
-      var line = ""
-      while resp.readLine(line):
-        let chunk = parseOpenRouterSseLine(line).valueOr:
-          return err(error)
-        if chunk.done:
-          break
-        if chunk.token.len > 0:
-          accumulated.add(chunk.token)
-          onToken(chunk.token)
-        if chunk.reasoning.len > 0:
-          reasoning.add(chunk.reasoning)
-        if chunk.inputTokens > 0: inputTokens = chunk.inputTokens
-        if chunk.outputTokens > 0: outputTokens = chunk.outputTokens
-        for delta in chunk.toolCalls:
-          if delta.index notin toolAcc:
-            toolAcc[delta.index] = ToolCallRequest(
-              id: delta.id, name: delta.name, inputJson: delta.arguments,
-              signature: delta.signature)
-            toolOrder.add(delta.index)
-          else:
-            var current = toolAcc[delta.index]
-            if delta.id.len > 0: current.id = delta.id
-            if delta.name.len > 0: current.name = delta.name
-            if delta.signature.len > 0: current.signature = delta.signature
-            current.inputJson.add(delta.arguments)
-            toolAcc[delta.index] = current
-
-      var toolCalls: seq[ToolCallRequest] = @[]
-      for idx in toolOrder:
-        var tc = toolAcc[idx]
-        if tc.name.len == 0:
-          continue
-        if tc.inputJson.strip.len == 0:
-          tc.inputJson = "{}"
-        toolCalls.add(tc)
-      ok(CompletionResponse(
-        text:         accumulated,
-        reasoning:    reasoning,
-        inputTokens:  inputTokens,
-        outputTokens: outputTokens,
-        toolCalls:    toolCalls,
-      ))
+      consumeOpenAiStream(resp, "OpenRouter", onToken)
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 

@@ -28,6 +28,7 @@ import ../../ports/http
 import ../../ports/provider
 import ../../core/pipeops
 import ./provider_http
+import ./sse
 import openai
 
 const CompatHttpTimeoutSec* = ProviderHttpTimeoutSec
@@ -145,59 +146,9 @@ proc complete*(a: CompatAdapter;
 proc consumeCompatSse*(input: Stream;
                        onToken: proc(tok: string) {.gcsafe.}
                       ): Result[CompletionResponse, string] =
-  ## Reads the OpenAI SSE dialect from `input`. Exported so the error paths can
-  ## be tested without a socket. `onToken` may be nil (tests).
-  ##
-  ## Errors mirror `complete`: a malformed `data:` payload surfaces the parse
-  ## error, and a body with no `data:` event at all (HTML error page, JSON
-  ## error with status 200) is an error carrying a short diagnostic — never an
-  ## empty success.
-  var accumulated = ""
-  var inputTokens = 0
-  var outputTokens = 0
-  var sawEvent = false
-  var sawDone = false
-  var diagnostic = ""
-  var line = ""
-  while input.readLine(line):
-    let trimmed = line.strip()
-    if trimmed.len == 0 or trimmed == "data:" or trimmed.startsWith(":"):
-      continue                       ## blank line, heartbeat, SSE comment
-    if not trimmed.startsWith("data:"):
-      if diagnostic.len < 200:
-        diagnostic.add(trimmed)
-        diagnostic.add(' ')
-      continue
-    let parsed = parseOpenAISseLine(trimmed)
-    if parsed.isErr:
-      return err("compat provider stream error: " & parsed.error)
-    let chunk = parsed.value
-    sawEvent = true
-    if chunk.done:
-      sawDone = true
-      break
-    if chunk.token.len > 0:
-      accumulated.add(chunk.token)
-      if onToken != nil:
-        onToken(chunk.token)
-    if chunk.inputTokens > 0: inputTokens = chunk.inputTokens
-    if chunk.outputTokens > 0: outputTokens = chunk.outputTokens
-
-  if not sawEvent:
-    let detail = diagnostic.strip
-    if detail.len > 0:
-      return err("compat provider returned a non-SSE response: " & detail)
-    return err("compat provider returned a non-SSE response: empty body")
-  if not sawDone:
-    ## EOF without `[DONE]` is a cut connection, not a finished answer: the
-    ## accumulated text is partial and must not be reported as complete.
-    return err("compat provider stream ended without [DONE] (truncated)")
-
-  ok CompletionResponse(
-    text:         accumulated,
-    inputTokens:  inputTokens,
-    outputTokens: outputTokens,
-  )
+  ## Reads the OpenAI SSE dialect from `input` (sse.consumeOpenAiStream).
+  ## Exported so the error paths can be tested without a socket.
+  consumeOpenAiStream(input, "compat provider", onToken)
 
 proc makeStreamFn*(a: CompatAdapter): StreamFn =
   ## SSE streaming in the OpenAI dialect: content deltas and `[DONE]`.
