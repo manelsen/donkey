@@ -442,11 +442,14 @@ func encodeSessionPayload*(msg: InboundMessage;
     mediaPaths.add(msg.mediaFileName)
   ## A reply carries what it replies to (domain/reply_context_pure).
   let text = withReplyContext(msg.text, msg.quotedText)
-  if msg.mediaUrl.len == 0 and recentContext.len == 0:
+  if msg.mediaUrl.len == 0 and recentContext.len == 0 and msg.bot.len == 0:
     return text
-  $(%* {"text": text, "mediaUrl": msg.mediaUrl,
-        "mediaPaths": mediaPaths,
-        "mediaGroupId": msg.mediaGroupId, "recentContext": recentContext})
+  var j = %* {"text": text, "mediaUrl": msg.mediaUrl,
+              "mediaPaths": mediaPaths,
+              "mediaGroupId": msg.mediaGroupId, "recentContext": recentContext}
+  if msg.bot.len > 0:
+    j["bot"] = %msg.bot   ## whose persona answers (domain/bots_pure)
+  $j
 
 func sessionReplyTo*(msg: InboundMessage): string =
   case msg.channel

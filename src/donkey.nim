@@ -117,6 +117,7 @@ import donkey/app/session_bootstrap
 from donkey/app/skill_runtime import skillRegistry
 import donkey/app/credential_runtime
 import donkey/app/session_ingress
+import donkey/app/named_agents
 import donkey/adapters/state/turn_journal_store
 import donkey/app/doctor
 import donkey/app/setup_wizard
@@ -1121,6 +1122,11 @@ func buildDaemonSessionServices(ctx: DaemonContext;
   )
   ## Turns in flight, so a crash is followed by a replay or a notice (E1).
   result.journal = turnJournalPort(newTurnJournalStore(cfg.home / "state" / "turns"))
+  ## The `[[bots]]` personas: agent files in {home}/agents (E3).
+  result.botPersonas = BotPersonas(home: cfg.home)
+  for bot in cfg.bots:
+    if bot.agent.len > 0:
+      result.botPersonas.agentOf[bot.name] = bot.agent
 
 proc handleDaemonSessionFallback(runtime:  var DaemonRuntime;
                                   msg:      InboundMessage;
@@ -1703,6 +1709,9 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     log.info("restored " & $restoredSessions.value & " sessions from registry")
   activateDaemonBootstrap(ctx, cfg, memory, log)
   let sessionServices = buildDaemonSessionServices(ctx, cfg, memory, log)
+  ## `[[bots]]` entries left out, and why (domain/bots_pure).
+  for problem in cfg.botProblems:
+    log.warn("[[bots]] " & problem)
   ## Turns the previous process died in: replayed when nothing they did
   ## could be repeated, otherwise the user is told. The replays and notices
   ## wait in the queues until the loop and the channels are up.

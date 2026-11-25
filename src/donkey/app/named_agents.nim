@@ -5,7 +5,7 @@
 ## the agent's own notes. Everything else an agent knows is the user's shared
 ## memory.
 
-import std/[algorithm, os, strutils]
+import std/[algorithm, options, os, strutils, tables]
 import chronos
 import ../core/pipeops
 import ../core/tooling/native_tool_args
@@ -20,6 +20,12 @@ type LoadedAgent* = object
   agent*: NamedAgent
   notes*: string
 
+type BotPersonas* = object
+  ## The operator's personas for the `[[bots]]` entries (PRD-roadmap E3):
+  ## agent files in `{home}/agents`, the same format as a user's.
+  home*:    string
+  agentOf*: Table[string, string]   ## bot name → agent name
+
 func agentsDir*(paddockDir: string): string =
   paddockDir & "/" & AgentsDirName
 
@@ -33,6 +39,15 @@ proc loadNamedAgent*(fs: FsRuntimePort; paddockDir, name: string): Result[Loaded
     return err("agents/" & agentFileName(name) & " names another agent: " & agent.name)
   let notes = fs.readFile(dir & "/" & agentNotesFileName(name)).get("")
   ok(LoadedAgent(agent: agent, notes: notes))
+
+proc loadBotPersona*(fs: FsRuntimePort; personas: BotPersonas;
+                     bot: string): Result[Option[LoadedAgent], string] =
+  ## The persona of the bot a message came through; none when the bot has no
+  ## agent (it answers with the default persona).
+  let name = personas.agentOf.getOrDefault(bot, "")
+  if bot.len == 0 or name.len == 0 or personas.home.len == 0:
+    return ok(none(LoadedAgent))
+  ok(some(? loadNamedAgent(fs, personas.home, name)))
 
 proc listNamedAgents*(fs: FsRuntimePort; paddockDir: string): seq[NamedAgent] =
   ## Every readable agent file, by name; a broken file is skipped.

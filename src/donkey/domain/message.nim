@@ -71,6 +71,7 @@ type
     channel*:    ChannelKind
     bridgeToken*: uint64      ## API turn generation; 0 for channel traffic
     quotedText*: string       ## the message this one replies to, when known
+    bot*:        string       ## the `[[bots]]` entry it came through; "" = default
 
   OutboundMessage* = object
     userId*:    UserId

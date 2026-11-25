@@ -37,6 +37,7 @@ import ./session_state
 import ../ports/subagent_workspace
 import ./session_bootstrap
 import ./orchestrator
+import ./named_agents
 import ./sandbox
 import ../ports/turn_journal
 
@@ -64,6 +65,7 @@ type
     process*:                    ProcessRuntimePort
     attachments*:                AttachmentStorePort
     journal*:                    TurnJournalPort ## turns in flight (E1)
+    botPersonas*:                BotPersonas     ## personas of `[[bots]]` (E3)
     completeFn*:                 CompleteFn
     streamFactory*:                   StreamFactory
     toolClients*:                seq[ToolRuntimePort]
@@ -267,7 +269,8 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                                backtrail: BacktrailPort = BacktrailPort();
                                process: ProcessRuntimePort = unavailableProcess();
                                attachments: AttachmentStorePort = unavailableAttachments();
-                               journal: TurnJournalPort = TurnJournalPort()) {.gcsafe.} =
+                               journal: TurnJournalPort = TurnJournalPort();
+                               botPersonas: BotPersonas = BotPersonas()) {.gcsafe.} =
   ## Spawns an orchestrator actor if the ingress decision requires starting a session runtime.
   if not plan.decision.startsSessionRuntime:
     return
@@ -292,7 +295,7 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                              schedules = schedules, backtrail = backtrail,
                              streamRouting = bootstrap.streamRouting,
                              process = process, attachments = attachments,
-                             journal = journal)
+                             journal = journal, botPersonas = botPersonas)
 
 func sessionTaskMsg(msg: InboundMessage; msgId: string;
                      recentContext = ""): AgentMessage =
@@ -422,7 +425,7 @@ proc startSessionIngress*(sm: var SessionManager;
                            services.http, services.fs, services.reminders,
                            services.schedules, services.backtrail,
                            services.process, services.attachments,
-                           services.journal)
+                           services.journal, services.botPersonas)
   if result.plan.decision.startsNewSession:
     services.log.info("new session: " & result.plan.uid)
   elif result.plan.decision.rebuildsSessionRuntime:

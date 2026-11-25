@@ -3,6 +3,7 @@ import donkey/adapters/memory/md_file
 import donkey/adapters/provider/runtime_builder
 import donkey/core/pipeops
 import donkey/app/session_bootstrap
+from donkey/app/prompt_building import decodeUserPayload, mergeUserPayloads
 import donkey/adapters/filesystem/fs_adapter
 import donkey/app/credential_runtime
 import donkey/core/providers/smart_routing
@@ -113,6 +114,21 @@ thinking = "medium"
     test "encodeSessionPayload keeps plain text when no media":
       let msg = InboundMessage(userId: UserId("u1"), text: "hello")
       check encodeSessionPayload(msg) == "hello"
+
+    test "the bot a message came through travels in the payload":
+      let msg = InboundMessage(userId: UserId("u1"), text: "oi", bot: "suporte")
+      let payload = encodeSessionPayload(msg)
+      check decodeUserPayload(payload).bot == "suporte"
+      check decodeUserPayload(payload).text == "oi"
+      check decodeUserPayload(encodeSessionPayload(InboundMessage(text: "oi"))).bot == ""
+
+    test "merged messages answer through the last bot written to":
+      let a = encodeSessionPayload(InboundMessage(text: "um", bot: "suporte"))
+      let b = encodeSessionPayload(InboundMessage(text: "dois", bot: "vendas"))
+      let merged = decodeUserPayload(mergeUserPayloads([a, b]))
+      check merged.text == "um\n\ndois"
+      check merged.bot == "vendas"
+      check decodeUserPayload(mergeUserPayloads([a, "plain"])).bot == "suporte"
 
     test "encodeSessionPayload encodes media payload as json":
       let msg = InboundMessage(userId: UserId("u1"), text: "hello", mediaUrl: "https://x/y.png")
