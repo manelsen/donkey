@@ -213,4 +213,7 @@ proc detectProviderAvailability*(): ProviderAvailability {.gcsafe, raises: [].} 
     bedrock: providerConfigured("bedrock"),
     alibaba: providerConfigured("alibaba"),
     fireworks: providerConfigured("fireworks"),
+    # Azure needs its resource URL as well as the key.
+    azure: providerConfigured("azure") and
+           descriptorBaseUrl(descriptorOr("azure")).len > 0,
   )

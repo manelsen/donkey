@@ -22,6 +22,9 @@ type
     streamExtras*:   JsonNode   ## merged only when stream = true
     supportsImages*: bool
     quirks*:         OpenAiWireQuirks
+    apiKeyHeader*:   string     ## "" = Authorization: Bearer <key>; otherwise
+                                ## the key goes in this header alone (Azure's
+                                ## `api-key`), with no bearer beside it
 
 func defaultOpenAiProfile*(
     endpoint = "https://api.openai.com/v1/chat/completions";

@@ -133,6 +133,16 @@ const ProviderDescriptors*: seq[ProviderDescriptor] = @[
     defaultModel: DefaultModelMistral,
     aliases: @["mistralai", "mistral-ai"]),
   ProviderDescriptor(
+    ## Azure OpenAI, v1 GA API: {resource}/openai/v1/chat/completions with the
+    ## key in `api-key`; the resource URL comes from AZURE_OPENAI_ENDPOINT and
+    ## the model is the deployment name.
+    id: "azure", streamsToolCalls: true, transport: ptOpenAiChat, authType: atApiKey,
+    envNames: @["AZURE_OPENAI_API_KEY"],
+    baseUrl: "",
+    baseUrlEnv: "AZURE_OPENAI_ENDPOINT",
+    defaultModel: DefaultModelAzure,
+    aliases: @["azure-openai", "azure_openai", "aoai"]),
+  ProviderDescriptor(
     ## Converse API. The bearer is a Bedrock API key; IAM credentials
     ## (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN) are read
     ## separately into the spec, and the region from AWS_REGION.

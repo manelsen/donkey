@@ -730,6 +730,18 @@ proc buildDefaultCatalog*(): ProviderCatalog =
     contextWindow = 0,
   ))
 
+  # ── Azure OpenAI ──
+  # The model is the operator's deployment name; capabilities depend on what
+  # was deployed, so only the OpenAI baseline (tools, streaming) is claimed.
+  result.register(makeEntry(
+    DefaultModelAzure, "azure",
+    aliases = @[],
+    capabilities = {mcTools, mcStreaming},
+    costTier = ctModerate,
+    budgetPriority = bpDefault,
+    contextWindow = 0,
+  ))
+
   # ── Alibaba DashScope ──
   # Vision is not verified, so no `mcImage`.
   result.register(makeEntry(

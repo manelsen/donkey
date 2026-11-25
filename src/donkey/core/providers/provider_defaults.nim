@@ -23,6 +23,9 @@ const
     ## third-party model access form to fill in.
     ## Mistral's own moving alias for its flagship chat model.
   DefaultModelAlibaba*     = "qwen3.8-max"  ## first of the curated DashScope list
+  DefaultModelAzure*       = "gpt-4.1"
+    ## On Azure the model is the operator's deployment name; this is only a
+    ## common one. Set the deployment in the preferences (`model = ...`).
   DefaultModelFireworks*   = "accounts/fireworks/models/kimi-k2p6"
     ## Donkey's choice, not a Hermes default: this is
     ## `fallback_models[0]` in the Fireworks profile

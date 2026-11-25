@@ -211,6 +211,7 @@ const ProviderMenu: seq[ProviderMenuItem] = @[
   (id: "bedrock",       label: "AWS Bedrock   (Bedrock API key)"),
   (id: "alibaba",       label: "Alibaba DashScope (Qwen)"),
   (id: "fireworks",     label: "Fireworks AI"),
+  (id: "azure",         label: "Azure OpenAI"),
 ]
 
 func isDescriptorId(descriptors: seq[ProviderDescriptor]; id: string): bool =

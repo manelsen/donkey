@@ -151,6 +151,7 @@ func descriptorAvailable(availability: ProviderAvailability;
   of "bedrock": availability.bedrock
   of "alibaba": availability.alibaba
   of "fireworks": availability.fireworks
+  of "azure": availability.azure
   else: false
 
 func canonicalProviderId(name: string): string =

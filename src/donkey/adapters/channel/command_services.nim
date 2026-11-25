@@ -219,6 +219,7 @@ proc buildDoctorReport*(memory: MdFileAdapter;
     ("AWS_BEARER_TOKEN_BEDROCK", "AWS Bedrock"),
     ("DASHSCOPE_API_KEY", "Alibaba DashScope"),
     ("FIREWORKS_API_KEY", "Fireworks AI"),
+    ("AZURE_OPENAI_API_KEY", "Azure OpenAI"),
   ]
   var configuredProviders: seq[string] = @[]
   for (envVar, name) in envVars:

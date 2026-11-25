@@ -158,6 +158,7 @@ func availableProviderNames*(av: ProviderAvailability): seq[string] =
   if av.bedrock: result.add("bedrock")
   if av.alibaba: result.add("alibaba")
   if av.fireworks: result.add("fireworks")
+  if av.azure: result.add("azure")
 
 proc toProviderSpec*(selection: ProviderSelection): ProviderSpec =
   buildProviderSpec(ProviderPrefs(

@@ -161,6 +161,14 @@ func staticCatalog(providerName: string): seq[ModelCatalogEntry] =
                         label: DefaultModelFireworks,
                         isFree: false, available: true, hasPricing: false),
     ]
+  of "azure", "azure-openai", "azure_openai", "aoai":
+    ## The models are the operator's deployments, which only Azure lists.
+    @[
+      ModelCatalogEntry(providerName: providerName,
+                        modelName: DefaultModelAzure,
+                        label: DefaultModelAzure & " (your deployment name)",
+                        isFree: false, available: true, hasPricing: false),
+    ]
   of "alibaba", "dashscope", "alibaba-cloud", "aliyun":
     @[
       ModelCatalogEntry(providerName: providerName,

@@ -51,6 +51,7 @@ type
     bedrock*: bool
     alibaba*: bool
     fireworks*: bool
+    azure*: bool
 
   ProviderSelection* = object
     providerName*: string
@@ -214,6 +215,7 @@ func defaultModelForProvider*(providerName: string;
     of "bedrock", "aws-bedrock", "amazon-bedrock", "aws": DefaultModelBedrock
     of "alibaba", "dashscope", "alibaba-cloud", "aliyun": DefaultModelAlibaba
     of "fireworks", "fireworks-ai", "fw": DefaultModelFireworks
+    of "azure", "azure-openai", "azure_openai", "aoai": DefaultModelAzure
     else: "glm-4.7"
 
 func selection(providerName: string; modelName = ""): ProviderSelection =
@@ -269,6 +271,7 @@ func isAvailable(availability: ProviderAvailability; providerName: string): bool
   of "bedrock", "aws-bedrock", "amazon-bedrock", "aws": availability.bedrock
   of "alibaba", "dashscope", "alibaba-cloud", "aliyun": availability.alibaba
   of "fireworks", "fireworks-ai", "fw": availability.fireworks
+  of "azure", "azure-openai", "azure_openai", "aoai": availability.azure
   else: false
 
 # ── Catalog-driven routing helpers ────────────────────────────────────────────
@@ -294,6 +297,7 @@ func availableProviders(rc: RoutingCatalog): seq[string] {.used.} =
   if avail.bedrock: result.add("bedrock")
   if avail.alibaba: result.add("alibaba")
   if avail.fireworks: result.add("fireworks")
+  if avail.azure: result.add("azure")
 
 func queryModels*(rc: RoutingCatalog; providerName: string;
                  hasTools = false; hasImage = false;
