@@ -1,7 +1,9 @@
 ## turn_traces.nim — appending per-turn traces (domain/turn_trace_pure).
 ##
 ## Opt-in: DONKEY_TRACES=on. One line per turn in
-## `{home}/state/traces/YYYY-MM-DD.jsonl` (UTC days), created readable only by
+## `{base}/state/traces/YYYY-MM-DD.jsonl` (UTC days), where {base} is the
+## directory that holds `paddocks` ({home} by default; next to the paddocks
+## wherever they are configured), created readable only by
 ## the daemon's user; the first line of a new day removes the files older
 ## than DONKEY_TRACES_DAYS (14 by default). Through the fs port, like every
 ## file the app layer writes.
@@ -24,9 +26,14 @@ func traceRetentionDays*(env: Environment): int =
   except ValueError:
     DefaultTraceDays
 
-proc appendTurnTrace*(fs: FsRuntimePort; homeDir: string; trace: TurnTrace;
+func tracesDir*(paddocksDir: string): string =
+  ## Writer (the daemon) and reader (`ctl traces`) both derive it from the
+  ## paddocks location, so they agree however it is configured.
+  parentDir(paddocksDir.strip(leading = false, chars = {'/'})) / "state" / "traces"
+
+proc appendTurnTrace*(fs: FsRuntimePort; dir: string; trace: TurnTrace;
                       nowMs: int64; days: int): Result[void, string] =
-  let dir = homeDir / "state" / "traces"
+  ## `dir`: `tracesDir(paddocksDir)`.
   ? fs.createDir(dir)
   let name = traceFileName(nowMs)
   let path = dir / name

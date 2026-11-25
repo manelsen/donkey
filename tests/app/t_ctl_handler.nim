@@ -281,11 +281,11 @@ proc runTraceExportTests*() =
         "{\"ts\":1799900000000,\"user\":\"u-1\"}\n")
       writeFile(home / "state" / "traces" / "2027-01-15.jsonl",
         "{\"ts\":1800000000000,\"user\":\"u-2\"}\n{\"ts\":1800000001000,\"user\":\"u-1\"}\n")
-      let all = exportTraces(home, sinceMs = 0, user = "")
+      let all = exportTraces(home / "state" / "traces", sinceMs = 0, user = "")
       check all.len == 3
       check "1799900000000" in all[0]
-      check exportTraces(home, sinceMs = 1_800_000_000_000, user = "").len == 2
-      check exportTraces(home, sinceMs = 0, user = "u-1").len == 2
+      check exportTraces(home / "state" / "traces", sinceMs = 1_800_000_000_000, user = "").len == 2
+      check exportTraces(home / "state" / "traces", sinceMs = 0, user = "u-1").len == 2
 
     test "options":
       check parseTraceArgs(@[], 1_000_000).get.user == ""

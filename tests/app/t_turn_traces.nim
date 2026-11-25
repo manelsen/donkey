@@ -27,9 +27,9 @@ proc runTests*() =
 
     test "lines of one day go to one private file":
       let fs = newFsAdapter()
-      check appendTurnTrace(fs, Home, TurnTrace(startedMs: Now, userId: "u", outcome: "ok"),
+      check appendTurnTrace(fs, Home / "state" / "traces", TurnTrace(startedMs: Now, userId: "u", outcome: "ok"),
                             Now, days = 14).isOk
-      check appendTurnTrace(fs, Home, TurnTrace(startedMs: Now + 1, userId: "u", outcome: "ok"),
+      check appendTurnTrace(fs, Home / "state" / "traces", TurnTrace(startedMs: Now + 1, userId: "u", outcome: "ok"),
                             Now + 1, days = 14).isOk
       let path = Home / "state" / "traces" / "2027-01-15.jsonl"
       check readFile(path).strip.splitLines.len == 2
@@ -37,12 +37,16 @@ proc runTests*() =
       check stat(path.cstring, st) == 0
       check (st.st_mode.int and 0o777) == 0o600
 
+    test "the traces live next to the paddocks, wherever they are":
+      check tracesDir("/srv/donkey/paddocks") == "/srv/donkey/state/traces"
+      check tracesDir("/srv/donkey/paddocks/") == "/srv/donkey/state/traces"
+
     test "a new day removes the days past the retention":
       let fs = newFsAdapter()
       createDir(Home / "state" / "traces")
       writeFile(Home / "state" / "traces" / "2026-12-01.jsonl", "{}\n")
       writeFile(Home / "state" / "traces" / "2027-01-10.jsonl", "{}\n")
-      check appendTurnTrace(fs, Home, TurnTrace(startedMs: Now, outcome: "ok"), Now, days = 14).isOk
+      check appendTurnTrace(fs, Home / "state" / "traces", TurnTrace(startedMs: Now, outcome: "ok"), Now, days = 14).isOk
       check not fileExists(Home / "state" / "traces" / "2026-12-01.jsonl")
       check fileExists(Home / "state" / "traces" / "2027-01-10.jsonl")
 

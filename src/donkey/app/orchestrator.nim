@@ -608,7 +608,8 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
         if loopResult.providerFailed: "provider_error"
         elif sessionStopRequested(turnSetup.nativeCtx): "stopped"
         else: "ok")
-    appendTurnTrace(fs, parentDir(parentDir(paddockDir)), trace, turnEndedMs,
+    ## paddockDir is this user's paddock; its parent is the paddocks dir.
+    appendTurnTrace(fs, tracesDir(parentDir(paddockDir)), trace, turnEndedMs,
                     traceRetentionDays(result.env)).isOkOr:
       log.warn("turn trace: " & error)
   result =

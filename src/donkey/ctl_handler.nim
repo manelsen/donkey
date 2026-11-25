@@ -14,6 +14,7 @@ import adapters/tool/mcp_oauth
 import config/environment
 import domain/memory/conversation_search_pure
 import domain/turn_trace_pure
+import app/turn_traces
 import config/skills_registry
 import config/clawhub_registry
 import config/dotenv
@@ -348,10 +349,10 @@ func parseTraceArgs*(args: seq[string]; nowMs: int64): Result[TraceArgs, string]
     i += 2
   ok(parsed)
 
-proc exportTraces*(home: string; sinceMs: int64; user: string): seq[string] =
-  ## The trace lines in `{home}/state/traces`, oldest day first.
+proc exportTraces*(dir: string; sinceMs: int64; user: string): seq[string] =
+  ## The trace lines in `dir` (`tracesDir(paddocks)`), oldest day first.
   var files: seq[string]
-  for kind, path in walkDir(home / "state" / "traces"):
+  for kind, path in walkDir(dir):
     if kind == pcFile and path.endsWith(".jsonl"):
       files.add path
   files.sort()
@@ -361,7 +362,7 @@ proc exportTraces*(home: string; sinceMs: int64; user: string): seq[string] =
       if line.strip.len > 0 and traceMatches(line, sinceMs, user):
         result.add line
 
-proc ctlTraces*(home: string; args: seq[string]): int =
+proc ctlTraces*(paddocksDir: string; args: seq[string]): int =
   ## `ctl traces [--since …] [--user UUID]`: per-turn traces as JSON lines
   ## (written when DONKEY_TRACES is on), for export.
   let options = parseTraceArgs(args, getTime().toUnix * 1000)
@@ -369,7 +370,7 @@ proc ctlTraces*(home: string; args: seq[string]): int =
     echo options.error
     echo "usage: donkey ctl traces [--since 7d|24h|YYYY-MM-DD] [--user UUID]"
     return 1
-  for line in exportTraces(home, options.get.sinceMs, options.get.user):
+  for line in exportTraces(tracesDir(paddocksDir), options.get.sinceMs, options.get.user):
     echo line
   0
 
@@ -907,7 +908,7 @@ proc dispatchCtl*(cfg: DonkeyConfig;
   if args[1] == "tool" and args.len >= 3 and args[2] == "add-http":
     return ctlToolAddHttp(cfg.home, registryPath, args[3 ..^ 1])
   if args[1] == "traces":
-    return ctlTraces(cfg.home, args[2 ..^ 1])
+    return ctlTraces(cfg.paddocks, args[2 ..^ 1])
   if args[1] == "mcp" and args.len >= 4 and args[2] == "login":
     return ctlMcpLogin(cfg.home, args[3], cfg.env, args[4 ..^ 1])
 

@@ -55,8 +55,10 @@ DONKEY_TRACES_DAYS=14       # days kept; default 14
 ```
 
 Each agent turn appends one JSON line to `{home}/state/traces/YYYY-MM-DD.jsonl`
-(UTC days; the files are readable only by the daemon's user, and the first
-line of a new day removes the days past the retention):
+(next to the `paddocks` directory when that is configured elsewhere; UTC
+days; the files are readable only by the daemon's user, and the first line
+of a new day removes the days past the retention, so a shorter retention
+takes effect the next day):
 
 ```json
 {"ts":1800000000000,"duration_ms":2310,"user":"<uuid>","channel":"telegram",
