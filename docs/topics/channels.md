@@ -345,7 +345,11 @@ agent     = "suporte"      # {home}/agents/suporte.toml
   person writes again.
 - An entry that is malformed or whose token variable is not set is left out
   and logged at startup; the others run.
-- Available on Telegram today; Discord, WhatsApp and Teams follow (E3).
+- On Discord each bot keeps its own gateway connection. Direct messages
+  sent while the daemon was down are recovered only for the default bot:
+  the recovery cursor is one per person and each bot has its own DM
+  channels.
+- Available on Telegram and Discord; WhatsApp and Teams follow (E3).
 
 ---
 

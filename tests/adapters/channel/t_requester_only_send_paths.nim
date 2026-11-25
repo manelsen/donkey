@@ -37,6 +37,7 @@ import donkey/app/command_dispatch
 import donkey/app/session_manager
 import donkey/infra/event_queue
 import donkey/domain/agent_message
+import donkey/core/types
 
 # ── Recording HTTP server ─────────────────────────────────────────────────────
 
@@ -560,6 +561,82 @@ proc runTests*() =
                          noop, noop, noop)
       check anyRequest(proc(r: Recorded): bool =
         r.target.startsWith("GET /channels/D1/messages"))
+
+    test "Discord: a bot's event is answered through that bot, which becomes the person's":
+      ## E3.4: one queue for every bot; the event's tag picks the adapter.
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var state = initPresentationState()
+      let dc = newDiscordAdapter("TOK", Tmp / "dc-bot" / "ids.tsv", apiBase = base())
+      var botB = newDiscordAdapter("TOK-B", "", apiBase = base() & "/botb")
+      botB.resolver = dc.resolver
+      botB.cursor = nil
+      let pb = addr botB
+      var noted: seq[string]
+      gDiscordEvents.push(DiscordRawEvent(kind: deMessage, discordUserId: "71",
+        content: "/start", channelId: "chan-b", originChannelId: "chan-b",
+        messageId: "bm1", guildId: "g1", bot: "ops"))
+      gDiscordEvents.push(DiscordRawEvent(kind: deMessage, discordUserId: "72",
+        content: "/start", channelId: "chan-x", originChannelId: "chan-x",
+        messageId: "bm2", guildId: "g1", bot: "gone"))
+      drainDiscordEvents(sm, dc, "TOK", state, env("dc-bot"), msgSeq, logger,
+        noop, noop, noop,
+        pickBot = proc(bot: string): ptr DiscordAdapter {.gcsafe.} =
+          (if bot == "ops": pb else: nil),
+        noteInbound = proc(userId: UserId; bot: string) {.gcsafe.} =
+          {.cast(gcsafe).}:
+            noted.add bot)
+      check anyRequest(proc(r: Recorded): bool = "/botb/channels/chan-b/messages" in r.target)
+      check not anyRequest(proc(r: Recorded): bool =
+        "/channels/chan-b/messages" in r.target and "/botb/" notin r.target)
+      check not anyRequest(proc(r: Recorded): bool = "chan-x" in r.target)
+      check noted == @["ops"]
+
+    test "Discord: a bot's message reaches the session tagged with the bot":
+      ## The tag is what makes the turn answer with the bot's persona (E3.2).
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var state = initPresentationState()
+      let dc = newDiscordAdapter("TOK", Tmp / "dc-tag" / "ids.tsv", apiBase = base())
+      var botB = newDiscordAdapter("TOK-B", "", apiBase = base() & "/botb")
+      botB.resolver = dc.resolver
+      botB.cursor = nil
+      let pb = addr botB
+      var reached: seq[InboundMessage]
+      let capture = proc(msg: InboundMessage) {.gcsafe.} =
+        {.cast(gcsafe).}:
+          reached.add msg
+      gDiscordEvents.push(DiscordRawEvent(kind: deMessage, discordUserId: "75",
+        content: "bom dia", channelId: "dm-75", messageId: "tm1", bot: "ops"))
+      drainDiscordEvents(sm, dc, "TOK", state, env("dc-tag"), msgSeq, logger,
+        noop, noop, capture,
+        pickBot = proc(bot: string): ptr DiscordAdapter {.gcsafe.} = pb)
+      check reached.len == 1
+      check reached[0].bot == "ops"
+      check reached[0].text == "bom dia"
+
+    test "Discord: without a default token, the bots' events are still served":
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var state = initPresentationState()
+      let dc = newDiscordAdapter("", Tmp / "dc-notok" / "ids.tsv", apiBase = base())
+      var botB = newDiscordAdapter("TOK-B", "", apiBase = base() & "/botb")
+      botB.resolver = dc.resolver
+      let pb = addr botB
+      gDiscordEvents.push(DiscordRawEvent(kind: deMessage, discordUserId: "73",
+        content: "/start", channelId: "chan-d", originChannelId: "chan-d",
+        messageId: "dm1", guildId: "g1"))
+      gDiscordEvents.push(DiscordRawEvent(kind: deMessage, discordUserId: "74",
+        content: "/start", channelId: "chan-e", originChannelId: "chan-e",
+        messageId: "dm2", guildId: "g1", bot: "ops"))
+      drainDiscordEvents(sm, dc, "", state, env("dc-notok"), msgSeq, logger,
+        noop, noop, noop,
+        pickBot = proc(bot: string): ptr DiscordAdapter {.gcsafe.} = pb)
+      check not anyRequest(proc(r: Recorded): bool = "chan-d" in r.target)
+      check anyRequest(proc(r: Recorded): bool = "/botb/channels/chan-e/messages" in r.target)
 
     test "Discord: only a READY after an earlier one asks for recovery":
       check not readyNeedsResync(readyBefore = false)

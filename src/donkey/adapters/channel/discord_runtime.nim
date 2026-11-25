@@ -515,6 +515,7 @@ proc handleDiscordEvent*(sm: var SessionManager;
       mediaFileName: event.attachmentName,
       mediaMimeType: event.attachmentMime,
       quotedText: event.referencedContent,
+      bot:       event.bot,   ## the turn answers with that bot's persona
     )
     if event.extraAttachments.len > 0:
       ## One attachment per turn is downloaded; say which ones were not.
@@ -530,8 +531,10 @@ proc handleDiscordEvent*(sm: var SessionManager;
     ## to a turn moves it after that turn's final reply
     ## (`settleDiscordCursorOnReply`). A server message never moves it: the
     ## cursor only recovers DMs.
+    ## Only an adapter with a cursor (the default bot's) recovers DMs: a bot's
+    ## DM ids would move the default bot's cursor past its own DMs.
     let tracksCursor = event.messageId.len > 0 and event.guildId.len == 0 and
-                       event.interactionId.len == 0
+                       event.interactionId.len == 0 and not dcAdapter.cursor.isNil
     proc answeredNow() =
       ## With a DM of this user still in a turn, the answered message joins
       ## the pending one: moving the cursor now would pass the unfinished DM.
@@ -713,47 +716,65 @@ proc drainDiscordEvents*(sm: var SessionManager;
                          logger: Logger;
                          handleInboundStatus: proc(msg: InboundMessage) {.gcsafe.};
                          completeInboundStatus: proc(msg: InboundMessage) {.gcsafe.};
-                         handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.}) =
-  if discordToken.len == 0:
-    return
-  ## Process real-time events
+                         handleSessionFallback: proc(msg: InboundMessage) {.gcsafe.};
+                         pickBot: proc(bot: string): ptr DiscordAdapter {.gcsafe.} = nil;
+                         noteInbound: proc(userId: UserId; bot: string) {.gcsafe.} = nil) =
+  ## Every bot's events come through one queue, each tagged with its bot
+  ## (E3.4): `pickBot` gives that bot's adapter, so replies, interactions and
+  ## keyboards use its token, and `noteInbound` makes it the bot that answers
+  ## the person, before anything is sent. Without a default token only the
+  ## bots' events are handled.
+  var primary = dcAdapter
   let gate = dcAdapter.resolver.identityGate()
   var (hasEvent, event) = dcAdapter.tryRecvEvent()
   while hasEvent:
-    if event.kind == deResync:
-      ## Same recovery as at startup; messages already handled are dropped
-      ## by the dedup, the rest are processed in order.
-      checkDiscordOfflineMessages(sm, dcAdapter, discordToken, presentationState,
-                                  env, msgSeq, logger, handleInboundStatus,
-                                  completeInboundStatus, handleSessionFallback)
-      (hasEvent, event) = dcAdapter.tryRecvEvent()
-      continue
-    if not discordChannelAllowed(dcAdapter.allowedChannels, event.guildId,
-                                 event.originChannelId):
-      ## Before the identity gate, like TG-016: no turn, identity or pairing.
-      logger.debug("discord: server " & event.guildId & " is not in the allowlist")
-      (hasEvent, event) = dcAdapter.tryRecvEvent()
-      continue
-    let rawId = event.discordUserId
-    let linkSource =
-      case event.kind
-      of deMessage:       ilsCommandText
-      of deInteraction:   ilsBareCode
-      of deModalRequest:  ilsModalOnly
-      else:               ilsNone
-    let auth = authorizeInbound(
-      sm, gate, ckDiscord, rawId, event.content, linkSource)
-    if not auth.allowed:
-      logger.warn("discord: unauthorized event from " &
+    block next:
+      let picked =
+        if event.bot.len == 0:
+          (if discordToken.len > 0: addr primary else: nil)
+        elif pickBot != nil: pickBot(event.bot)
+        else: nil
+      if picked.isNil:
+        if event.bot.len > 0:
+          logger.warn("discord: event from bot " & event.bot & ", which is not configured")
+        break next
+      if event.kind == deResync:
+        if event.bot.len > 0:
+          ## The DM cursor is the default bot's (discord_bots).
+          logger.info("discord: bot " & event.bot &
+                      " reconnected; missed DMs are recovered only on the default bot")
+          break next
+        ## Same recovery as at startup; messages already handled are dropped
+        ## by the dedup, the rest are processed in order.
+        checkDiscordOfflineMessages(sm, dcAdapter, discordToken, presentationState,
+                                    env, msgSeq, logger, handleInboundStatus,
+                                    completeInboundStatus, handleSessionFallback)
+        break next
+      if not discordChannelAllowed(picked[].allowedChannels, event.guildId,
+                                   event.originChannelId):
+        ## Before the identity gate, like TG-016: no turn, identity or pairing.
+        logger.debug("discord: server " & event.guildId & " is not in the allowlist")
+        break next
+      let linkSource =
+        case event.kind
+        of deMessage:       ilsCommandText
+        of deInteraction:   ilsBareCode
+        of deModalRequest:  ilsModalOnly
+        else:               ilsNone
+      let auth = authorizeInbound(
+        sm, gate, ckDiscord, event.discordUserId, event.content, linkSource)
+      if not auth.allowed:
+        logger.warn("discord: unauthorized event from " &
+          (if auth.identified: $auth.userId else: "unidentified sender"))
+        break next
+      logger.info("discord event: " & $event.kind & " from " &
         (if auth.identified: $auth.userId else: "unidentified sender"))
-      (hasEvent, event) = dcAdapter.tryRecvEvent()
-      continue
-    logger.info("discord event: " & $event.kind & " from " &
-      (if auth.identified: $auth.userId else: "unidentified sender"))
-    handleDiscordEvent(sm, event, dcAdapter, presentationState, env, msgSeq, logger,
-                       handleInboundStatus,
-                       completeInboundStatus,
-                       handleSessionFallback)
+      if noteInbound != nil and auth.identified:
+        noteInbound(auth.userId, event.bot)
+      handleDiscordEvent(sm, event, picked[], presentationState, env, msgSeq, logger,
+                         handleInboundStatus,
+                         completeInboundStatus,
+                         handleSessionFallback)
     (hasEvent, event) = dcAdapter.tryRecvEvent()
 
 proc settleDiscordCursorOnReply*(dcAdapter: DiscordAdapter; sm: var SessionManager;
