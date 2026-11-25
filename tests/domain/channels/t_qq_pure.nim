@@ -4,6 +4,7 @@
 import std/[json, strutils, unittest]
 import donkey/core/pipeops
 import donkey/domain/channels/qq_pure
+import donkey/domain/channels/gateway_pure
 import donkey/core/types
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -377,6 +378,30 @@ proc runTests*() =
 
     test "public bind with secret is allowed":
       check oneBotListenerCheck("0.0.0.0", "s3cret").isOk
+
+  suite "qq_pure: gateway close codes":
+    ## The table at bot.q.qq.com/wiki/develop/api-v2/dev-prepare/error-trace/
+    ## websocket.html: which codes allow RESUME, which only IDENTIFY, which
+    ## neither.
+
+    test "rejected setup or a delisted or banned bot stops":
+      for code in [4001, 4002, 4010, 4011, 4012, 4013, 4014, 4914, 4915]:
+        check qqOfficialCloseAction(code) == caStop
+
+    test "a lost session or an internal error starts a new session":
+      for code in [4006, 4007, 4900, 4905, 4913]:
+        check qqOfficialCloseAction(code) == caNewSession
+
+    test "an expired connection or a rate limit resumes":
+      for code in [4008, 4009]:
+        check qqOfficialCloseAction(code) == caResume
+
+    test "other gateway codes identify again; a network drop resumes":
+      ## The page's catch-all: "其他错误，请重新发起 identify".
+      check qqOfficialCloseAction(4004) == caNewSession
+      check qqOfficialCloseAction(4999) == caNewSession
+      for code in [0, 1000, 1001, 1006]:
+        check qqOfficialCloseAction(code) == caResume
 
 when isMainModule:
   runTests()

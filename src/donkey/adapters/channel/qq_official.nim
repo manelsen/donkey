@@ -17,8 +17,11 @@ import ../../domain/message
 import ../../ports/http
 import ../http/std_http
 import ./ws_client
+import ../../core/log
+import ../../domain/channels/qq_pure
+import ../network/persistent_socket
+import ../network/gateway_family
 import ../../infra/event_queue
-import ../../infra/thread_handle
 import ../../domain/channels/access_token_pure
 
 const
@@ -52,32 +55,12 @@ type
     url*:    string
     shards*: int
 
-  QQOfficialGatewayState = object
-    ws:          WsClient
-    heartbeatMs: int
-    lastBeatMs:  int64
-    lastSeq:     int
-    sessionId:   string
-
-  QQOfficialGatewayArgs = object
-    appId:        string
-    clientSecret: string
-    apiBase:      string
-    tokenBase:    string
-    intents:      int
 
 ## Thread-safe: an `EventQueue` (shared memory, events moved, not copied),
 ## created with the module; the receiving thread pushes, the daemon loop polls.
 ## Opened once at daemon startup via startGateway().
 var gQQOfficialEvents* = initEventQueue[QQOfficialEvent]("qq_official")
 
-## Thread handle for the QQ official gateway OS thread.
-## Safe: only assigned once via createThread in startGateway.
-var gQQOfficialGatewayThread: ThreadHandle[QQOfficialGatewayArgs]  ## shared memory: a global pointer is gcsafe
-
-## Startup guard — set to true once in startGateway.
-## Safe: only written from main thread before any gateway activity begins.
-var gQQOfficialGatewayStarted {.global.}: bool
 
 func apiBase(a: QQOfficialAdapter): string =
   if a.apiBase.len > 0: a.apiBase else: QQOfficialDefaultApiBase
@@ -88,10 +71,6 @@ func tokenBase(a: QQOfficialAdapter): string =
 proc nowUnixSec(): int64 =
   getTime().toUnix()
 
-proc sendHeartbeat(state: var QQOfficialGatewayState) =
-  let payload = if state.lastSeq > 0: $state.lastSeq else: "null"
-  state.ws.sendFrame("{\"op\":1,\"d\":" & payload & "}")
-  state.lastBeatMs = nowUnixSec() * 1000
 
 func qqBotHeaders*(token: string): seq[HttpHeader] =
   @[
@@ -428,122 +407,120 @@ proc handleGatewayDispatch(adapter: var QQOfficialAdapter;
   if eventRes.isOk:
     gQQOfficialEvents.push(eventRes.value)
 
-proc runGatewaySession(adapter: var QQOfficialAdapter;
-                       intents: int;
-                       state: var QQOfficialGatewayState;
-                       backoffMs: var int) =
-  let gateway = adapter.fetchGatewayInfo().valueOr:
-    raise newException(IOError, "QQ official gateway lookup failed: " & error)
-  var wsUrl = gateway.url
-  if not wsUrl.startsWith("wss://"):
-    wsUrl = "wss://" & wsUrl
-  let noScheme = wsUrl[6 .. ^1]
-  let slashIdx = noScheme.find('/')
-  let host = if slashIdx >= 0: noScheme[0 ..< slashIdx] else: noScheme
-  let path = if slashIdx >= 0: noScheme[slashIdx .. ^1] else: "/"
-  state.ws = wsConnect(host, Port(443), path, useTls = true)
+## The gateway connection: adapters/network/persistent_socket keeps it
+## (thread, backoff, idle timeout, stop) and gateway_family speaks the
+## protocol QQ official shares with Discord: heartbeats with dead-link
+## detection, RESUME, opcodes 7/9/11. What is QQ's own is here: the gateway
+## lookup, the "QQBot" token, the close-code table and the dispatches.
 
-  let helloRes = state.ws.recvFrame()
-  if helloRes.isErr:
-    raise newException(IOError, "QQ official hello failed: " & helloRes.error)
-  let hello = parseJson(helloRes.get().data)
-  state.heartbeatMs = hello["d"]["heartbeat_interval"].getInt(45000)
-  state.sendHeartbeat()
+type
+  QQOfficialGatewayConfig = object
+    ## Plain data, copied to the connection thread.
+    appId, clientSecret, apiBase, tokenBase: string
+    intents: int
 
-  let token = adapter.ensureAccessToken().valueOr:
-    raise newException(IOError, "QQ official token refresh failed: " & error)
-  if state.sessionId.len > 0:
-    state.ws.sendFrame($ %* {
-      "op": 6,
-      "d": {
-        "token": "QQBot " & token,
-        "session_id": state.sessionId,
-        "seq": state.lastSeq,
-      },
-    })
-  else:
-    state.ws.sendFrame($ %* {
-      "op": 2,
-      "d": {
-        "token": "QQBot " & token,
-        "intents": intents,
-        "shard": [0, 1],
-        "properties": {"app": "donkey"},
-      },
-    })
+  QQOfficialGatewayState = object
+    ## Lives on the connection thread, across reconnections.
+    adapter: QQOfficialAdapter
+    built:   bool
+    family:  FamilyState
 
-  while true:
-    if nowUnixSec() * 1000 - state.lastBeatMs >= int64(state.heartbeatMs):
-      state.sendHeartbeat()
+proc gatewayInfoOf(adapter: var QQOfficialAdapter): Result[QQOfficialGatewayInfo, string]
+                  {.raises: [].} =
+  try:
+    adapter.fetchGatewayInfo()
+  except Exception as e:  ## effect boundary: callee raises are unannotated
+    err(e.msg)
+
+proc accessTokenOf(adapter: var QQOfficialAdapter): Result[string, string] {.raises: [].} =
+  try:
+    adapter.ensureAccessToken()
+  except Exception as e:  ## effect boundary: callee raises are unannotated
+    err(e.msg)
+
+proc qqLocate(cfg: QQOfficialGatewayConfig; state: var QQOfficialGatewayState;
+              log: Logger): Result[SocketTarget, string]
+             {.nimcall, gcsafe, raises: [CatchableError].} =
+  if not state.built:
+    state.adapter = newQQOfficialAdapter(cfg.appId, cfg.clientSecret, "",
+                                         cfg.apiBase, cfg.tokenBase,
+                                         newStdHttpAdapter().toRuntimePort())
+    state.built = true
+  let gateway = gatewayInfoOf(state.adapter).valueOr:
+    return err("gateway lookup failed: " & error)
+  var url = gateway.url
+  if not url.startsWith("wss://"):
+    url = "wss://" & url
+  let rest = url[6 .. ^1]
+  let slash = rest.find('/')
+  ok(SocketTarget(host: if slash >= 0: rest[0 ..< slash] else: rest,
+                  path: if slash >= 0: rest[slash .. ^1] else: "/",
+                  port: Port(443), useTls: true))
+
+proc qqOpened(cfg: QQOfficialGatewayConfig; state: var QQOfficialGatewayState;
+              ws: WsClient; log: Logger): SessionStep
+             {.nimcall, gcsafe, raises: [CatchableError].} =
+  ## The first heartbeat goes right after hello, as before (the tick sends it).
+  familyHello(ws, state.family, epochMs(), jitterCapMs = 0,
+              defaultIntervalMs = 45_000).isOkOr:
+    log.warn("qq official: " & error)
+    return ssReconnect
+  let token = accessTokenOf(state.adapter).valueOr:
+    log.warn("qq official: token refresh failed: " & error)
+    return ssReconnect
+  familyIdentify(ws, state.family, %* {
+    "token": "QQBot " & token,
+    "intents": cfg.intents,
+    "shard": [0, 1],
+    "properties": {"app": "donkey"},
+  }, resumeToken = "QQBot " & token)
+  ssKeep
+
+proc qqFrame(cfg: QQOfficialGatewayConfig; state: var QQOfficialGatewayState;
+             ws: WsClient; frame: WsFrame; log: Logger): SessionStep
+            {.nimcall, gcsafe, raises: [CatchableError].} =
+  let event = familyFrame(ws, state.family, frame, qqOfficialCloseAction, log,
+                          "qq official")
+  case event.kind
+  of fkReady:
+    log.info("qq official: ready, session=" & state.family.sessionId)
+  of fkDispatch:
     try:
-      let frameRes = state.ws.recvFrame()
-      if frameRes.isErr:
-        if frameRes.error == "timeout":
-          continue
-        break
-      let frame = frameRes.get()
-      case frame.opcode
-      of WsOpcodeText:
-        let j = parseJson(frame.data)
-        let op = j.getOrDefault("op").getInt(-1)
-        case op
-        of 0:
-          let s = j.getOrDefault("s").getInt(0)
-          if s > 0: state.lastSeq = s
-          let t = j.getOrDefault("t").getStr("")
-          let d = j.getOrDefault("d")
-          if t == "READY":
-            state.sessionId = d.getOrDefault("session_id").getStr("")
-            backoffMs = 1000
-          elif t == "RESUMED":
-            backoffMs = 1000
-          else:
-            handleGatewayDispatch(adapter, t, d)
-        of 7:
-          break
-        of 9:
-          state.sessionId = ""
-          break
-        of 10:
-          discard
-        of 11:
-          discard
-        else:
-          discard
-      of WsOpcodePing:
-        state.ws.sendFrame(frame.data, WsOpcodePong)
-      of WsOpcodeClose:
-        break
-      else:
-        discard
-    except TimeoutError:
-      discard
+      handleGatewayDispatch(state.adapter, event.name, event.data)
+    except Exception as e:  ## effect boundary: callee raises are unannotated
+      log.warn("qq official: dispatch " & event.name & " failed: " & e.msg)
+  of fkStep:
+    return event.step
+  of fkNone, fkResumed:
+    discard
+  ssKeep
 
-proc qqOfficialGatewayThread(arg: QQOfficialGatewayArgs) {.thread.} =
-  var adapter = newQQOfficialAdapter(arg.appId, arg.clientSecret, "",
-                                     arg.apiBase, arg.tokenBase,
-                                     newStdHttpAdapter().toRuntimePort())
-  var state = QQOfficialGatewayState()
-  var backoffMs = 1000
-  while true:
-    try:
-      runGatewaySession(adapter, arg.intents, state, backoffMs)
-      sleep(backoffMs)
-      backoffMs = min(backoffMs * 2, 60_000)
-    except CatchableError as e:
-      echo "[qq-official] gateway error: " & e.msg & " — reconnecting in " &
-           $backoffMs & " ms"
-      sleep(backoffMs)
-      backoffMs = min(backoffMs * 2, 60_000)
+proc qqTick(cfg: QQOfficialGatewayConfig; state: var QQOfficialGatewayState;
+            ws: WsClient; nowMs: int64; log: Logger): SessionStep
+           {.nimcall, gcsafe, raises: [CatchableError].} =
+  familyTick(ws, state.family, nowMs, log, "qq official")
 
-proc startGateway*(a: QQOfficialAdapter; intents = QQOfficialDefaultIntents) {.gcsafe.} =
-  if gQQOfficialGatewayStarted:
+const QQOfficialGatewayProtocol = SocketProtocol[QQOfficialGatewayConfig, QQOfficialGatewayState](
+  locate: qqLocate, opened: qqOpened, frame: qqFrame, tick: qqTick)
+
+var gQQOfficialGateway: PersistentSocket[QQOfficialGatewayConfig, QQOfficialGatewayState]
+  ## Pointers only: gcsafe to touch from the daemon.
+
+proc startGateway*(a: QQOfficialAdapter; intents = QQOfficialDefaultIntents;
+                   log = newLogger("qq official")) {.gcsafe.} =
+  ## Starts the gateway connection. Call once at daemon startup.
+  if gQQOfficialGateway.running:
     return
-  gQQOfficialGatewayStarted = true
-  gQQOfficialGatewayThread = spawnThread(qqOfficialGatewayThread, QQOfficialGatewayArgs(
-    appId: a.appId,
-    clientSecret: a.clientSecret,
-    apiBase: a.apiBase(),
-    tokenBase: a.tokenBase(),
-    intents: intents,
-  ))
+  let started = startPersistentSocket("qq official", QQOfficialGatewayProtocol,
+    QQOfficialGatewayConfig(appId: a.appId, clientSecret: a.clientSecret,
+                            apiBase: a.apiBase(), tokenBase: a.tokenBase(),
+                            intents: intents),
+    defaultSocketPolicy(), log)
+  if started.isErr:
+    log.error("qq official: " & started.error)
+    return
+  gQQOfficialGateway = started.get
+
+proc stopGateway*() =
+  ## Closes the gateway connection at shutdown. Safe when it never started.
+  gQQOfficialGateway.stop()

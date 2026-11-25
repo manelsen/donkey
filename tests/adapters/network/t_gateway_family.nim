@@ -9,7 +9,7 @@ import donkey/adapters/network/persistent_socket
 import donkey/adapters/channel/ws_client
 import donkey/core/log
 import donkey/core/pipeops
-import donkey/domain/channels/discord_pure
+import donkey/domain/channels/discord_pure  # closeAction (Discord table)
 
 type Pair = object
   listener, server: Socket
