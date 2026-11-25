@@ -865,7 +865,9 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
     let tasksCtx = parseManageTasksContext(j).valueOr:
       return handledError(error)
     let reply = performManageTasks(ctx.fs, ctx.paddockDir, tasksCtx,
-                                   int64(epochTime() * 1000)).valueOr:
+                                   int64(epochTime() * 1000),
+                                   TaskAgenda(schedules: ctx.schedules, userId: $ctx.uid,
+                                              channel: $ctx.channel)).valueOr:
       return handledError(error)
     return handledText(reply)
   of ManageAgentsToolName:

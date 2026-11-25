@@ -627,5 +627,34 @@ proc runTests*() =
                            at(1, 0), at(5, 30)).isNone
 
 
+  suite "schedule spec — a one-time trigger (@at)":
+
+    test "@at names one instant, in epoch milliseconds":
+      check parseTrigger("@at " & $dayAt(3, 9, 0)).get().kind == tkOnce
+      check parseTrigger("@at " & $dayAt(3, 9, 0)).get().atMs == dayAt(3, 9, 0)
+      check parseTrigger("@at").isErr
+      check parseTrigger("@at amanhã").isErr
+      check parseTrigger("@at -5").isErr
+
+    test "it runs once: the instant itself, then never again":
+      let spec = makeSpec("@at " & $dayAt(3, 9, 0))
+      check spec.nextRunAfterMs(dayAt(1, 0, 0)).get() == dayAt(3, 9, 0)
+      check spec.nextRunAfterMs(dayAt(3, 9, 0)).isNone
+      check spec.dueInstants(dayAt(1, 0, 0), dayAt(3, 9, 0)) == @[dayAt(3, 9, 0)]
+      check spec.dueInstants(dayAt(3, 9, 0), dayAt(9, 0, 0)).len == 0
+      check spec.countDueCapped(dayAt(1, 0, 0), dayAt(5, 0, 0), 10) == 1
+      check spec.countDueCapped(dayAt(3, 9, 0), dayAt(5, 0, 0), 10) == 0
+
+    test "missed while down, it is caught up once within the lookback":
+      let spec = makeSpec("@at " & $dayAt(3, 9, 0), catchUp = scOnce)
+      check spec.catchUpInstant(dayAt(3, 8, 0), dayAt(3, 20, 0)).get() == dayAt(3, 9, 0)
+      check spec.catchUpInstant(dayAt(3, 8, 0), dayAt(5, 20, 0)).isNone
+      check makeSpec("@at " & $dayAt(3, 9, 0)).catchUpInstant(
+        dayAt(3, 8, 0), dayAt(3, 20, 0)).isNone
+
+    test "a single run has no gap to limit":
+      check makeSpec("@at " & $dayAt(3, 9, 0)).closestGapMs(0, MinuteMs).isNone
+
+
 when isMainModule:
   runTests()
