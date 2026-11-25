@@ -363,3 +363,25 @@ forced tool choice. MAGMA (default build), current master, DeepSeek, seeds
   say you don't remember" hint keeps it from denying things never said
   (25% → 67%).
 - **Run-to-run noise:** natural shows 75% here against 79% the night before.
+
+## Recall after the neighbour scores and relative windows (#185, #186), 25/11/2026
+
+LongMemEval S, the same 60 answerable questions, graphs seeded again from
+scratch (`out/lme-pos-185-186.jsonl`; base: `out/lme.jsonl`).
+
+| | top 1 | top 8 | top 16 | not in 40 |
+|---|---|---|---|---|
+| base | 30 | 52 | 55 | 2 |
+| **after #185 and #186** | **33** | **55** | **58** | 2 |
+
+**What changed:**
+- **15 questions moved:** 9 up, 6 down. The big gains: two single-session-user
+  questions (28 → 1 and 4 → 1), one multi-session question (absent → 8), and
+  one temporal-reasoning question (21 → 1).
+- **The losses are small except two "N days ago" questions** (4 → 9 and
+  36 → absent). A relative date now becomes a window counted from today. The
+  benchmark asks from a 2023 date, so the window holds no memory and the
+  question ranks by meaning and words alone. Before #185, recency pointed at
+  the graph's newest memories, which sit next to the 2023 question date: a
+  benchmark artefact, not a skill. In production the window is the right
+  reading, and an empty window costs only the recency signal.
