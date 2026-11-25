@@ -128,8 +128,9 @@ func stripProviderPrefix(model: string): string =
 proc nvidiaProfileAt(endpoint: string): CompatProfileFn =
   result = proc(): CompatProfile {.gcsafe.} = nvidiaCompatProfileAt(endpoint)
 
-proc alibabaProfileAt(endpoint: string): CompatProfileFn =
-  result = proc(): CompatProfile {.gcsafe.} = alibabaCompatProfileAt(endpoint)
+proc alibabaProfileAt(endpoint, model: string): CompatProfileFn =
+  ## Per model: preserve_thinking depends on it (profile_alibaba).
+  result = proc(): CompatProfile {.gcsafe.} = alibabaCompatProfileFor(endpoint, model)
 
 proc mistralProfileAt(endpoint: string): CompatProfileFn =
   result = proc(): CompatProfile {.gcsafe.} = mistralCompatProfileAt(endpoint)
@@ -283,12 +284,13 @@ proc buildProviderBundle*(spec: ProviderSpec; http: HttpRuntimePort
     ## DashScope speaks the OpenAI dialect under `compatible-mode`; everything
     ## provider-specific is data in `alibabaCompatProfile`, so there is no
     ## Alibaba adapter file.
+    let model = if spec.modelName.len > 0: spec.modelName
+                else: providerDefaultModelFor("alibaba")
     let adapter = newCompatAdapter(
       spec.apiKey,
-      model = if spec.modelName.len > 0: spec.modelName
-              else: providerDefaultModelFor("alibaba"),
+      model = model,
       providerName = "Alibaba",
-      profileFn = alibabaProfileAt(providerEndpointFor("alibaba", spec.baseUrl)),
+      profileFn = alibabaProfileAt(providerEndpointFor("alibaba", spec.baseUrl), model),
       http = http,
     )
     ProviderBundle(

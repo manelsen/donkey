@@ -10,12 +10,20 @@
 ## `website/docs/integrations/providers.md:36,259-260`,
 ## `hermes_cli/models_catalog_static.py:209-212` (`qwen3.8-max` is first).
 ##
-## Vision is **not** verified, so images are suppressed: absence is never a
-## promise (PRD FR-3). `preserve_thinking` stays out because the transport does
-## not replay prior-turn reasoning (PRD US-003, §11).
+## Vision is decided per model (media_pure.visionSupport).
+##
+## `preserve_thinking` (Model Studio's Chat Completions reference,
+## alibabacloud.com/help/en/model-studio/qwen-api-via-openai-chat-completions):
+## for the models it lists, the reasoning_content of historical assistant
+## messages is read as model input. Those models get the parameter and the
+## earlier turns' reasoning in `reasoning_content` (never concatenated into
+## the content; a turn without reasoning carries no field, which the reference
+## says is not an error). Kimi K3 on Model Studio keeps client reasoning by
+## default: echoed, no parameter. Everything else is unchanged.
 ##
 ## Pure: no I/O, no network, no JsonNode construction.
 
+import std/[json, strutils]
 import ../../core/providers/provider_defaults
 import ./compat
 import ./openai_pure
@@ -36,6 +44,35 @@ func alibabaCompatProfileAt*(endpoint: string): CompatProfile =
     quirks: defaultOpenAiQuirks(),
   )
   result.quirks.includeReasoningField = false
+
+const
+  PreserveThinkingModels = [
+    "qwen4-max", "qwen3.8-max", "qwen3.8-flash", "qwen3.8-omni-flash",
+    "qwen3.7-max", "qwen3.7-plus", "qwen3.7-flash",
+    "qwen3.6-plus", "qwen3.6-flash",
+    "kimi-k2.6", "kimi-k2.7-code", "kimi/kimi-k2.7-code", "kimi/kimi-k3.1-pro"]
+    ## prefixes: a dated snapshot (qwen3.6-plus-2026-04-02) is the same model
+  KeepsClientReasoning = ["kimi-k3"]
+    ## Model Studio's Kimi K3 / K3.1 Pro keep it without the parameter
+
+func startsWithAny(model: string; prefixes: openArray[string]): bool =
+  let m = model.toLowerAscii.strip
+  for prefix in prefixes:
+    if m.startsWith(prefix): return true
+  false
+
+func alibabaPreservesThinking*(model: string): bool =
+  model.startsWithAny(PreserveThinkingModels)
+
+proc alibabaCompatProfileFor*(endpoint, model: string): CompatProfile =
+  ## The profile for one model: preserve_thinking and reasoning replay where
+  ## the reference lists the model. `proc`: the extras are a JsonNode.
+  result = alibabaCompatProfileAt(endpoint)
+  if alibabaPreservesThinking(model):
+    result.payloadExtras = %* {"preserve_thinking": true}
+    result.quirks.replayReasoning = true
+  elif model.startsWithAny(KeepsClientReasoning):
+    result.quirks.replayReasoning = true
 
 func alibabaCompatProfile*(): CompatProfile =
   ## The profile the adapter/runtime builder passes as `profileFn`; zero-arg so
