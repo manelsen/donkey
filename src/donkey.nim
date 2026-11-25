@@ -115,6 +115,7 @@ import donkey/app/session_bootstrap
 from donkey/app/skill_runtime import skillRegistry
 import donkey/app/credential_runtime
 import donkey/app/session_ingress
+import donkey/adapters/state/turn_journal_store
 import donkey/app/doctor
 import donkey/app/setup_wizard
 import donkey/app/service_handler
@@ -1058,7 +1059,7 @@ func buildDaemonSessionServices(ctx: DaemonContext;
                                 cfg: DonkeyConfig;
                                 memory: MdFileAdapter;
                                 log: Logger): SessionIngressServices =
-  buildSessionIngressServices(
+  result = buildSessionIngressServices(
     memory.toRuntimePort(),
     cfg,
     ctx.services.globalCompleteFn,
@@ -1097,6 +1098,8 @@ func buildDaemonSessionServices(ctx: DaemonContext;
     process = newProcessAdapter(),
     attachments = newAttachmentStore(),
   )
+  ## Turns in flight, so a crash is followed by a replay or a notice (E1).
+  result.journal = turnJournalPort(newTurnJournalStore(cfg.home / "state" / "turns"))
 
 proc handleDaemonSessionFallback(runtime:  var DaemonRuntime;
                                   msg:      InboundMessage;
@@ -1667,6 +1670,14 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     log.info("restored " & $restoredSessions.value & " sessions from registry")
   activateDaemonBootstrap(ctx, cfg, memory, log)
   let sessionServices = buildDaemonSessionServices(ctx, cfg, memory, log)
+  ## Turns the previous process died in: replayed when nothing they did
+  ## could be repeated, otherwise the user is told. The replays and notices
+  ## wait in the queues until the loop and the channels are up.
+  let resumed = resumeInterruptedTurns(ctx.runtime.sm, sessionServices,
+                                       ctx.runtime.msgSeq, epochMs())
+  if resumed.replayed + resumed.notified + resumed.dropped > 0:
+    log.warn("interrupted turns: " & $resumed.replayed & " replayed, " &
+             $resumed.notified & " notified, " & $resumed.dropped & " dropped")
   let drainer = buildDaemonGatewayDrainer(ctx, cfg, memory, log)
 
   ## Heartbeat: periodic maintenance (reminders go out on the daemon tick)

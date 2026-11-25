@@ -38,6 +38,7 @@ import ../ports/subagent_workspace
 import ./session_bootstrap
 import ./orchestrator
 import ./sandbox
+import ../ports/turn_journal
 
 export coreSessionIngress
 
@@ -62,6 +63,7 @@ type
     backtrail*:                 BacktrailPort ## pre-search before the model's turn
     process*:                    ProcessRuntimePort
     attachments*:                AttachmentStorePort
+    journal*:                    TurnJournalPort ## turns in flight (E1)
     completeFn*:                 CompleteFn
     streamFactory*:                   StreamFactory
     toolClients*:                seq[ToolRuntimePort]
@@ -264,7 +266,8 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                                schedules: SchedulePort = SchedulePort();
                                backtrail: BacktrailPort = BacktrailPort();
                                process: ProcessRuntimePort = unavailableProcess();
-                               attachments: AttachmentStorePort = unavailableAttachments()) {.gcsafe.} =
+                               attachments: AttachmentStorePort = unavailableAttachments();
+                               journal: TurnJournalPort = TurnJournalPort()) {.gcsafe.} =
   ## Spawns an orchestrator actor if the ingress decision requires starting a session runtime.
   if not plan.decision.startsSessionRuntime:
     return
@@ -288,7 +291,8 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                              fs = fs, env = cfg.env, reminders = reminders,
                              schedules = schedules, backtrail = backtrail,
                              streamRouting = bootstrap.streamRouting,
-                             process = process, attachments = attachments)
+                             process = process, attachments = attachments,
+                             journal = journal)
 
 func sessionTaskMsg(msg: InboundMessage; msgId: string;
                      recentContext = ""): AgentMessage =
@@ -314,9 +318,14 @@ proc startSessionIngress*(sm: var SessionManager;
                           services: SessionIngressServices;
                           msgSeq: var int;
                           taskKind: TaskKind = tkUserMsg;
-                          taskPayload: string = ""): SessionIngressContext {.gcsafe.} =
+                          taskPayload: string = "";
+                          resumeOf = "";
+                          resumeReplyTo = ""): SessionIngressContext {.gcsafe.} =
   ## Full session ingress flow: builds bootstrap, plan, context, enqueues message, and spawns orchestrator.
-  if taskKind == tkUserMsg:
+  ## With `resumeOf`, the task is a turn replayed after a crash: `taskPayload`
+  ## is its session payload as first encoded, `resumeReplyTo` its reply target.
+  let resumed = resumeOf.len > 0
+  if taskKind == tkUserMsg and not resumed:
     recordInbound(channelLabel(msg.channel))
   if ($msg.userId).len == 0:
     ## Identity resolution failed (e.g. unreadable identities.tsv); deny.
@@ -365,13 +374,14 @@ proc startSessionIngress*(sm: var SessionManager;
   ## An API turn carries no text the user typed in the conversation, so it can
   ## never answer an open ask; delivering it there would hand the question to
   ## the wrong turn and drop this one.
-  let answersAsk = msg.bridgeToken == 0
+  ## A replayed turn is not an answer to a question asked after it either.
+  let answersAsk = msg.bridgeToken == 0 and not resumed
   result = sm.buildSessionIngressContext(
     msg, signature, msgSeq,
     recordActivity = taskKind notin {tkSchedule, tkHeartbeat},
     answerableAsk = answersAsk)
   let recentContext =
-    if result.plan.injectRecentContext:
+    if result.plan.injectRecentContext and not resumed:
       loadRecentContext(services.memory, services.fs, msg.userId)
     else:
       ""
@@ -381,22 +391,28 @@ proc startSessionIngress*(sm: var SessionManager;
   if result.plan.decision.cancelsAsk and not result.plan.entry[].askInbox.isNil:
     result.plan.entry[].askInbox.addLastNoWait("__DONKEY_ASK_CANCELLED__")
     result.plan.entry[].awaitingAsk = false
-  case result.plan.decision.target
-  of sitActorInbox:
-    if taskKind == tkUserMsg:
-      result.plan.entry[].inbox.addLastNoWait(sessionTaskMsg(msg, result.msgId, recentContext))
-    else:
-      result.plan.entry[].inbox.addLastNoWait(newTaskMsg(
-        result.msgId, taskKind, $msg.userId, taskPayload,
-        msg.channel, sessionReplyTo(msg)))
-  of sitAskInbox:
-    if taskKind == tkUserMsg:
-      result.plan.entry[].awaitingAsk = false
-      result.plan.entry[].askInbox.addLastNoWait(msg.text)
-    else:
-      result.plan.entry[].inbox.addLastNoWait(newTaskMsg(
-        result.msgId, taskKind, $msg.userId, taskPayload,
-        msg.channel, sessionReplyTo(msg)))
+  if resumed:
+    var task = newTaskMsg(result.msgId, tkUserMsg, $msg.userId, taskPayload,
+                          msg.channel, resumeReplyTo)
+    task.resumeOf = resumeOf
+    result.plan.entry[].inbox.addLastNoWait(task)
+  else:
+    case result.plan.decision.target
+    of sitActorInbox:
+      if taskKind == tkUserMsg:
+        result.plan.entry[].inbox.addLastNoWait(sessionTaskMsg(msg, result.msgId, recentContext))
+      else:
+        result.plan.entry[].inbox.addLastNoWait(newTaskMsg(
+          result.msgId, taskKind, $msg.userId, taskPayload,
+          msg.channel, sessionReplyTo(msg)))
+    of sitAskInbox:
+      if taskKind == tkUserMsg:
+        result.plan.entry[].awaitingAsk = false
+        result.plan.entry[].askInbox.addLastNoWait(msg.text)
+      else:
+        result.plan.entry[].inbox.addLastNoWait(newTaskMsg(
+          result.msgId, taskKind, $msg.userId, taskPayload,
+          msg.channel, sessionReplyTo(msg)))
   startSessionOrchestrator(result.plan, services.cfg,
                            services.memory,
                            services.streamFactory, bootstrap,
@@ -405,7 +421,8 @@ proc startSessionIngress*(sm: var SessionManager;
                            services.typingFn, services.searchFn,
                            services.http, services.fs, services.reminders,
                            services.schedules, services.backtrail,
-                           services.process, services.attachments)
+                           services.process, services.attachments,
+                           services.journal)
   if result.plan.decision.startsNewSession:
     services.log.info("new session: " & result.plan.uid)
   elif result.plan.decision.rebuildsSessionRuntime:
@@ -515,6 +532,62 @@ proc scheduleEnqueueFn*(sm: ptr SessionManager;
       enqueueScheduledTask(sm[], services, msgSeq[], spec, instantMs)
     except Exception as e:  ## effect boundary: callee raises are unannotated
       err("scheduled task dropped: " & e.msg)
+
+# ── Turns interrupted by a crash (PRD-roadmap E1.3) ─────────────────────────
+
+type
+  ResumeSummary* = object
+    replayed*: int   ## put back in the user's session
+    notified*: int   ## answered with a notice
+    dropped*:  int   ## the user can no longer be served (revoked, denied)
+
+proc canServe(services: SessionIngressServices; uid: UserId): bool {.gcsafe.} =
+  ## The gates the ingress applies, checked before a session is touched.
+  if ($uid).strip.len == 0 or services.access.revoked(uid):
+    return false
+  services.dmPolicy == DmPolicyOpen or services.access.dmAllowed(uid)
+
+proc resumeInterruptedTurns*(sm: var SessionManager;
+                             services: SessionIngressServices;
+                             msgSeq: var int;
+                             nowMs: int64): ResumeSummary {.gcsafe.} =
+  ## At startup: each turn a previous process died in is replayed into the
+  ## user's session or answered with a notice (domain/turn_journal_pure
+  ## decides). A replay is counted in the journal before it is queued, so a
+  ## crash during the replay leads to a notice, not a loop.
+  let journal = services.journal
+  if not journal.hasTurnJournal:
+    return
+  let pending = journal.pending().valueOr:
+    services.log.warn("turn journal: " & error)
+    return
+  for r in pending:
+    let uid = UserId(r.userId)
+    if not canServe(services, uid):
+      inc result.dropped
+      journal.finish(r.id).isOkOr:
+        services.log.warn("turn journal: " & error)
+      continue
+    case decideRecovery(r, nowMs)
+    of rcReplay:
+      var counted = r
+      counted.resumes = r.resumes + 1
+      journal.begin(counted).isOkOr:
+        ## Without the count a second crash could replay it again.
+        services.log.warn("turn journal: " & error & "; not replaying " & r.id)
+        continue
+      discard startSessionIngress(
+        sm, InboundMessage(userId: uid, channel: r.channel), services, msgSeq,
+        tkUserMsg, r.payload, resumeOf = r.id, resumeReplyTo = r.replyTo)
+      inc result.replayed
+    of rcNotify:
+      if services.globalOutbox != nil:
+        services.globalOutbox.addLastNoWait(OutboundMessage(
+          userId: uid, channel: r.channel, replyTo: r.replyTo,
+          text: interruptedNotice(r)))
+      inc result.notified
+      journal.finish(r.id).isOkOr:
+        services.log.warn("turn journal: " & error)
 
 proc handleSessionFallback*(sm:           var SessionManager;
                            msgSeq:       var int;
