@@ -243,6 +243,7 @@ g3	tests/domain/providers/t_ollama_pure.nim
 g3	tests/domain/providers/t_openai_compat.nim
 g3	tests/domain/providers/t_openai_pure.nim
 g3	tests/domain/providers/t_openai_stream_pure.nim
+g3	tests/domain/providers/t_anthropic_stream_pure.nim
 g3	tests/domain/t_builtin_tools.nim
 g3	tests/domain/t_calc.nim
 g3	tests/domain/t_fanout_plan.nim
