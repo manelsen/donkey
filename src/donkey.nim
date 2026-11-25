@@ -1815,6 +1815,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
       ## The job writes through a pointer to the store: let it finish.
       discard await ctx.runtime.ledgerCompaction
     stopSlackSocketMode()
+    discord.stopGateway()
     stopWebhookReceiver()
     ## LINE events were acked with 200 when queued, so LINE will not redeliver
     ## them: drain them before the actors are cancelled.

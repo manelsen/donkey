@@ -25,6 +25,7 @@ g0	tests/adapters/memory/t_channel_prefs_store.nim
 g0	tests/adapters/memory/t_session_search_adapter.nim
 g0	tests/adapters/network/t_dns_resolver.nim
 g0	tests/adapters/network/t_persistent_socket.nim
+g0	tests/adapters/network/t_gateway_family.nim
 g0	tests/adapters/network/t_network_boundary.nim
 g0	tests/adapters/provider/t_compat_adapter.nim
 g0	tests/adapters/provider/t_compat_alibaba.nim
