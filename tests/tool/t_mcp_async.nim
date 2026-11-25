@@ -45,6 +45,10 @@ for line in sys.stdin:
                 text = "model said: " + reply["result"]["content"]["text"]
             else:
                 text = "refused: " + reply["error"]["message"]
+        elif name == "odd":
+            send({"jsonrpc": "2.0", "id": mid, "method": "odd",
+                  "result": {"content": [{"type": "text", "text": "odd but mine"}]}})
+            continue
         else:
             text = "echo:" + json.dumps(args, sort_keys=True)
         send({"jsonrpc": "2.0", "id": mid, "result": {"content": [{"type": "text", "text": text}]}})
@@ -127,6 +131,20 @@ proc runTests*() =
       check c.offeredCapabilities.hasKey("sampling")
       let r = waitFor c.invokeAsync(ToolCall(id: "c5", name: "ask", input: %* {}))
       check r.isOk and r.get.output == "model said: 4"
+
+    test "a response is recognised by its id, even with a stray method field":
+      let c = client(timeoutMs = 3_000)
+      defer: waitFor c.closeAsync()
+      discard waitFor c.listToolsAsync()
+      let r = waitFor c.invokeAsync(ToolCall(id: "c6", name: "odd", input: %* {}))
+      check r.isOk and r.get.output == "odd but mine"
+
+    test "the port's tool list is an error until a listing has worked":
+      let c = client()
+      defer: waitFor c.closeAsync()
+      check c.toRuntimePort().listTools().isErr
+      discard waitFor c.listToolsAsync()
+      check c.toRuntimePort().listTools().get.len == 1
 
     test "a server that is not there is an error":
       let c = newMcpClient("/nonexistent/mcp-server", timeoutMs = 2_000)

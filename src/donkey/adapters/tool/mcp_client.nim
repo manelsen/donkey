@@ -67,6 +67,7 @@ type
     lock:       AsyncLock
     initialized: bool
     schemas:    seq[ToolSchema]      ## from the last tools/list
+    listed:     bool                 ## a tools/list has worked
 
 const
   DefaultMcpTimeoutMs* = 120_000
@@ -131,7 +132,11 @@ proc exchange(c: McpClient; id: int; line: string): Future[Result[JsonNode, stri
       except CatchableError: continue   ## not JSON-RPC: skip it
     if msg.kind != JObject:
       continue
-    if msg.hasKey("method"):
+    ## Our response is known by its id and its result or error, whatever else
+    ## it carries.
+    let isOurs = msg{"id"}.getInt(-1) == id and
+                 (msg.hasKey("result") or msg.hasKey("error"))
+    if msg.hasKey("method") and not isOurs:
       if msg.hasKey("id"):
         ## The server asks us something (sampling) before it answers.
         let answer =
@@ -207,6 +212,7 @@ proc listToolsAsync*(c: McpClient): Future[Result[seq[ToolSchema], string]] {.as
                              description: item{"description"}.getStr,
                              inputSchema: item{"inputSchema"})
   c.schemas = schemas
+  c.listed = true
   return ok(schemas)
 
 proc invokeAsync*(c: McpClient; call: ToolCall): Future[Result[ToolResult, string]] {.async: (raises: []).} =
@@ -230,7 +236,9 @@ proc toRuntimePort*(c: McpClient): ToolRuntimePort =
   ## Calls go through `invokeAsync`, which the ToolAgent awaits without
   ## blocking the loop; `listTools` returns what the last listing found.
   ToolRuntimePort(
-    listTools: proc(): Result[seq[ToolSchema], string] {.gcsafe.} = ok(c.schemas),
+    listTools: proc(): Result[seq[ToolSchema], string] {.gcsafe.} =
+      if c.listed: ok(c.schemas)
+      else: err("MCP '" & c.command & "': its tools were never listed"),
     invokeAsync: proc(call: ToolCall): Future[Result[ToolResult, string]]
         {.gcsafe, raises: [CatchableError].} = c.invokeAsync(call),
     close: proc() {.gcsafe.} = asyncSpawn c.closeAsync())

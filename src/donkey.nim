@@ -1776,8 +1776,13 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   let ctx = bootstrap.ctx
   ## MCP servers over stdio run on the loop (E5.0): their tools are listed
   ## here, before any session is built from the catalog.
+  ## All at once: a slow server delays only itself.
+  var listings: seq[Future[Result[seq[ToolSchema], string]]]
   for client in ctx.services.mcpStdio:
-    let listed = await client.listToolsAsync()
+    listings.add client.listToolsAsync()
+  await allFutures(listings)
+  for i, client in ctx.services.mcpStdio:
+    let listed = listings[i].read()
     if listed.isErr:
       log.warn("mcp: " & client.command & ": " & listed.error)
       continue
