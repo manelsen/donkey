@@ -928,6 +928,37 @@ proc runTests*() =
       let hasMemory = waitFor doTest(tmpDir)
       check not hasMemory
 
+    test "a turn whose provider failed still keeps what the person said":
+      let tmpDir = getTempDir() / "donkey_test_memory_capture_failed"
+      removeDir(tmpDir)
+      defer: removeDir(tmpDir)
+
+      proc failing(req: CompletionRequest): Result[CompletionResponse, string] =
+        err("HTTP 503 upstream unavailable")
+
+      proc doTest(dir: string): Future[string] {.async.} =
+        let userDir = dir / "u-failed-memory"
+        createDir(userDir)
+        writeFile(userDir / "USER.md", "# Test")
+        let mem = MdFileAdapter(paddocksDir: dir)
+        let inbox = newAsyncQueue[AgentMessage]()
+        let outbox = newAsyncQueue[OutboundMessage]()
+        var session = makeSessionEntry()
+        session.inbox = inbox
+        let state = newSessionState()
+        let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), failing,
+          newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], dir / "u-failed-memory", state, env = fastDebounce())
+        await inbox.put(newTaskMsg("req-failed", tkUserMsg, "u-failed-memory",
+          "A senha do wifi da casa nova é girassol42."))
+        discard await outbox.get()
+        await inbox.put(newCancelMsg())
+        await orchFut
+        if fileExists(userDir / "MEMORY.md"): readFile(userDir / "MEMORY.md") else: ""
+
+      let saved = waitFor doTest(tmpDir)
+      check "girassol42" in saved
+      check "no reply" in saved
+
     test "provider errors are explained without leaking raw payloads":
       let tmpDir = getTempDir() / "donkey_test_provider_error_explain"
       removeDir(tmpDir)
