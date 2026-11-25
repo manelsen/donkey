@@ -152,3 +152,7 @@ func converseUrl*(baseUrl, modelId: string): string =
     else:
       encoded.add('%' & toHex(ord(c), 2))
   baseUrl.strip(leading = false, chars = {'/'}) & "/model/" & encoded & "/converse"
+
+func converseStreamUrl*(baseUrl, modelId: string): string =
+  ## ConverseStream: the same path with `converse-stream`.
+  converseUrl(baseUrl, modelId) & "-stream"

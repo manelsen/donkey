@@ -296,7 +296,7 @@ proc buildProviderBundle*(spec: ProviderSpec; http: HttpRuntimePort
       streamFn:   adapter.makeStreamFn(),
     )
   of "bedrock":
-    ## Converse with a Bedrock API key or SigV4; no streaming yet.
+    ## Converse with a Bedrock API key or SigV4; ConverseStream for streaming.
     let adapter = newBedrockAdapter(
       model = if spec.modelName.len > 0: spec.modelName
               else: providerDefaultModelFor("bedrock"),
@@ -307,7 +307,7 @@ proc buildProviderBundle*(spec: ProviderSpec; http: HttpRuntimePort
       sessionToken = spec.awsSessionToken,
       http = http,
     )
-    ProviderBundle(completeFn: makeFn(adapter))
+    ProviderBundle(completeFn: makeFn(adapter), streamFn: adapter.makeStreamFn())
   of "mistral":
     ## Mistral speaks the OpenAI dialect strictly; the deviations are data in
     ## `mistralCompatProfile`, so there is no Mistral adapter file.
