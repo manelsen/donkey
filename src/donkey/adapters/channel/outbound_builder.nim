@@ -133,6 +133,28 @@ proc discordOutboundPort*(dc: ptr DiscordAdapter;
       dc[].downloadFile(fileId),
   )
 
+type WhatsAppPick* = proc(userId: UserId): ptr WhatsAppAdapter {.gcsafe.}
+  ## The adapter of the WhatsApp number a person last wrote to (whatsapp_bots).
+
+proc whatsappOutboundPort*(wa: ptr WhatsAppAdapter;
+                           pick: WhatsAppPick = nil): OutboundChannelPort =
+  ## A message for a person goes from the number they wrote to; media ids
+  ## belong to the account, so any of its numbers downloads them.
+  template forUser(userId: UserId): ptr WhatsAppAdapter =
+    (if pick != nil: pick(userId) else: wa)
+  OutboundChannelPort(
+    send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
+      forUser(msg.userId)[].send(msg),
+    sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} =
+      forUser(msg.userId)[].sendReturnId(msg),
+    editMessage: unsupportedEditMessage,
+    sendKeyboard: unsupportedSendKeyboard,
+    editKeyboard: unsupportedEditKeyboard,
+    setMessageReaction: unsupportedSetMessageReaction,
+    downloadFile: proc(fileId: string): Result[FileDownload, string] {.gcsafe.} =
+      wa[].downloadFile(fileId),
+  )
+
 proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
                          dcAdapter: ptr DiscordAdapter;
                          wcAdapter: ptr WeComAdapter;
@@ -149,7 +171,8 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
                          lineAdapter: ptr LineAdapter = nil;
                          teamsAdapter: ptr TeamsAdapter = nil;
                          tgPick: TelegramPick = nil;
-                         dcPick: DiscordPick = nil): OutboundChannelPorts =
+                         dcPick: DiscordPick = nil;
+                         waPick: WhatsAppPick = nil): OutboundChannelPorts =
 
   # ── Telegram (full capability) ────────────────────────────────────────────
   result.telegram = telegramOutboundPort(tgAdapter, tgPick)
@@ -251,18 +274,7 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
   )
 
   # ── WhatsApp — capability descriptor says: send + sendMedia + downloadFile ──
-  result.whatsapp = OutboundChannelPort(
-    send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
-      waAdapter[].send(msg),
-    sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} =
-      waAdapter[].sendReturnId(msg),
-    editMessage: unsupportedEditMessage,
-    sendKeyboard: unsupportedSendKeyboard,
-    editKeyboard: unsupportedEditKeyboard,
-    setMessageReaction: unsupportedSetMessageReaction,
-    downloadFile: proc(fileId: string): Result[FileDownload, string] {.gcsafe.} =
-      waAdapter[].downloadFile(fileId),
-  )
+  result.whatsapp = whatsappOutboundPort(waAdapter, waPick)
 
   # ── Matrix — capability descriptor says: send, sendReturnId, editMessage ──
   result.matrix = OutboundChannelPort(

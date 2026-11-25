@@ -807,6 +807,38 @@ proc runTests*() =
       check seen[2].quotedText == "a minha pergunta"
       check seen[0].quotedText == ""
 
+    test "WhatsApp: another number of the account is served by its bot, tagged with it":
+      ## E3.5: the number an event was sent to picks the bot; a number this
+      ## instance does not serve is still ignored (WA-001).
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var wa = newWhatsAppAdapter("token", "PN1", Tmp / "wa-bots" / "ids.tsv", base())
+      wa.openQueue()
+      var vendas = newWhatsAppAdapter("token", "PN2", "", base() & "/pn2")
+      vendas.resolver = wa.resolver
+      let pv = addr vendas
+      var seen: seq[InboundMessage]
+      var noted: seq[string]
+      let capture = proc(msg: InboundMessage) {.gcsafe.} =
+        {.cast(gcsafe).}: seen.add msg
+      proc inbound(number, id, text: string): JsonNode =
+        %* {"entry": [{"changes": [{"value": {"metadata": {"phone_number_id": number},
+          "messages": [{"from": "5511999990003", "id": id, "type": "text",
+                        "text": {"body": text}}]}}]}]}
+      whatsapp.pushEvent(inbound("PN2", "wamid.v1", "quero comprar"))
+      whatsapp.pushEvent(inbound("PN9", "wamid.x1", "de outro número"))
+      drainWhatsAppEvents(wa, "PN1", sm, env("wa-bots"), msgSeq, capture, logger,
+        pickNumber = proc(number: string): (ptr WhatsAppAdapter, string) {.gcsafe.} =
+          (if number == "PN2": (pv, "vendas") else: (nil, "")),
+        noteInbound = proc(userId: UserId; bot: string) {.gcsafe.} =
+          {.cast(gcsafe).}: noted.add bot)
+      check seen.len == 1
+      check seen[0].bot == "vendas" and seen[0].text == "quero comprar"
+      check noted == @["vendas"]
+      ## the read receipt went from the bot's number
+      check anyRequest(proc(r: Recorded): bool = "/pn2/" in r.target)
+
     test "WeChat: the link code goes to the sender's openid":
       reset()
       var sm = openSessions()

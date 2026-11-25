@@ -48,6 +48,7 @@ import donkey/adapters/channel/common_runtime
 import donkey/adapters/channel/telegram_runtime
 import donkey/adapters/channel/telegram_bots
 import donkey/adapters/channel/discord_bots
+import donkey/adapters/channel/whatsapp_bots
 import donkey/adapters/channel/discord
 import donkey/adapters/channel/discord_runtime
 import donkey/adapters/channel/wecom
@@ -234,6 +235,8 @@ type DaemonAdapters = object
   tgBotProblems: seq[string] ## bots left out, logged at startup
   dcBots: DiscordBots        ## the `[[bots]]` on Discord (E3.4)
   dcBotProblems: seq[string]
+  waBots: WhatsAppBots       ## the `[[bots]]` on WhatsApp: other numbers (E3.5)
+  waBotProblems: seq[string]
   dc: DiscordAdapter
   wc: WeComAdapter
   wch: WeChatAdapter
@@ -264,6 +267,13 @@ proc discordPick(adapters: var DaemonAdapters): DiscordPick =
   result = proc(userId: UserId): ptr DiscordAdapter {.gcsafe.} =
     adapterFor(bots, primary, userId)
 
+proc whatsappPick(adapters: var DaemonAdapters): WhatsAppPick =
+  ## The number each person last wrote to.
+  let bots = addr adapters.waBots
+  let primary = addr adapters.wa
+  result = proc(userId: UserId): ptr WhatsAppAdapter {.gcsafe.} =
+    adapterFor(bots, primary, userId)
+
 proc buildRuntimeOutboundPorts(adapters: var DaemonAdapters): OutboundChannelPorts =
   let signalPtr =
     if adapters.signal.account.len > 0: addr adapters.signal
@@ -273,7 +283,8 @@ proc buildRuntimeOutboundPorts(adapters: var DaemonAdapters): OutboundChannelPor
     addr adapters.wch, addr adapters.qq, addr adapters.fs, addr adapters.mx,
     addr adapters.em, addr adapters.sl, addr adapters.dt, addr adapters.wa,
     addr adapters.cli, signalPtr, addr adapters.ln, addr adapters.teams,
-    tgPick = telegramPick(adapters), dcPick = discordPick(adapters))
+    tgPick = telegramPick(adapters), dcPick = discordPick(adapters),
+    waPick = whatsappPick(adapters))
 
 type DaemonServices = object
   toolClients:      seq[ToolRuntimePort]
@@ -662,6 +673,7 @@ proc initDaemonAdapters(cfg: DonkeyConfig; env: DaemonEnv): DaemonAdapters =
   if env.whatsappAccessToken.len > 0 and env.whatsappPhoneNumberId.len > 0:
     result.wa = newWhatsAppAdapter(env.whatsappAccessToken, env.whatsappPhoneNumberId,
                                    env.identityPath)
+  (result.waBots, result.waBotProblems) = buildWhatsAppBots(cfg.bots, result.wa)
 
   # Signal (optional - requires a running signal-cli daemon socket)
   let signalAccount = cfg.env.get("SIGNAL_ACCOUNT").strip()
@@ -1612,7 +1624,11 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
       drainWhatsAppGateway(ctx.env.whatsappAccessToken.len > 0, proc(): bool =
         whatsapp_runtime.drainWhatsAppEvents(
           ctx.adapters.wa, ctx.env.whatsappPhoneNumberId, ctx.runtime.sm, cmdEnv,
-          ctx.runtime.msgSeq, fallback, log)
+          ctx.runtime.msgSeq, fallback, log,
+          pickNumber = proc(number: string): (ptr WhatsAppAdapter, string) {.gcsafe.} =
+            botForNumber(addr ctx.adapters.waBots, addr ctx.adapters.wa, number),
+          noteInbound = proc(userId: UserId; bot: string) {.gcsafe.} =
+            noteInbound(ctx.adapters.waBots, userId, bot))
         true
       ),
     drainEmail = proc(): bool =
@@ -1777,7 +1793,8 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   activateDaemonBootstrap(ctx, cfg, memory, log)
   let sessionServices = buildDaemonSessionServices(ctx, cfg, memory, log)
   ## `[[bots]]` entries left out, and why (domain/bots_pure).
-  for problem in cfg.botProblems & ctx.adapters.tgBotProblems & ctx.adapters.dcBotProblems:
+  for problem in cfg.botProblems & ctx.adapters.tgBotProblems &
+                 ctx.adapters.dcBotProblems & ctx.adapters.waBotProblems:
     log.warn("[[bots]] " & problem)
   ## Turns the previous process died in: replayed when nothing they did
   ## could be repeated, otherwise the user is told. The replays and notices
