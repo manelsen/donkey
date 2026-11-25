@@ -16,6 +16,8 @@
 ##     occurrences are `createdAtMs + k × period`, k ≥ 1, so the first comes
 ##     one period after the creation. An interval has no wall clock and ignores
 ##     the timezone offset.
+##   - one instant, `@at <epoch ms>`: a single occurrence, then none (a task
+##     assigned to an agent with a due date, E4.4).
 
 import std/[options, strutils, times]
 import ../../core/pipeops
@@ -25,6 +27,7 @@ import ../../core/types
 const
   MinuteMs* = 60_000'i64
   EveryPrefix* = "@every"
+  AtPrefix* = "@at"
   CronAliases* = [
     ("@hourly", "0 * * * *"), ("@daily", "0 0 * * *"),
     ("@midnight", "0 0 * * *"), ("@weekly", "0 0 * * 0"),
@@ -41,6 +44,7 @@ type
   TriggerKind* = enum
     tkCron,      ## a cron expression or an alias for one
     tkInterval   ## `@every …`: a fixed period from the creation
+    tkOnce       ## `@at …`: one instant
 
   Trigger* = object
     case kind*: TriggerKind
@@ -48,6 +52,8 @@ type
       cron*: CronExpr
     of tkInterval:
       periodMs*: int64
+    of tkOnce:
+      atMs*: int64
 
   ScheduleCatchUp* = enum
     ## What to do with occurrences missed while the scheduler was down/behind.
@@ -152,6 +158,16 @@ func parseTrigger*(expr: string): Result[Trigger, string] =
   let s = expr.strip()
   if s.startsWith("@"):
     let word = s.splitWhitespace()[0]
+    if word == AtPrefix:
+      let digits = s[AtPrefix.len .. ^1].strip
+      if digits.len == 0 or digits.len > 15 or not digits.allCharsInSet({'0' .. '9'}):
+        return err("a one-time schedule is '@at <epoch milliseconds>'")
+      var at = 0'i64
+      for c in digits:
+        at = at * 10 + int64(ord(c) - ord('0'))
+      if at <= 0:
+        return err("a one-time schedule needs an instant after the epoch")
+      return ok(Trigger(kind: tkOnce, atMs: at))
     if word == EveryPrefix:
       let period = ? parseInterval(s[EveryPrefix.len .. ^1].replace(" ", ""))
       return ok(Trigger(kind: tkInterval, periodMs: period))
@@ -256,6 +272,9 @@ func nextRunAfterMs*(spec: ScheduleSpec; nowMs: int64): Option[int64] =
   let trigger = specTrigger(spec)
   if trigger.isNone:
     return none(int64)
+  if trigger.get().kind == tkOnce:
+    let at = trigger.get().atMs
+    return (if at > nowMs: some(at) else: none(int64))
   if trigger.get().kind == tkInterval:
     return some(intervalAfter(spec.createdAtMs, trigger.get().periodMs, nowMs))
   let expr = trigger.get().cron
@@ -279,6 +298,11 @@ func dueInstants*(spec: ScheduleSpec; lastRunMs, nowMs: int64): seq[int64] =
     return
   let trigger = specTrigger(spec)
   if trigger.isNone:
+    return
+  if trigger.get().kind == tkOnce:
+    let at = trigger.get().atMs
+    if at > lastRunMs and at <= nowMs:
+      result.add(at)
     return
   if trigger.get().kind == tkInterval:
     let period = trigger.get().periodMs
@@ -323,6 +347,11 @@ func catchUpInstant*(
   if trigger.isNone:
     return none(int64)
   let lookback = min(int64(maxLookbackMinutes), int64(HorizonMinutes))
+  if trigger.get().kind == tkOnce:
+    let at = trigger.get().atMs
+    if at <= lastRunMs or at > nowMs or nowMs - at >= lookback * MinuteMs:
+      return none(int64)
+    return some(at)
   if trigger.get().kind == tkInterval:
     let newest = intervalAtOrBefore(
       spec.createdAtMs, trigger.get().periodMs, nowMs)
@@ -352,6 +381,8 @@ func closestGapMs*(spec: ScheduleSpec; fromMs, stopBelowMs: int64): Option[int64
   let trigger = specTrigger(spec)
   if trigger.isNone:
     return none(int64)
+  if trigger.get().kind == tkOnce:
+    return none(int64)
   if trigger.get().kind == tkInterval:
     return some(trigger.get().periodMs)
   let expr = trigger.get().cron
@@ -379,6 +410,9 @@ func countDueCapped*(spec: ScheduleSpec; lastRunMs, nowMs: int64; cap: int): int
   let trigger = specTrigger(spec)
   if trigger.isNone:
     return 0
+  if trigger.get().kind == tkOnce:
+    let at = trigger.get().atMs
+    return (if at > lastRunMs and at <= nowMs: 1 else: 0)
   if trigger.get().kind == tkInterval:
     let period = trigger.get().periodMs
     let first = intervalAfter(spec.createdAtMs, period, lastRunMs)

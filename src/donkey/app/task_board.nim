@@ -8,9 +8,24 @@ import std/strutils
 import ../core/pipeops
 import ../core/tooling/native_tool_args
 import ../domain/tasks/task_board_pure
+import ../domain/automation/schedule_pure
+import ../domain/automation/user_schedule_pure
 import ../ports/fs
+import ../ports/schedules
 
 export task_board_pure
+
+type
+  TaskAgenda* = object
+    ## Where a task an agent holds becomes that agent's turn on its due day
+    ## (E4.4): the person's schedules, and who and where the turn answers.
+    ## Empty: no turns are scheduled.
+    schedules*: SchedulePort
+    userId*:    string
+    channel*:   string
+
+const AgentTurnHourMs* = 12 * 3_600_000'i64
+  ## The turn comes at noon UTC of the due day (09:00 in Brasília).
 
 const
   BoardFile* = "tasks.json"
@@ -41,14 +56,48 @@ proc listing(b: TaskBoard; state, assignee: string): Result[string, string] =
   view.tasks = b.filtered(filter, who)
   ok(renderMarkdown(view))
 
+func agentTurnPrompt*(t: BoardTask): string =
+  ## Starts with the agent's mention, so the turn answers as that agent.
+  t.assignee & " A tarefa " & t.id & " (\"" & t.title & "\") vence hoje e está " &
+    "com você. Trabalhe nela agora; registre o andamento com manage_tasks " &
+    "(action=note) e mova a tarefa quando o estado mudar."
+
+proc syncAgentTurn(agenda: TaskAgenda; taskId: string; task: Option[BoardTask];
+                   nowMs: int64): string =
+  ## One schedule per task (`task-<id>` among the person's schedules), kept
+  ## while an agent holds the task, it has a due day still ahead and it is not
+  ## done; removed otherwise. Returns a sentence for the reply, or "".
+  let wantsTurn = task.isSome and task.get.assignee.startsWith("@") and
+                  task.get.dueMs > 0 and task.get.state != tsDone and
+                  task.get.dueMs + AgentTurnHourMs > nowMs
+  if not agenda.schedules.schedulesAvailable or agenda.userId.len == 0:
+    return (if wantsTurn: " (Schedules are off here, so the agent's turn will not be scheduled.)"
+            else: "")
+  let id = userScheduleId(agenda.userId, "task-" & taskId)
+  discard agenda.schedules.remove(id)
+  if not wantsTurn:
+    return ""
+  let t = task.get
+  let at = t.dueMs + AgentTurnHourMs
+  let spec = ScheduleSpec(id: id, cronExpr: AtPrefix & " " & $at, userId: agenda.userId,
+                          channel: agenda.channel, payload: agentTurnPrompt(t),
+                          catchUp: scOnce, enabled: true, createdAtMs: nowMs)
+  let inserted = agenda.schedules.insert(spec)
+  if inserted.isErr or not inserted.get:
+    return " (The agent's turn could not be scheduled: " &
+           (if inserted.isErr: inserted.error else: "a schedule with that name exists") & ".)"
+  " " & t.assignee & " will work on it on " & dateOf(t.dueMs) & " at 12:00 UTC."
+
 proc performManageTasks*(fs: FsRuntimePort; paddockDir: string;
-                         ctx: ManageTasksContext; nowMs: int64): Result[string, string] =
+                         ctx: ManageTasksContext; nowMs: int64;
+                         agenda: TaskAgenda = TaskAgenda()): Result[string, string] =
   if paddockDir.len == 0:
     return err("Error: no workspace for tasks")
   let board = (? loadBoard(fs, paddockDir).mapErr(proc(e: string): string =
     "Error: the task board cannot be read (" & e & "); it was left as it is"))
   var next: TaskBoard
   var reply: string
+  var addedId = ""
   case ctx.action
   of "list":
     return board.listing(ctx.state, ctx.assignee).mapErr(proc(e: string): string = "Error: " & e)
@@ -60,6 +109,7 @@ proc performManageTasks*(fs: FsRuntimePort; paddockDir: string;
       added = ? added.assignTask(task.id, ctx.assignee, nowMs).mapErr(
         proc(e: string): string = "Error: " & e)
     next = added
+    addedId = task.id
     reply = "Added " & task.id & ": " & task.title
     if ctx.assignee.strip.len > 0:
       reply.add " (" & ctx.assignee.strip.toLowerAscii & ")"
@@ -90,4 +140,6 @@ proc performManageTasks*(fs: FsRuntimePort; paddockDir: string;
     return err("Error: unknown action '" & ctx.action & "'")
   ? saveBoard(fs, paddockDir, next).mapErr(proc(e: string): string =
     "Error: the task board was not saved (" & e & ")")
+  let changed = if addedId.len > 0: addedId else: ctx.id.strip.toLowerAscii
+  reply.add syncAgentTurn(agenda, changed, next.find(changed), nowMs)
   ok(reply)

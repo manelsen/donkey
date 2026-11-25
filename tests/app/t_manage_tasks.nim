@@ -12,6 +12,9 @@ import donkey/core/tooling/native_tool_args
 import donkey/core/types
 import donkey/domain/message
 import donkey/domain/subagent_pure
+import donkey/domain/automation/schedule_pure
+import donkey/domain/automation/schedule_view
+import donkey/ports/schedules
 
 const Now = 1_800_000_000_000'i64   ## 2027-01-15
 
@@ -22,6 +25,31 @@ proc paddock(tag: string): string =
 
 proc act(dir: string; c: ManageTasksContext): Result[string, string] =
   performManageTasks(newFsAdapter(), dir, c, Now)
+
+type Agenda = ref object
+  rows: seq[ScheduleViewRecord]
+
+proc port(a: Agenda): SchedulePort =
+  SchedulePort(
+    all: proc(): Result[seq[ScheduleViewRecord], string] {.gcsafe, raises: [].} =
+      ok(a.rows),
+    insert: proc(spec: ScheduleSpec): Result[bool, string] {.gcsafe, raises: [].} =
+      for r in a.rows:
+        if r.spec.id == spec.id: return ok(false)
+      a.rows.add ScheduleViewRecord(spec: spec, lastRunAtMs: spec.createdAtMs)
+      ok(true),
+    remove: proc(id: string): Result[void, string] {.gcsafe, raises: [].} =
+      var kept: seq[ScheduleViewRecord]
+      for r in a.rows:
+        if r.spec.id != id: kept.add r
+      a.rows = kept
+      ok(),
+    setEnabled: proc(id: string; enabled: bool; nowMs: int64): Result[bool, string] {.gcsafe, raises: [].} =
+      ok(false))
+
+proc withAgenda(dir: string; a: Agenda; c: ManageTasksContext): Result[string, string] =
+  performManageTasks(newFsAdapter(), dir, c, Now,
+                     TaskAgenda(schedules: port(a), userId: "alice", channel: "telegram"))
 
 proc runTests*() =
   suite "manage_tasks":
@@ -90,6 +118,57 @@ proc runTests*() =
                                           assignee: "@x", due: "2027-02-01")).get
       check '\n' notin r
       check "t1" in r and "- ligar -" in r and "@x" in r and "2027-02-01" in r
+
+    test "a task an agent holds with a due date becomes that agent's turn on the day":
+      let dir = paddock("agent-turn")
+      defer: removeDir(dir)
+      let a = Agenda()
+      let r = withAgenda(dir, a, ManageTasksContext(action: "add", title: "levantar preços",
+        assignee: "@pesquisa", due: "2027-01-20")).get
+      check a.rows.len == 1
+      let spec = a.rows[0].spec
+      check spec.userId == "alice" and spec.channel == "telegram"
+      check parseTrigger(spec.cronExpr).get.atMs == parseDueDate("2027-01-20").get + 12 * 3_600_000
+      check spec.payload.startsWith("@pesquisa ")
+      check "t1" in spec.payload and "levantar preços" in spec.payload
+      check "@pesquisa" in r and "2027-01-20" in r
+
+    test "the turn follows the task: moved due, new agent, done or deleted":
+      let dir = paddock("agent-sync")
+      defer: removeDir(dir)
+      let a = Agenda()
+      discard withAgenda(dir, a, ManageTasksContext(action: "add", title: "x",
+        assignee: "@pesquisa", due: "2027-01-20"))
+      discard withAgenda(dir, a, ManageTasksContext(action: "due", id: "t1", due: "2027-01-25"))
+      check a.rows.len == 1
+      check parseTrigger(a.rows[0].spec.cronExpr).get.atMs ==
+            parseDueDate("2027-01-25").get + 12 * 3_600_000
+      discard withAgenda(dir, a, ManageTasksContext(action: "assign", id: "t1", assignee: "@juridico"))
+      check a.rows.len == 1 and a.rows[0].spec.payload.startsWith("@juridico ")
+      discard withAgenda(dir, a, ManageTasksContext(action: "move", id: "t1", state: "done"))
+      check a.rows.len == 0
+      discard withAgenda(dir, a, ManageTasksContext(action: "move", id: "t1", state: "todo"))
+      check a.rows.len == 1
+      discard withAgenda(dir, a, ManageTasksContext(action: "delete", id: "t1"))
+      check a.rows.len == 0
+
+    test "no turn for the person's own tasks, without a due date, or already past":
+      let dir = paddock("agent-none")
+      defer: removeDir(dir)
+      let a = Agenda()
+      discard withAgenda(dir, a, ManageTasksContext(action: "add", title: "meu", due: "2027-01-20"))
+      discard withAgenda(dir, a, ManageTasksContext(action: "add", title: "sem prazo", assignee: "@x"))
+      discard withAgenda(dir, a, ManageTasksContext(action: "add", title: "atrasado",
+        assignee: "@x", due: "2027-01-10"))
+      check a.rows.len == 0
+
+    test "without schedules the reply says the agent's turn will not come":
+      let dir = paddock("agent-unavailable")
+      defer: removeDir(dir)
+      let r = performManageTasks(newFsAdapter(), dir, ManageTasksContext(action: "add",
+        title: "x", assignee: "@pesquisa", due: "2027-01-20"), Now,
+        TaskAgenda(userId: "alice", channel: "telegram")).get
+      check "not be scheduled" in r
 
     test "the tool is dispatched for real and denied to subagents":
       let dir = paddock("dispatch")
