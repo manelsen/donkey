@@ -58,6 +58,8 @@ proc drainWhatsAppEvents*(waAdapter: var WhatsAppAdapter;
       (hasEvent, event) = waAdapter.tryRecvEvent()
       continue
 
+    if event.kind == wrkText:
+      rememberWaText(event.messageId, event.text)
     let msg = InboundMessage(
       userId: userId,
       channel: ckWhatsApp,
@@ -65,6 +67,7 @@ proc drainWhatsAppEvents*(waAdapter: var WhatsAppAdapter;
       messageId: event.messageId,
       text: event.text,
       mediaUrl: event.mediaId,
+      quotedText: quotedWaText(event.replyToId),
     )
 
     if event.kind in {wrkText, wrkInteractive} and event.text.strip.len > 0:

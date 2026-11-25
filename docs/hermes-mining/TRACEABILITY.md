@@ -58,5 +58,5 @@ Classificação completa em [`whatsapp/CASES.md`](whatsapp/CASES.md).
 | WA-004 | `f96b2e6ef7` | `tests/adapters/channel/t_dm_gate_runtimes.nim` | `src/donkey/adapters/channel/whatsapp_runtime.nim` | coberto |
 | WA-005 | `53f84cc716` | `tests/adapters/webhook/t_webhook_receiver.nim` | `src/donkey/adapters/webhook/webhook_receiver.nim` | coberto |
 | WA-006 | `bc7ff51ace` | `tests/core/security/t_webhook_auth.nim` | `src/donkey/adapters/webhook/webhook_receiver.nim` | coberto |
-| WA-008 | `619dc4a561`, `c8b56d43da` | — | — | adiado (contexto de resposta entre canais) |
+| WA-008 | `619dc4a561`, `c8b56d43da` | `tests/adapters/channel/t_requester_only_send_paths.nim`, `tests/domain/channels/t_whatsapp_pure.nim` | `src/donkey/domain/channels/whatsapp_pure.nim` (`RecentWaTexts`), `src/donkey/adapters/channel/whatsapp.nim` | portado (texto; mídia citada fora) |
 | WA-009 | `42e5e8b3d5` | — | — | em aberto (BSUID como destinatário) |
