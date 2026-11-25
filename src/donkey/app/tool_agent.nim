@@ -64,8 +64,11 @@ proc runToolAgent*(inbox:   AsyncQueue[AgentMessage];
         await outbox.put(newErrorMsg(msg.id, "ToolAgent: bad payload: " & e.msg))
         continue
 
+      var channel = ""
+      try: channel = parseJson(msg.payload){"channel"}.getStr
+      except CatchableError: discard
       let call = ToolCall(id: toolId, name: toolName, input: toolInput,
-                            userId: msg.userId)
+                            userId: msg.userId, channel: channel)
 
       var invoked = false
       for client in clients:

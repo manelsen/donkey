@@ -61,7 +61,8 @@ proc configureApprovalService*(store: ApprovalStorePort;
 proc standingApprovals*(service: ApprovalService): StandingApprovalPort =
   if service.isNil: StandingApprovalPort() else: service.standing
 
-proc configureApprovalServiceFromEnv*(store: ApprovalStorePort; env: Environment) =
+proc configureApprovalServiceFromEnv*(store: ApprovalStorePort; env: Environment;
+                                      standing = StandingApprovalPort()) =
   var timeoutSec = 300.0
   let rawTimeout = env.stripped("DONKEY_APPROVAL_TIMEOUT_SEC")
   if rawTimeout.len > 0:
@@ -70,7 +71,7 @@ proc configureApprovalServiceFromEnv*(store: ApprovalStorePort; env: Environment
     if consumed > 0 and consumed == rawTimeout.len:
       timeoutSec = parsed
   configureApprovalService(store, parseApprovalTools(env.get("DONKEY_APPROVAL_TOOLS")),
-                           timeoutSec)
+                           timeoutSec, standing)
 
 proc resetApprovalService*() =
   gApprovalService = nil
@@ -211,7 +212,7 @@ func standingApprovalMessage(title: string; request: ApprovalRequest): string =
   "⚠️ *Aprovação necessária: " & escapeMarkdownInline(title) & "*\n\n" &
   escapeMarkdownInline(request.summary) & "\n\n" &
   "*Sempre* deixa de perguntar para este caso; revogue com " &
-  "`donkey ctl approvals standing revoke`.\n" &
+  "`donkey ctl approval standing revoke`.\n" &
   "Expira em " & $((request.expiresAtMs - request.createdAtMs) div 1000) & "s."
 
 func standingApprovalKeyboard(request: ApprovalRequest): seq[seq[(string, string)]] =

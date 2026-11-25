@@ -77,6 +77,10 @@ import donkey/adapters/channel/cli_repl
 import donkey/adapters/webhook/webhook_receiver
 import donkey/domain/channels/line_policy
 import donkey/adapters/tool/mcp_client
+import donkey/app/mcp_sampling
+import donkey/app/provider_executor
+import donkey/adapters/state/standing_approvals
+import donkey/domain/tools/mcp_sampling_pure
 import donkey/adapters/tool/mcp_http_client
 import donkey/adapters/tool/mcp_oauth
 import donkey/adapters/tools/browser_executor
@@ -1254,6 +1258,22 @@ proc makeCompleteBuilder(): proc(preferencesMd: string): CompleteFn {.gcsafe.} =
   result = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
     buildCompleteFn(preferencesMd, buildProviderBundle)
 
+proc envPositiveInt(env: Environment; name: string; default: int): int =
+  try:
+    let v = parseInt(env.stripped(name))
+    if v > 0: v else: default
+  except ValueError:
+    default
+
+func mcpServerName(command: string; args: seq[string]): string =
+  ## What the person reads on the approval card: the command and its first
+  ## argument that is not a flag (`npx -y @org/server` → "npx @org/server").
+  result = command.extractFilename
+  for a in args:
+    if not a.startsWith("-"):
+      result.add " " & a
+      break
+
 proc telegramTypingFn(ctx: DaemonContext; log: Logger): TypingFn =
   ## Typing through the bot the person last wrote to (E3.3); `ctx` is alive
   ## for the whole process.
@@ -1774,6 +1794,23 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   let bootstrap = loadDaemonBootstrap(cfg, log)
   let memory = bootstrap.memory
   let ctx = bootstrap.ctx
+  ## A server may ask to run the person's model during their tool call
+  ## (sampling, E5.1-E5.3): set before the listing, whose `initialize` offers
+  ## the capability.
+  let samplingDeps = SamplingDeps(
+    outbox: ctx.runtime.globalOutbox,
+    completeFor: proc(userId: UserId): AsyncCompleteFn {.gcsafe.} =
+      buildAsyncCompleteFn(
+        applyProviderDefaults(memory.loadContext(userId).preferencesMd,
+          normalizeProviderDefaults(cfg.defaultProvider, cfg.defaultModel)),
+        buildProviderBundle),
+    budget: new(SamplingBudget),
+    dailyTokenCap: envPositiveInt(cfg.env, "DONKEY_MCP_SAMPLING_DAILY_TOKENS", 50_000),
+    maxTokensCap: envPositiveInt(cfg.env, "DONKEY_MCP_SAMPLING_MAX_TOKENS", 4_096),
+    log: log.child("sampling"))
+  for client in ctx.services.mcpStdio:
+    client.onServerRequest = samplingHandler(mcpServerName(client.command, client.args),
+      serverIdentity(client.command, client.args), samplingDeps)
   ## MCP servers over stdio run on the loop (E5.0): their tools are listed
   ## here, before any session is built from the catalog.
   ## All at once: a slow server delays only itself.
@@ -2119,7 +2156,8 @@ proc main =
   ## snapshot installed here, on the loop thread that uses them.
   useCredentials(cfg.env)
   configureApprovalServiceFromEnv(
-    newApprovalStore(cfg.home / "state" / "approvals.json").toApprovalPort(), cfg.env)
+    newApprovalStore(cfg.home / "state" / "approvals.json").toApprovalPort(), cfg.env,
+    newStandingApprovals(cfg.home / "state" / StandingApprovalsFile).toStandingPort())
 
   let sandboxPolicy = validateSandboxPolicy(cfg, devMode)
   if sandboxPolicy.isErr:

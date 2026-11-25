@@ -14,6 +14,7 @@ import donkey/core/security/approval
 import donkey/core/types
 import donkey/domain/message
 import donkey/ports/approval
+import donkey/ctl_handler
 
 const Tmp = "/tmp/donkey_standing_approvals_tests"
 let testLog = newLogger("test.standing", lvlError)
@@ -81,6 +82,16 @@ proc runTests*() =
       check again.list("u1") == @["sampling:abc"]
       check again.revoke("u1", "sampling:abc").isOk
       check not newStandingApprovals(Tmp / "persist" / "standing_approvals.json").toStandingPort().has("u1", "sampling:abc")
+
+    test "ctl lists and revokes what stands":
+      let (_, standing) = setup("ctl")
+      defer: resetApprovalService()
+      check standing.grant("u1", "sampling:abc").isOk
+      check ctlStandingApprovals(standing, @["list", "u1"]).isOk
+      check ctlStandingApprovals(standing, @["revoke", "u1", "sampling:abc"]).isOk
+      check not standing.has("u1", "sampling:abc")
+      check ctlStandingApprovals(standing, @["revoke", "u1", "sampling:abc"]).isErr
+      check ctlStandingApprovals(standing, @["what"]).isErr
 
     test "the file is readable only by the daemon's user":
       let (_, standing) = setup("mode")

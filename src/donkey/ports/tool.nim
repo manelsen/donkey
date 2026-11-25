@@ -22,6 +22,7 @@ type
     name*:   string    ## tool name as returned by listTools
     input*:  JsonNode  ## arguments matching inputSchema
     userId*: string    ## session owner, for per-session tool state
+    channel*: string   ## where that person is (a sampling approval goes there)
 
   ToolResult* = object
     ## Result of a tool invocation.

@@ -7,6 +7,8 @@ import ../../core/pipeops
 import ../../ports/approval
 import ./durable_file
 
+const StandingApprovalsFile* = "standing_approvals.json"   ## in {home}/state
+
 type StandingApprovals* = ref object
   path: string
   byUser: Table[string, seq[string]]

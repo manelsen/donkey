@@ -24,6 +24,8 @@ import adapters/memory/dm_allowlist
 import adapters/identity/identity_resolver
 import adapters/state/pairing_store
 import adapters/state/approval_store
+import adapters/state/standing_approvals
+import ports/approval
 import adapters/secrets/vault
 import app/session_manager
 import app/tools/memory_ingest_io
@@ -142,6 +144,22 @@ proc ctlPairReject*(store: PairingStore; code: string): Result[void, string] =
   ok()
 
 # ── ctl approval commands ──────────────────────────────────────────────────────
+
+proc ctlStandingApprovals*(standing: StandingApprovalPort; args: seq[string]): Result[void, string] =
+  ## `approval standing list <user>` and `approval standing revoke <user> <key>`:
+  ## the approvals a person made stand with "always" (MCP sampling, E5.2).
+  if args.len >= 2 and args[0] == "list":
+    let keys = standing.list(args[1])
+    if keys.len == 0:
+      echo "No standing approvals for " & args[1] & "."
+    for k in keys:
+      echo k
+    return ok()
+  if args.len >= 3 and args[0] == "revoke":
+    ? standing.revoke(args[1], args[2])
+    echo "Revoked " & args[2] & " for " & args[1] & "."
+    return ok()
+  err("usage: approval standing list <user> | approval standing revoke <user> <key>")
 
 proc ctlApprovalList*(store: ApprovalStore; userId = ""): Result[void, string] =
   let pending = store.listPending(userId)
@@ -860,6 +878,11 @@ proc dispatchCtl*(cfg: DonkeyConfig;
 
   # ── approval ──
   let approvalStore = newApprovalStore(cfg.home / "state" / "approvals.json")
+  if args[1] == "approval" and args.len >= 3 and args[2] == "standing":
+    let standing = newStandingApprovals(cfg.home / "state" / StandingApprovalsFile).toStandingPort()
+    let res = ctlStandingApprovals(standing, args[3 .. ^1])
+    if res.isErr: echo res.error; return 1
+    return 0
   if args[1] == "approval" and args.len >= 3 and args[2] == "list":
     let res = ctlApprovalList(approvalStore, if args.len >= 4: args[3] else: "")
     if res.isErr: echo res.error; return 1

@@ -331,10 +331,11 @@ proc invokeToolAgent(toolInbox: AsyncQueue[AgentMessage];
                      userId: string;
                      userInterrupt: uint64;
                      providerLabel: string;
-                     log: Logger): Future[ToolCallResult] {.async.} =
+                     log: Logger;
+                     channel = ""): Future[ToolCallResult] {.async.} =
   let payload = $ %* {
     "name": tc.name, "id": tc.id, "inputJson": tc.inputJson,
-    "userInterrupt": userInterrupt.BiggestInt
+    "userInterrupt": userInterrupt.BiggestInt, "channel": channel
   }
   let taskId = msgId & "-" & $round & "-" & $callIndex
   await toolInbox.put(newTaskMsg(taskId, tkInvokeTool, userId, payload))
@@ -442,7 +443,7 @@ proc executeToolCallUntimed(globalOutbox: AsyncQueue[OutboundMessage];
 
   let toolResult = await invokeToolAgent(
     toolInbox, toolOut, msgId, round, callIndex, tc, $uid, nativeCtx.userInterrupt,
-    providerLabel, log)
+    providerLabel, log, channel = $channel)
   if debugMode:
     await globalOutbox.put(OutboundMessage(
       userId: uid, channel: channel,
