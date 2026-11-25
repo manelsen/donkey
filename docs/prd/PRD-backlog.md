@@ -156,6 +156,53 @@ These are left as they were decided, or still wait for a decision:
 - transactional turn resume, which needs a design decision: the journal was
   removed on purpose.
 
+## Design changes requested (24/11)
+
+### Streaming on the blocking executor
+
+Today every streamed reply starts its own thread (`app/tool_loop_runtime`,
+`spawnThread(runStreamJob, …)`). Moving it onto the shared executor as is
+would let one long stream occupy a pool worker for its whole length and
+starve Backtrail and recall. The change: give the executor streaming jobs.
+- A job publishes partial results through a bounded queue that the caller
+  drains.
+- Streams get their own worker budget, so they can never take the workers
+  that per-message calls need.
+- The provider still builds its closures on the worker.
+
+**Acceptance:**
+- No thread is started per reply.
+- Many concurrent streams leave Backtrail and recall answering within
+  their deadlines.
+- Cancelling a turn stops its stream.
+
+### One way to keep a permanent connection
+
+Discord, QQ official and Slack socket mode each keep their own WebSocket
+lifecycle, with different fixes:
+- **Backoff:** Slack and Discord reset it after a good session; QQ only on
+  READY.
+- **Clean stop at shutdown:** only Slack has one.
+- **Dead-connection detection:** Slack has an idle timeout and Discord
+  watches for unacknowledged heartbeats; QQ has none, so a silent socket
+  hangs it.
+- **Fatal close codes:** Discord stops on them; QQ retries forever.
+- **Logging:** QQ uses `echo` instead of the logger.
+
+The change:
+- **One facility** (`adapters/network/persistent_socket`) owns the thread,
+  backoff with jitter, idle timeout, ping/pong and close, a stop that
+  interrupts a blocked read, and logging.
+- **A channel plugs in a protocol** as plain data and `nimcall` functions:
+  how to find the URL, what to send on open, what a frame means (keep,
+  reconnect, drop the session, stop), and what to do on each tick.
+- **One "Discord-family" protocol** serves Discord and QQ official.
+
+**Three PRs:**
+1. The facility, with Slack moved onto it.
+2. The Discord-family protocol, with Discord moved onto it.
+3. QQ official moved onto the same protocol.
+
 ## Found during the recall work (not in this PRD)
 
 - **"N days ago":** recall could turn relative dates into a time window
@@ -164,10 +211,9 @@ These are left as they were decided, or still wait for a decision:
   meaning matches, so filler can still win. That needs a design fix.
 - **Failed replies:** a turn whose reply failed is never captured into
   memory.
-- **Telegram polling:** an unmerged commit, "keep update polling off the
-  daemon loop", sits in `/tmp/donkey-telegram-command`, with no PR.
-- **`donkey-magma-index`:** this worktree holds 473 staged changes on a
-  merged branch, waiting for the maintainer.
+- **Telegram polling:** done in #166, on the blocking executor.
+- **`donkey-magma-index`:** nothing unique in it (an old checkout of #69);
+  removed.
 
 ## Questions before starting
 
