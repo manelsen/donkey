@@ -700,6 +700,36 @@ proc runTests*() =
       check anyRequest(proc(r: Recorded): bool =
         r.carriesLinkCode and "5511999990001" in r.body)
 
+    test "WhatsApp: a reply reaches the agent with the message it quotes":
+      ## Meta's context carries only the quoted wamid: the adapter remembers
+      ## the texts it saw and sent, by id.
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var wa = newWhatsAppAdapter("token", "PN1", Tmp / "wa-reply" / "ids.tsv", base())
+      wa.openQueue()
+      var seen: seq[InboundMessage]
+      let capture = proc(msg: InboundMessage) {.gcsafe.} =
+        {.cast(gcsafe).}: seen.add msg
+      proc inbound(id, text, quoted: string): JsonNode =
+        var m = %* {"from": "5511999990002", "id": id, "type": "text", "text": {"body": text}}
+        if quoted.len > 0: m["context"] = %* {"id": quoted}
+        %* {"entry": [{"changes": [{"value": {"metadata": {"phone_number_id": "PN1"},
+                                              "messages": [m]}}]}]}
+      whatsapp.pushEvent(inbound("wamid.in1", "a minha pergunta", ""))
+      drainWhatsAppEvents(wa, "PN1", sm, env("wa"), msgSeq, capture, logger)
+      let uid = seen[0].userId
+      ## the fake API answers every send with wamid.1
+      check wa.send(OutboundMessage(userId: uid, channel: ckWhatsApp,
+                                    text: "A senha é girassol42.")).isOk
+      whatsapp.pushEvent(inbound("wamid.in2", "e isso?", "wamid.1"))
+      whatsapp.pushEvent(inbound("wamid.in3", "e aquilo?", "wamid.in1"))
+      drainWhatsAppEvents(wa, "PN1", sm, env("wa"), msgSeq, capture, logger)
+      check seen.len == 3
+      check seen[1].quotedText == "A senha é girassol42."
+      check seen[2].quotedText == "a minha pergunta"
+      check seen[0].quotedText == ""
+
     test "WeChat: the link code goes to the sender's openid":
       reset()
       var sm = openSessions()

@@ -26,6 +26,7 @@ import ../../ports/channel
 import ../http/std_http
 import ../identity/identity_resolver
 import ../../infra/event_queue
+import ../../infra/thread_owner
 
 export identity_resolver
 export FileDownload
@@ -49,12 +50,28 @@ type
     messageId*:     string  ## wamid — unique message id for dedup / ack
     phoneNumberId*: string  ## receiving business phone number id
     mediaId*:       string  ## non-empty for wrkMedia (resolve via Media API)
+    replyToId*:     string  ## the wamid this replies to, if any
 
 # ── Module-level event queue ───────────────────────────────────────────────────
 
 ## Thread-safe: an `EventQueue` (shared memory, events moved, not copied),
 ## created with the module; the receiving thread pushes, the daemon loop polls.
 var gWaEvents* = initEventQueue[WaRawEvent]("whatsapp")
+
+## Recent message texts by wamid, for reply context: received ones (the
+## drain) and sent ones (sendChunk), both on the daemon loop.
+var gRecentWaTexts {.threadvar.}: RecentWaTexts
+var gRecentWaOwner: ThreadOwner
+
+proc rememberWaText*(id, text: string) {.gcsafe.} =
+  if gRecentWaOwner.isOwner("whatsapp recent texts"):
+    gRecentWaTexts.remember(id, text)
+
+proc quotedWaText*(id: string): string {.gcsafe.} =
+  ## The text of the message `id`, when this daemon saw or sent it.
+  if gRecentWaOwner.isOwner("whatsapp recent texts"):
+    gRecentWaTexts.lookup(id)
+  else: ""
 
 # ── Inbound helpers (called by HTTP layer) ─────────────────────────────────────
 
@@ -80,6 +97,7 @@ proc pushEvent*(payload: JsonNode) =
         text:          r.text,
         messageId:     r.messageId,
         phoneNumberId: r.phoneNumberId,
+        replyToId:     r.replyToId,
       ))
     of wmkInteractive:
       gWaEvents.push(WaRawEvent(
@@ -88,6 +106,7 @@ proc pushEvent*(payload: JsonNode) =
         text:          r.text,
         messageId:     r.messageId,
         phoneNumberId: r.phoneNumberId,
+        replyToId:     r.replyToId,
       ))
     of wmkMedia:
       gWaEvents.push(WaRawEvent(
@@ -97,6 +116,7 @@ proc pushEvent*(payload: JsonNode) =
         messageId:     r.messageId,
         phoneNumberId: r.phoneNumberId,
         mediaId:       r.mediaId,
+        replyToId:     r.replyToId,
       ))
     of wmkUnknown:
       discard
@@ -190,12 +210,15 @@ proc downloadFile*(a: WhatsAppAdapter; mediaId: string): Result[FileDownload, st
 # ── ChannelPort procs ──────────────────────────────────────────────────────────
 
 proc sendChunk(a: WhatsAppAdapter; toPhone, text: string): Result[void, string] =
-  discard ? a.postJson(a.phoneNumberId & "/messages", %* {
+  let sent = ? a.postJson(a.phoneNumberId & "/messages", %* {
     "messaging_product": "whatsapp",
     "to":   toPhone,
     "type": "text",
     "text": {"body": text},
   })
+  ## Remembered by its wamid, so a reply to it can show what it said.
+  let id = sent{"messages"}{0}{"id"}.getStr("")
+  rememberWaText(id, text)
   ok()
 
 proc sendMedia*(a: WhatsAppAdapter; toPhone, url, caption: string): Result[void, string] =

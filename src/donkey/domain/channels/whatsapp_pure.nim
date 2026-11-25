@@ -32,6 +32,16 @@ type
     messageId*:     string  ## wamid — unique message id for dedup
     phoneNumberId*: string  ## receiving business phone number id
     mediaId*:       string  ## non-empty for wmkMedia (use to fetch via Media API)
+    replyToId*:     string  ## the wamid this replies to (`context.id`); Meta
+                            ## sends no text for it
+
+  RecentWaTexts* = object
+    ## The texts of recent messages by wamid, bounded: Meta's reply context
+    ## carries only the quoted id, so the adapter keeps what it saw and sent.
+    ids:    seq[string]
+    texts:  seq[string]
+    stamps: seq[int64]   ## when each was last remembered: the oldest goes
+    clock:  int64
 
 # ── Internal pure helpers ─────────────────────────────────────────────────────
 
@@ -103,7 +113,7 @@ func parseMessage(phoneNumberId: string; msg: JsonNode): WaParseResult =
   ## Designed for  msg |>-> parseMessage(phoneNumberId)  (piped value is last arg).
   if msg == nil: return WaParseResult(kind: wmkUnknown)
   let msgType = msg |>-> extractStr("type")
-  case msgType
+  result = case msgType
   of "text":
     msg |>-> parseTextMsg(phoneNumberId)
   of "interactive":
@@ -112,6 +122,9 @@ func parseMessage(phoneNumberId: string; msg: JsonNode): WaParseResult =
     msg |>-> parseMediaMsg(phoneNumberId)
   else:
     WaParseResult(kind: wmkUnknown)
+  let context = msg.getOrDefault("context")
+  if context != nil and context.kind == JObject:
+    result.replyToId = context.getOrDefault("id").getStr("")
 
 func parseChangeValue(value: JsonNode): seq[WaParseResult] =
   ## Parses a single change.value object, extracting all messages.
@@ -155,3 +168,36 @@ func toInbound*(r: WaParseResult; userId: UserId): InboundMessage =
 func hasMedia*(r: WaParseResult): bool =
   ## True when the message carries media that the adapter must fetch.
   r.kind == wmkMedia
+
+const RecentWaTextCapacity* = 512
+
+func remember*(r: var RecentWaTexts; id, text: string) =
+  ## Keeps `text` under `id`; the oldest entry goes once the ring is full.
+  if id.len == 0 or text.len == 0:
+    return
+  inc r.clock
+  let known = r.ids.find(id)
+  if known >= 0:
+    ## The same id again: the newest text, and now the newest entry.
+    r.texts[known] = text
+    r.stamps[known] = r.clock
+    return
+  if r.ids.len < RecentWaTextCapacity:
+    r.ids.add id
+    r.texts.add text
+    r.stamps.add r.clock
+    return
+  var oldest = 0
+  for i in 1 ..< r.stamps.len:
+    if r.stamps[i] < r.stamps[oldest]: oldest = i
+  r.ids[oldest] = id
+  r.texts[oldest] = text
+  r.stamps[oldest] = r.clock
+
+func lookup*(r: RecentWaTexts; id: string): string =
+  if id.len == 0:
+    return ""
+  for i in 0 ..< r.ids.len:
+    if r.ids[i] == id:
+      return r.texts[i]
+  ""

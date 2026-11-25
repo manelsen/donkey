@@ -266,6 +266,38 @@ proc runTests*() =
       ]
       check parseWebhook(makeWebhook(msgs)).len == 2
 
+  suite "whatsapp_pure — replies":
+    test "a reply carries the quoted message's id":
+      var msg = makeTextMsg("5511", "wamid.2", "e isso?")
+      msg["context"] = %* {"from": "PN", "id": "wamid.1"}
+      let r = parseWebhook(makeWebhook(@[msg]))
+      check r[0].replyToId == "wamid.1"
+      check parseWebhook(makeWebhook(@[makeTextMsg("5511", "wamid.3", "oi")]))[0].replyToId == ""
+
+    test "recent texts by id, bounded":
+      var recent = RecentWaTexts()
+      recent.remember("wamid.1", "a senha é girassol42")
+      check recent.lookup("wamid.1") == "a senha é girassol42"
+      check recent.lookup("wamid.x") == ""
+      for i in 0 ..< RecentWaTextCapacity:
+        recent.remember("filler." & $i, "x")
+      check recent.lookup("wamid.1") == ""      ## the oldest went
+      check recent.lookup("filler." & $(RecentWaTextCapacity - 1)) == "x"
+      ## a refreshed entry is the newest: the next eviction takes an older one
+      var aged = RecentWaTexts()
+      for i in 0 ..< RecentWaTextCapacity:
+        aged.remember("m" & $i, "t" & $i)
+      aged.remember("m0", "t0 again")        ## m0 was the oldest; now newest
+      aged.remember("new", "fresh")           ## evicts m1, not m0
+      check aged.lookup("m0") == "t0 again"
+      check aged.lookup("m1") == ""
+      check aged.lookup("new") == "fresh"
+      recent.remember("again", "first")
+      recent.remember("again", "second")
+      check recent.lookup("again") == "second"
+      recent.remember("", "ignored")
+      check recent.lookup("") == ""
+
   # ── hasMedia ──────────────────────────────────────────────────────────────────
 
   suite "whatsapp_pure.hasMedia":
