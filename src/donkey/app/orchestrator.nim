@@ -604,17 +604,19 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
 
   # Capture the turn into long-term memory. The policy (what counts as
   # substantive, how each side is clipped) lives in domain/memory/capture_pure.
-  if not shouldSkipAutoMemoryCapture(turnSetup.userText, loopResult.finalText):
+  ## A failed turn is decided first: whatever text it carries is not an
+  ## answer, so it is kept as an unanswered message, never as a normal turn.
+  if loopResult.providerFailed:
+    if shouldCaptureUnanswered(turnSetup.userText, replyFailed = true):
+      onboarding_runtime.safeAppendMemory(
+        memory, turnSetup.uid,
+        formatUnansweredMemoryEntry(turnSetup.userText),
+        turnOrigin(result.sessionId)).isOkOr:
+          log.warn("auto memory capture: " & error)
+  elif not shouldSkipAutoMemoryCapture(turnSetup.userText, loopResult.finalText):
     onboarding_runtime.safeAppendMemory(
       memory, turnSetup.uid,
       formatAutoMemoryEntry(turnSetup.userText, loopResult.finalText),
-      turnOrigin(result.sessionId)).isOkOr:
-        log.warn("auto memory capture: " & error)
-  elif shouldCaptureUnanswered(turnSetup.userText, loopResult.providerFailed):
-    ## No reply to pair with, but what the person said is kept.
-    onboarding_runtime.safeAppendMemory(
-      memory, turnSetup.uid,
-      formatUnansweredMemoryEntry(turnSetup.userText),
       turnOrigin(result.sessionId)).isOkOr:
         log.warn("auto memory capture: " & error)
 
