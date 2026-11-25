@@ -51,9 +51,16 @@ proc samplingHandler*(serverName, identity: string; deps: SamplingDeps): Samplin
       return err(error)
     let started = epochMs()
     deps.budget.dailyCap = deps.dailyTokenCap
-    if not deps.budget[].allows(identity, req.maxTokens, started):
+    ## What may be spent is the limit after capping; it is reserved now, so
+    ## requests in flight hold their share and the cap holds, and settled
+    ## (or given back) at the end.
+    let reserved = min(req.maxTokens, deps.maxTokensCap)
+    if not deps.budget[].allows(identity, reserved, started):
       deps.log.warn("mcp sampling: " & serverName & " is past its daily token cap")
       return err("the server's daily sampling budget is spent")
+    deps.budget[].spend(identity, reserved, started)
+    template giveBack() =
+      deps.budget[].spend(identity, -reserved, started)
     var channel = ckTelegram
     if not parseChannelKindName(call.channel, channel):
       return err("no channel to ask the person on")
@@ -63,28 +70,36 @@ proc samplingHandler*(serverName, identity: string; deps: SamplingDeps): Samplin
           channel, deps.outbox, key, "sampling de " & serverName,
           approvalSummary(serverName, req), deps.log)
       except CancelledError:
+        giveBack()
         return err("sampling cancelled")
       except CatchableError as e:
+        giveBack()
         return err("sampling approval failed: " & e.msg)
     if decision != adApproved:
+      giveBack()
       recordToolCall("sampling:" & serverName, float(epochMs() - started), ok = false)
       return err("the person declined the sampling request")
     let complete =
       try: deps.completeFor(UserId(call.userId))
       except Exception as e:  ## effect boundary: callee raises are unannotated
+        giveBack()
+        recordToolCall("sampling:" & serverName, float(epochMs() - started), ok = false)
         return err("no model route: " & e.msg)
     let completion =
       try:
         await safeAsyncComplete(complete, toCompletionRequest(req, deps.maxTokensCap))
       except CancelledError:
+        giveBack()
         return err("sampling cancelled")
       except CatchableError as e:
+        giveBack()
         return err("sampling failed: " & e.msg)
     if completion.isErr:
+      giveBack()
       recordToolCall("sampling:" & serverName, float(epochMs() - started), ok = false)
       return err("the model failed: " & completion.error)
     let resp = completion.get
-    deps.budget[].spend(identity, resp.inputTokens + resp.outputTokens, started)
+    deps.budget[].spend(identity, resp.inputTokens + resp.outputTokens - reserved, started)
     recordToolCall("sampling:" & serverName, float(epochMs() - started), ok = true)
     deps.log.info("mcp sampling: " & serverName & " for " & call.userId & " (" &
                   $(resp.inputTokens + resp.outputTokens) & " tokens)")

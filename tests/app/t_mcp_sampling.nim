@@ -124,6 +124,38 @@ proc runTests*() =
       check r.isErr and "daily" in r.error
       check outbox.len == 0 and m.calls == 0
 
+    test "the cap counts what may be spent, the request's limit after capping":
+      fresh("capped")
+      defer: resetApprovalService()
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let m = Model()
+      ## asks for 50000, sent at most 1000 (maxTokensCap); 2000 a day fits it
+      let handler = samplingHandler("fs", serverIdentity("npx", @["fs"]),
+                                    deps(m, outbox, cap = 2_000))
+      let person = press(outbox, "allow")
+      check (waitFor handler("sampling/createMessage", request(maxTokens = 50_000), call)).isOk
+      discard waitFor person
+      check m.lastReq.maxTokens == 1_000
+
+    test "requests in flight hold their share of the cap, so the cap holds":
+      fresh("race")
+      defer: resetApprovalService()
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let m = Model()
+      let d = deps(m, outbox, cap = 1_500)
+      let handler = samplingHandler("fs", serverIdentity("npx", @["fs"]), d)
+      ## the first waits for the person; the second comes meanwhile
+      let first = handler("sampling/createMessage", request(maxTokens = 1_000), call)
+      let second = waitFor handler("sampling/createMessage", request(maxTokens = 1_000), call)
+      check second.isErr and "daily" in second.error
+      let person = press(outbox, "deny")
+      discard waitFor person
+      check (waitFor first).isErr
+      ## the denied request gave its share back
+      let person2 = press(outbox, "allow")
+      check (waitFor handler("sampling/createMessage", request(maxTokens = 1_000), call)).isOk
+      discard waitFor person2
+
     test "other requests from the server are not supported":
       fresh("other")
       defer: resetApprovalService()
