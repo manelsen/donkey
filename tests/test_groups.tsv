@@ -273,6 +273,7 @@ g3	tests/ports/t_cli_repl.nim
 g3	tests/ports/t_line_capability.nim
 g3	tests/ports/t_outbound_builder_caps.nim
 g3	tests/provider/t_alibaba.nim
+g3	tests/provider/t_azure.nim
 g3	tests/provider/t_anthropic.nim
 g3	tests/provider/t_descriptor_factory.nim
 g3	tests/provider/t_fireworks.nim

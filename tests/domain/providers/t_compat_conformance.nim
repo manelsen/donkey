@@ -11,6 +11,7 @@ import donkey/domain/providers/profile_nvidia
 import donkey/domain/providers/profile_alibaba
 import donkey/domain/providers/profile_fireworks
 import donkey/domain/providers/profile_mistral
+import donkey/domain/providers/profile_azure
 import donkey/adapters/provider/zhipu
 import donkey/adapters/provider/minimax
 import donkey/adapters/provider/openrouter
@@ -88,6 +89,12 @@ proc expectations(): seq[ProfileExpectation] =
       emptyContent: false),
     ProfileExpectation(name: "fireworks", providerIds: @["fireworks"],
       profile: fireworksCompatProfile(),
+      toolChoice: false, toolResultName: true, imageWithToolCalls: true,
+      includeReasoning: false, reasoningSplit: false, streamOptions: false,
+      emptyContent: false),
+    ProfileExpectation(name: "azure", providerIds: @["azure"],
+      profile: azureCompatProfileAt("https://acme.openai.azure.com/openai/v1/chat/completions"),
+      # the OpenAI wire; no Donkey-only include_reasoning
       toolChoice: false, toolResultName: true, imageWithToolCalls: true,
       includeReasoning: false, reasoningSplit: false, streamOptions: false,
       emptyContent: false),

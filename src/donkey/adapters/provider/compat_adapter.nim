@@ -84,8 +84,11 @@ func requestHeaders*(a: CompatAdapter;
                      profile: CompatProfile): seq[(string, string)] =
   ## The credential and content type, then whatever the profile requires. The
   ## profile's headers may override the defaults (last write wins in HTTP).
-  result = @[("Content-Type", "application/json"),
-             ("Authorization", "Bearer " & a.apiKey)]
+  result = @[("Content-Type", "application/json")]
+  if profile.apiKeyHeader.len > 0:
+    result.add((profile.apiKeyHeader, a.apiKey))
+  else:
+    result.add(("Authorization", "Bearer " & a.apiKey))
   for header in profile.extraHeaders:
     result.add header
 

@@ -48,6 +48,7 @@ path; the table describes the transport, not every model's API surface.
 | NVIDIA NIM | `NVIDIA_API_KEY` | `nvidia/nemotron-3.5-super-vl-120b-a12b` | Yes | Yes |
 | Alibaba DashScope | `DASHSCOPE_API_KEY` | `qwen3.8-max` | Yes | Yes |
 | Fireworks AI | `FIREWORKS_API_KEY` | `accounts/fireworks/models/kimi-k2p6` | Yes | Yes |
+| Azure OpenAI | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_ENDPOINT` | your deployment name (`gpt-4.1` if unset) | Yes | Yes |
 | Ollama | no API key | local models | Yes | Limited by server/model |
 
 The default strings live in `src/donkey/core/providers/provider_defaults.nim`;
@@ -92,6 +93,20 @@ BRAVE_API_KEY=...   # optional, enables web_search
 Endpoint overrides, when the provider documents one, are separate env vars read
 at request time: `NVIDIA_BASE_URL` and `DASHSCOPE_BASE_URL` today. Fireworks has
 no descriptor `baseUrlEnv`.
+
+Azure OpenAI needs both its key and its resource URL; it is enabled only when
+both are set. It uses Microsoft's v1 API (`{resource}/openai/v1/chat/completions`,
+no `api-version`), sends the key in the `api-key` header, and takes the model as
+the **deployment name** you created in Azure:
+
+```bash
+AZURE_OPENAI_API_KEY=...
+AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com
+```
+
+and in the preferences, `provider = "azure"` with `model = "<deployment>"`.
+`AZURE_OPENAI_ENDPOINT` may also be the `/openai/v1` base or the full chat
+completions URL; it must be https.
 
 `donkey doctor` reports which providers are currently enabled by env.
 

@@ -174,6 +174,7 @@ const ProviderKeyLabels = [
   ("bedrock",       "AWS Bedrock"),
   ("alibaba",       "Alibaba DashScope"),
   ("fireworks",     "Fireworks AI"),
+  ("azure",         "Azure OpenAI"),
 ]
 
 func providerKeyLabel(id: string): string =

@@ -13,6 +13,7 @@ import ../../domain/providers/profile_nvidia
 import ../../domain/providers/profile_alibaba
 import ../../domain/providers/profile_fireworks
 import ../../domain/providers/profile_mistral
+import ../../domain/providers/profile_azure
 import ./bedrock
 import ../../core/pipeops
 import ../../ports/http
@@ -134,6 +135,20 @@ proc alibabaProfileAt(endpoint, model: string): CompatProfileFn =
 
 proc mistralProfileAt(endpoint: string): CompatProfileFn =
   result = proc(): CompatProfile {.gcsafe.} = mistralCompatProfileAt(endpoint)
+
+proc azureProfileAt(endpoint: string): CompatProfileFn =
+  result = proc(): CompatProfile {.gcsafe.} = azureCompatProfileAt(endpoint)
+
+proc failingBundle(reason: string): ProviderBundle =
+  ## A provider that cannot be called (configuration missing): every call
+  ## says why, and nothing is sent.
+  let fail = proc(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
+    err(reason)
+  ProviderBundle(
+    completeFn: fail,
+    streamFn: proc(req: CompletionRequest; onToken: proc(tok: string) {.gcsafe.}
+                  ): Result[CompletionResponse, string] {.gcsafe.} =
+      err(reason))
 
 proc fireworksProfileForModel(model: string): CompatProfileFn =
   ## The off switch is per model, so the profile is built for the model the
@@ -297,6 +312,26 @@ proc buildProviderBundle*(spec: ProviderSpec; http: HttpRuntimePort
       completeFn: makeFn(adapter),
       streamFn:   adapter.makeStreamFn(),
     )
+  of "azure":
+    ## Azure OpenAI's v1 API through the compat adapter: the resource URL
+    ## from AZURE_OPENAI_ENDPOINT (carried in the spec), the key in api-key,
+    ## the model is the deployment name.
+    let endpoint = azureChatEndpoint(spec.baseUrl)
+    if endpoint.isErr:
+      failingBundle(endpoint.error)
+    else:
+      let adapter = newCompatAdapter(
+        spec.apiKey,
+        model = if spec.modelName.len > 0: spec.modelName
+                else: providerDefaultModelFor("azure"),
+        providerName = "Azure OpenAI",
+        profileFn = azureProfileAt(endpoint.get),
+        http = http,
+      )
+      ProviderBundle(
+        completeFn: makeFn(adapter),
+        streamFn:   adapter.makeStreamFn(),
+      )
   of "bedrock":
     ## Converse with a Bedrock API key or SigV4; ConverseStream for streaming.
     let adapter = newBedrockAdapter(
