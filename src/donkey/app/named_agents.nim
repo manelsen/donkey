@@ -155,6 +155,10 @@ proc consultLoop(callModel: AsyncCompleteFn; loaded: LoadedAgent; text: string;
       return err(Result[string, string], "@" & loaded.agent.name & ": " & resp.error)
     let answer = resp.get
     if answer.toolCalls.len == 0 or offered.len == 0:
+      ## Tool calls on the last round (none were offered) are not run; what
+      ## counts is the text, and a blank one is no answer.
+      if answer.text.strip.len == 0:
+        return err(Result[string, string], "@" & loaded.agent.name & " gave no answer")
       return ok(Result[string, string], answer.text)
     inc round
     history.addAssistantWithToolCalls(answer.text, answer.toolCalls,

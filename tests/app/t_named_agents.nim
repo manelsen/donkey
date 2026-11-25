@@ -194,6 +194,12 @@ proc runTests*() =
       check seen.len == MaxConsultedToolRounds + 1
       check seen[^1].tools.len == 0
 
+    test "a blank final answer is an error, not an empty reply":
+      let mute: AsyncCompleteFn = proc(req: CompletionRequest): Future[Result[CompletionResponse, string]] {.async.} =
+        return ok(CompletionResponse(text: "  "))
+      let r = waitFor askNamedAgent(newFsAdapter(), Paddock, mute, "revisor", "q", "")
+      check r.isErr and "no answer" in r.error
+
     test "an agent that takes too long is an error, and a room still finishes":
       let slow: AsyncCompleteFn = proc(req: CompletionRequest): Future[Result[CompletionResponse, string]] {.async.} =
         if "revisor" in req.system:

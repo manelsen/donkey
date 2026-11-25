@@ -893,12 +893,15 @@ proc executeNativeTool*(tc:      ToolCallRequest;
   ## Forward: a consulted agent's tools run through it, and it dispatches the
   ## agent tools.
 
-proc consultTools(ctx: NativeCtx; state: SessionState; agentName: string): ConsultTools =
+proc consultTools(ctx: NativeCtx; state: SessionState; history: ConversationHistory;
+                  agentName: string): ConsultTools =
+  ## `history` is the calling turn's: session_search also reads what was
+  ## compacted out of the current session.
   let consulted = consultedAgentCtx(ctx, agentName)
   ConsultTools(
     tools: consultedAgentToolDescriptions(webSearch = webSearchKey().len > 0),
     run: proc(call: ToolCallRequest): Future[ConsultToolResult] {.async.} =
-      let done = await executeNativeTool(call, consulted, state, newHistory())
+      let done = await executeNativeTool(call, consulted, state, history)
       if not done.handled:
         return ConsultToolResult(text: "Error: tool '" & call.name & "' is not available.",
                                  kind: trkOperationalError)
@@ -927,7 +930,7 @@ proc executeAgentNativeTool(tc: ToolCallRequest;
       return handledError(error)
     let answer = await askNamedAgent(ctx.fs, ctx.paddockDir, agentCompleteFn(ctx),
                                      askCtx.name, askCtx.question, askCtx.context,
-                                     consult = consultTools(ctx, state, askCtx.name))
+                                     consult = consultTools(ctx, state, history, askCtx.name))
     if answer.isErr:
       return handledError(answer.error)
     return handledText(answer.get)
@@ -936,7 +939,7 @@ proc executeAgentNativeTool(tc: ToolCallRequest;
       return handledError(error)
     let transcript = await conveneNamedAgents(ctx.fs, ctx.paddockDir, agentCompleteFn(ctx),
       roomCtx.agents, roomCtx.question, roomCtx.context, roomCtx.rounds,
-      consult = consultTools(ctx, state, "room"))
+      consult = consultTools(ctx, state, history, "room"))
     if transcript.isErr:
       return handledError(transcript.error)
     return handledText(transcript.get)
