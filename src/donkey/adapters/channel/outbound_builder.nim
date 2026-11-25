@@ -155,6 +155,25 @@ proc whatsappOutboundPort*(wa: ptr WhatsAppAdapter;
       wa[].downloadFile(fileId),
   )
 
+type TeamsPick* = proc(userId: UserId): ptr TeamsAdapter {.gcsafe.}
+  ## The adapter of the Teams app a person last wrote to (teams_bots).
+
+proc teamsOutboundPort*(tm: ptr TeamsAdapter; pick: TeamsPick = nil): OutboundChannelPort =
+  ## Send only: through the person's app, or unsupported without an adapter.
+  OutboundChannelPort(
+    send: if tm != nil:
+            proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
+              (if pick != nil: pick(msg.userId) else: tm)[].send(msg)
+          else:
+            unsupportedSend,
+    sendReturnId: unsupportedSendReturnId,
+    editMessage: unsupportedEditMessage,
+    sendKeyboard: unsupportedSendKeyboard,
+    editKeyboard: unsupportedEditKeyboard,
+    setMessageReaction: unsupportedSetMessageReaction,
+    downloadFile: unsupportedDownloadFile,
+  )
+
 proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
                          dcAdapter: ptr DiscordAdapter;
                          wcAdapter: ptr WeComAdapter;
@@ -172,7 +191,8 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
                          teamsAdapter: ptr TeamsAdapter = nil;
                          tgPick: TelegramPick = nil;
                          dcPick: DiscordPick = nil;
-                         waPick: WhatsAppPick = nil): OutboundChannelPorts =
+                         waPick: WhatsAppPick = nil;
+                         teamsPick: TeamsPick = nil): OutboundChannelPorts =
 
   # ── Telegram (full capability) ────────────────────────────────────────────
   result.telegram = telegramOutboundPort(tgAdapter, tgPick)
@@ -293,19 +313,7 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
   )
 
   # ── Teams — capability descriptor says: send only ─────────────────────────
-  result.teams = OutboundChannelPort(
-    send: if teamsAdapter != nil:
-            proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
-              teamsAdapter[].send(msg)
-          else:
-            unsupportedSend,
-    sendReturnId: unsupportedSendReturnId,
-    editMessage: unsupportedEditMessage,
-    sendKeyboard: unsupportedSendKeyboard,
-    editKeyboard: unsupportedEditKeyboard,
-    setMessageReaction: unsupportedSetMessageReaction,
-    downloadFile: unsupportedDownloadFile,
-  )
+  result.teams = teamsOutboundPort(teamsAdapter, teamsPick)
 
   # ── LINE — capability descriptor says: send only ──────────────────────────
   result.line = OutboundChannelPort(

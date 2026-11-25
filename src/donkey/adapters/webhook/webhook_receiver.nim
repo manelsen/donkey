@@ -71,6 +71,11 @@ const
   WebhookQueueDepth         = 32
 
 type
+  TeamsApp* = object
+    ## A Teams bot from `[[bots]]`: tokens whose audience is `appId` are its.
+    appId*: string
+    bot*:   string
+
   WebhookResponse* = object
     status*:      int
     body*:        string
@@ -94,6 +99,7 @@ type
                                        ## oneBotListenerCheck allows it
     qqOneBotSecret*:          string   ## QQ_ONEBOT_SECRET; empty = unsigned
     teamsAppId*:              string   ## MICROSOFT_APP_ID; the JWT audience
+    teamsApps*:               seq[TeamsApp] ## the `[[bots]]` apps on Teams (E3.6)
     tlsCertFile*:             string
     tlsKeyFile*:              string
 
@@ -514,27 +520,41 @@ proc handleTeamsAt*(cfg: WebhookConfig; req: WebhookRequest; nowSec: int64;
   ## The Bot Connector's JWT is checked before anything is queued
   ## (adapters/channel/teams_auth). A token naming a key not in hand gets one
   ## more fetch of the keys, spaced by `refreshBotKeys`.
-  if cfg.teamsAppId.len == 0:
+  if cfg.teamsAppId.len == 0 and cfg.teamsApps.len == 0:
     return notFound()
   if req.httpMethod != "POST":
     return methodNotAllowed()
   let payload = parsePayload(req.body).valueOr:
     return badRequest()
-  let activity = parseActivity(payload).valueOr:
+  var activity = parseActivity(payload).valueOr:
     return badRequest()
   let auth = req.header("authorization")
   ## Without a well-formed token there is nothing to check a key against, and
   ## no reason to reach the connector for keys.
-  if splitJwt(bearerToken(auth)).isErr:
+  let parts = splitJwt(bearerToken(auth)).valueOr:
+    return plainResp(401, "unauthorized")
+  ## Several apps share the route (E3.6): the audience the token claims names
+  ## the app to check it for; one nobody configured is refused before any key
+  ## is looked at. The full check below still requires that audience.
+  let audience = parts.claims{"aud"}.getStr
+  var appId = ""
+  if audience.len > 0 and audience == cfg.teamsAppId:
+    appId = cfg.teamsAppId
+  else:
+    for app in cfg.teamsApps:
+      if audience.len > 0 and audience == app.appId:
+        appId = app.appId
+        activity.bot = app.bot
+  if appId.len == 0:
     return plainResp(401, "unauthorized")
   let nowMs = nowSec * 1000
   discard refreshBotKeys(fetch, nowMs)
   var verdict = verifyBotRequest(auth, activity.serviceUrl, activity.channelId,
-                                 cfg.teamsAppId, currentBotKeys(), nowSec)
+                                 appId, currentBotKeys(), nowSec)
   if verdict.isErr and verdict.error.unknownKey:
     discard refreshBotKeys(fetch, nowMs, unknownKey = true)
     verdict = verifyBotRequest(auth, activity.serviceUrl, activity.channelId,
-                               cfg.teamsAppId, currentBotKeys(), nowSec)
+                               appId, currentBotKeys(), nowSec)
   if verdict.isErr:
     return plainResp(verdict.error.status,
                      if verdict.error.status == 403: "forbidden" else: "unauthorized")
@@ -572,7 +592,8 @@ func anyRouteConfigured*(cfg: WebhookConfig): bool =
     cfg.wecomToken.len > 0 or
     cfg.wechatToken.len > 0 or
     cfg.qqOneBotEnabled or
-    cfg.teamsAppId.len > 0
+    cfg.teamsAppId.len > 0 or
+    cfg.teamsApps.len > 0
 
 # ── HTTP server ───────────────────────────────────────────────────────────────
 

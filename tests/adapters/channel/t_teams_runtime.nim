@@ -150,6 +150,38 @@ proc runTests*() =
       check s.replies[0].channel == ckTeams
       check s.replies[0].replyTo == replyTarget(ServiceUrl, "a:1xyz", "1700")
 
+    test "an app's activity becomes a turn of that bot, answered by its adapter":
+      ## E3.6: the route tagged the activity with the app it was sent to.
+      var a = newAdapter()
+      var vendas = newAdapter()
+      vendas.resolver = a.resolver
+      let pv = addr vendas
+      var sm: SessionManager
+      sm.init()
+      var seen: TeamsSeen
+      let s = Sink()
+      var noted: seq[string]
+      var act = message("1800", "quero comprar")
+      act.bot = "vendas"
+      pushActivity(act)
+      var lost = message("1801", "de um app que saiu")
+      lost.bot = "gone"
+      pushActivity(lost)
+      discard drainTeamsEvents(a, sm, seen, fallbackFor(s), replyFor(s), rtLog,
+        pickBot = proc(bot: string): ptr TeamsAdapter {.gcsafe.} =
+          (if bot == "vendas": pv else: nil),
+        noteInbound = proc(userId: UserId; bot: string) {.gcsafe.} =
+          {.cast(gcsafe).}:
+            noted.add bot)
+      check s.turns.len == 1
+      check s.turns[0].bot == "vendas"
+      check noted == @["vendas"]
+      ## the conversation is the app's, kept by its adapter
+      check vendas.send(OutboundMessage(userId: s.turns[0].userId, channel: ckTeams,
+                                        text: "lembrete")).isOk
+      check a.send(OutboundMessage(userId: s.turns[0].userId, channel: ckTeams,
+                                   text: "lembrete")).isErr
+
     test "the seen list stays bounded":
       var seen: TeamsSeen
       for i in 0 ..< TeamsSeenCapacity + 50:
