@@ -574,7 +574,8 @@ when defined(withPostgres) or defined(withSqlite):
           neighborNodes[neighbor.id] = neighbor
         neighborsOfHits.add ids
       for id, score in neighborScores(neighborsOfHits, policy.neighborWeight):
-        addSignal(neighborNodes[id], neighbor = score)
+        if id in neighborNodes:   ## filled in the same loop as the ids
+          addSignal(neighborNodes[id], neighbor = score)
 
     if rankedById.len == 0:
       for m in recentNodes:
