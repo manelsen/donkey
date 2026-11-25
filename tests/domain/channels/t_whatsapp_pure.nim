@@ -283,6 +283,15 @@ proc runTests*() =
         recent.remember("filler." & $i, "x")
       check recent.lookup("wamid.1") == ""      ## the oldest went
       check recent.lookup("filler." & $(RecentWaTextCapacity - 1)) == "x"
+      ## a refreshed entry is the newest: the next eviction takes an older one
+      var aged = RecentWaTexts()
+      for i in 0 ..< RecentWaTextCapacity:
+        aged.remember("m" & $i, "t" & $i)
+      aged.remember("m0", "t0 again")        ## m0 was the oldest; now newest
+      aged.remember("new", "fresh")           ## evicts m1, not m0
+      check aged.lookup("m0") == "t0 again"
+      check aged.lookup("m1") == ""
+      check aged.lookup("new") == "fresh"
       recent.remember("again", "first")
       recent.remember("again", "second")
       check recent.lookup("again") == "second"

@@ -38,9 +38,10 @@ type
   RecentWaTexts* = object
     ## The texts of recent messages by wamid, bounded: Meta's reply context
     ## carries only the quoted id, so the adapter keeps what it saw and sent.
-    ids:   seq[string]
-    texts: seq[string]
-    next:  int
+    ids:    seq[string]
+    texts:  seq[string]
+    stamps: seq[int64]   ## when each was last remembered: the oldest goes
+    clock:  int64
 
 # ── Internal pure helpers ─────────────────────────────────────────────────────
 
@@ -174,17 +175,24 @@ func remember*(r: var RecentWaTexts; id, text: string) =
   ## Keeps `text` under `id`; the oldest entry goes once the ring is full.
   if id.len == 0 or text.len == 0:
     return
+  inc r.clock
   let known = r.ids.find(id)
   if known >= 0:
-    r.texts[known] = text      ## the same id again: the newest text
+    ## The same id again: the newest text, and now the newest entry.
+    r.texts[known] = text
+    r.stamps[known] = r.clock
     return
   if r.ids.len < RecentWaTextCapacity:
     r.ids.add id
     r.texts.add text
-  else:
-    r.ids[r.next] = id
-    r.texts[r.next] = text
-    r.next = (r.next + 1) mod RecentWaTextCapacity
+    r.stamps.add r.clock
+    return
+  var oldest = 0
+  for i in 1 ..< r.stamps.len:
+    if r.stamps[i] < r.stamps[oldest]: oldest = i
+  r.ids[oldest] = id
+  r.texts[oldest] = text
+  r.stamps[oldest] = r.clock
 
 func lookup*(r: RecentWaTexts; id: string): string =
   if id.len == 0:
