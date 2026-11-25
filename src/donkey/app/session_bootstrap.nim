@@ -456,6 +456,8 @@ func sessionReplyTo*(msg: InboundMessage): string =
     if msg.channelId.len > 0: "channel:" & msg.channelId else: ""
   of ckLine:
     msg.chatId
+  of ckTeams:
+    msg.channelId   ## service, conversation and message (teams_pure.replyTarget)
   else:
     ""
 

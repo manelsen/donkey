@@ -25,8 +25,10 @@ proc runTests*() =
     test "ckLine has the public label line":
       check $ckLine == "line"
 
-    test "ckLine is appended at the end of the enum":
-      check ckLine == high(ChannelKind)
+    test "ckLine kept its ordinal; later channels come after it":
+      ## Ordinals are part of persisted state: a new channel is appended.
+      check ord(ckLine) == 13
+      check ckTeams == high(ChannelKind) and ckTeams == succ(ckLine)
 
   suite "capability — LINE":
 

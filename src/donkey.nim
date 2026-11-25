@@ -67,6 +67,8 @@ import donkey/adapters/channel/slack_socket
 import donkey/adapters/channel/dingtalk
 import donkey/adapters/channel/line
 import donkey/adapters/channel/line_runtime
+import donkey/adapters/channel/teams
+import donkey/adapters/channel/teams_runtime
 import donkey/adapters/channel/cli_repl
 import donkey/adapters/webhook/webhook_receiver
 import donkey/domain/channels/line_policy
@@ -218,6 +220,10 @@ type DaemonEnv = object
     ## *_WEBHOOK_PORT variables still set from before the shared receiver
   matrixConfigured: bool
   qqOneBotSecret: string
+  teamsAppId: string        ## MICROSOFT_APP_ID
+  teamsAppPassword: string  ## MICROSOFT_APP_PASSWORD
+  teamsTenantId: string     ## MICROSOFT_APP_TENANT_ID; empty = multi-tenant
+  teamsServiceHosts: seq[string]
 
 type DaemonAdapters = object
   tg: TelegramAdapter
@@ -229,6 +235,7 @@ type DaemonAdapters = object
   sl: SlackAdapter
   dt: DingTalkAdapter
   ln: LineAdapter
+  teams: TeamsAdapter
   mx: MatrixAdapter
   em: EmailAdapter
   wa: WhatsAppAdapter
@@ -243,7 +250,7 @@ proc buildRuntimeOutboundPorts(adapters: var DaemonAdapters): OutboundChannelPor
     addr adapters.tg, addr adapters.dc, addr adapters.wc,
     addr adapters.wch, addr adapters.qq, addr adapters.fs, addr adapters.mx,
     addr adapters.em, addr adapters.sl, addr adapters.dt, addr adapters.wa,
-    addr adapters.cli, signalPtr, addr adapters.ln)
+    addr adapters.cli, signalPtr, addr adapters.ln, addr adapters.teams)
 
 type DaemonServices = object
   toolClients:      seq[ToolRuntimePort]
@@ -299,6 +306,7 @@ type DaemonRuntime = ref object
   lastEmailPollMs:      int64
   lastSignalPollMs:     int64
   lineReplay:           LineReplayCache
+  teamsSeen:            TeamsSeen
   msgSeq:               int
   daemonStartMs:        int64
 
@@ -550,6 +558,13 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
   result.lineChannelAccessToken = cfg.env.get("LINE_CHANNEL_ACCESS_TOKEN").strip()
   result.lineAllowedGroups = parseChatIdList(cfg.env.get("LINE_ALLOWED_GROUPS"))
   result.lineAllowedUsers = parseChatIdList(cfg.env.get("LINE_ALLOWED_USERS"))
+  ## Teams: the route is mounted only with both the App ID (the JWT audience)
+  ## and its password (the app token). TEAMS_SERVICE_HOSTS adds connector
+  ## hosts beyond smba.trafficmanager.net (e.g. a government cloud's).
+  result.teamsAppId = cfg.env.get("MICROSOFT_APP_ID").strip()
+  result.teamsAppPassword = cfg.env.get("MICROSOFT_APP_PASSWORD").strip()
+  result.teamsTenantId = cfg.env.get("MICROSOFT_APP_TENANT_ID").strip()
+  result.teamsServiceHosts = DefaultServiceHosts & parseChatIdList(cfg.env.get("TEAMS_SERVICE_HOSTS"))
   result.matrixWebhookToken = cfg.env.get("MATRIX_WEBHOOK_TOKEN")
   result.whatsappVerifyToken = cfg.env.get("WHATSAPP_VERIFY_TOKEN")
   result.whatsappAppSecret = cfg.env.get("WHATSAPP_APP_SECRET")
@@ -607,6 +622,10 @@ proc initDaemonAdapters(cfg: DonkeyConfig; env: DaemonEnv): DaemonAdapters =
                      apiBase = cfg.env.stripped("LINE_API_BASE"))
     else:
       newLineAdapter("", env.identityPath, apiBase = "https://api.line.me")
+  result.teams = newTeamsAdapter(env.teamsAppId, env.teamsAppPassword,
+    env.teamsTenantId, env.identityPath,
+    cfg.home / "state" / "teams_conversations.json",
+    serviceHosts = env.teamsServiceHosts)
   result.mx = newMatrixAdapter(cfg.env.get("MATRIX_HOMESERVER"), cfg.env.get("MATRIX_BOT_USER_ID"),
                                cfg.env.get("MATRIX_ACCESS_TOKEN"), env.identityPath)
   result.em = newEmailAdapter(cfg.env.get("EMAIL_IMAP_HOST"), cfg.env.get("EMAIL_SMTP_HOST"),
@@ -850,6 +869,8 @@ proc startOptionalWebhookReceiver(env: DaemonEnv; qqOneBot: bool; log: Logger) =
       if env.wechatAppId.len > 0: env.wechatCallbackToken else: "",
     qqOneBotEnabled: qqOneBot and qqMount.isOk,
     qqOneBotSecret: env.qqOneBotSecret,
+    teamsAppId:
+      if env.teamsAppPassword.len > 0: env.teamsAppId else: "",
     tlsCertFile: env.webhookTlsCert,
     tlsKeyFile: env.webhookTlsKey,
   )
@@ -1164,6 +1185,7 @@ func outboundPortForChannel(ports: OutboundChannelPorts;
   of ckEmail: ports.email
   of ckCli: ports.cli
   of ckLine: ports.line
+  of ckTeams: ports.teams
 
 proc makeCompleteBuilder(): proc(preferencesMd: string): CompleteFn {.gcsafe.} =
   result = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
@@ -1462,6 +1484,17 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
       drainLineEvents(
         ctx.adapters.ln, ctx.runtime.sm, ctx.runtime.lineReplay,
         linePolicy, getTime().toUnix(), fallback, enqueueLineReply, log) > 0,
+    drainTeams = proc(): bool =
+      if ctx.env.teamsAppId.len == 0 or ctx.env.teamsAppPassword.len == 0:
+        return false
+      let enqueueTeamsReply = proc(msg: OutboundMessage): Result[void, string] {.gcsafe, raises: [].} =
+        try:
+          ctx.runtime.globalOutbox.putNoWait(msg)
+          ok()
+        except AsyncQueueFullError:
+          err("Teams: outbox full, /continue reply dropped")
+      drainTeamsEvents(ctx.adapters.teams, ctx.runtime.sm, ctx.runtime.teamsSeen,
+                       fallback, enqueueTeamsReply, log) > 0,
     drainMatrix = proc(): bool =
       let count = drainMatrixGateway(
         ctx.env.matrixConfigured,
@@ -1837,6 +1870,9 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
       ## The event was acked with 200 and is now being processed; give the
       ## admitted turn the same bounded chance Slack gets before the actors are
       ## cancelled.
+      await sleepAsync(ctimer.milliseconds(500))
+    ## Teams activities were answered 200 when queued: the same holds.
+    if drainer.drainTeams():
       await sleepAsync(ctimer.milliseconds(500))
     ## Stop ingress first, then let already-admitted turns publish their replies.
     ## Connections accepted before the stop may have enqueued Feishu events;

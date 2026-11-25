@@ -18,6 +18,7 @@ This matrix reflects the current `core/outbound` capability model used by the ru
 | [Discord](#discord) | yes | yes | yes | yes | yes |
 | [Slack](#slack) | yes | no | no | no | no |
 | [LINE](#line) | yes | no | no | no | no |
+| [Microsoft Teams](#microsoft-teams) | yes | no | no | no | no |
 | WeChat Work | yes | no | no | no | no |
 | WeChat | yes | no | no | no | no |
 | QQ | yes | no | no | no | no |
@@ -277,6 +278,47 @@ Unset `LINE_CHANNEL_ACCESS_TOKEN`: the channel is treated as absent, the queue
 is not opened, the drain is a no-op, and `/webhook/line` answers 404. Unsetting
 only `LINE_CHANNEL_SECRET` also makes that route answer 404 while the receiver
 keeps serving other channels.
+
+---
+
+## Microsoft Teams
+
+Teams reaches Donkey through the Bot Framework: an Azure Bot resource whose
+messaging endpoint is `https://<your host>/webhook/teams` on the shared
+webhook receiver. Bots created since July 2025 are single-tenant.
+
+### Configuration
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `MICROSOFT_APP_ID` | yes | The bot's App ID: the audience every incoming token must carry. |
+| `MICROSOFT_APP_PASSWORD` | yes | The app's client secret, for the token Donkey sends with. Without both, `/webhook/teams` answers 404. |
+| `MICROSOFT_APP_TENANT_ID` | single-tenant | The tenant the app is registered in; its token endpoint is used. Empty = the old multi-tenant endpoint. |
+| `TEAMS_SERVICE_HOSTS` | no | Connector hosts besides `smba.trafficmanager.net` that replies may go to (comma-separated, exact). |
+
+### What is checked
+
+Every POST must carry a JWT from the Bot Connector, checked as in Microsoft's
+"Authenticate requests with the Bot Connector API": RS256 signature with a key
+from `login.botframework.com` (fetched at first use, renewed daily, and again
+when a token names an unknown key, at most every five minutes), issuer
+`https://api.botframework.com`, audience the App ID, validity with five
+minutes of skew, the `serviceurl` claim equal to the activity's, and the key's
+endorsement of the channel. A failure is a 401 (403 for the endorsement) and
+nothing is queued.
+
+### Behaviour
+
+- Personal chats follow the DM policy; group chats and channels pass the
+  shared group allowlist (`DONKEY_TELEGRAM_ALLOWED_GROUPS`, with the
+  conversation id before `;messageid=`; empty = every group).
+- In a channel the bot's own `@mention` is taken out of the text.
+- A person is known by their Entra object id, so `/continue` links Teams to
+  the same person on another channel.
+- Replies are Markdown in the thread of the message they answer; long ones
+  go in pieces. Each person's last conversation is kept in
+  `state/teams_conversations.json`, so reminders reach them after a restart.
+- Text only: no attachments, cards or edits yet.
 
 ---
 

@@ -40,6 +40,7 @@ import ../channel/whatsapp
 import ../channel/wecom
 import ../channel/wechat
 import ../channel/qq
+import ../channel/teams
 import ../../app/metrics
 import ../../domain/channels/qq_pure
 import ../../infra/event_queue
@@ -58,6 +59,7 @@ const
   WeComPath*    = "/webhook/wecom"
   WeChatPath*   = "/webhook/wechat"
   QQOneBotPath* = "/webhook/qq"
+  TeamsPath*    = "/webhook/teams"
 
   SlackReplayWindowSec*      = 300
   FeishuReplayWindowSec*     = 300
@@ -91,6 +93,7 @@ type
     qqOneBotEnabled*:         bool     ## mounted by the daemon only when
                                        ## oneBotListenerCheck allows it
     qqOneBotSecret*:          string   ## QQ_ONEBOT_SECRET; empty = unsigned
+    teamsAppId*:              string   ## MICROSOFT_APP_ID; the JWT audience
     tlsCertFile*:             string
     tlsKeyFile*:              string
 
@@ -504,6 +507,44 @@ proc handleQQOneBot(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
 
 # ── Dispatch ──────────────────────────────────────────────────────────────────
 
+# ── Microsoft Teams ───────────────────────────────────────────────────────────
+
+proc handleTeamsAt*(cfg: WebhookConfig; req: WebhookRequest; nowSec: int64;
+                    fetch: KeyFetch): WebhookResponse =
+  ## The Bot Connector's JWT is checked before anything is queued
+  ## (adapters/channel/teams_auth). A token naming a key not in hand gets one
+  ## more fetch of the keys, spaced by `refreshBotKeys`.
+  if cfg.teamsAppId.len == 0:
+    return notFound()
+  if req.httpMethod != "POST":
+    return methodNotAllowed()
+  let payload = parsePayload(req.body).valueOr:
+    return badRequest()
+  let activity = parseActivity(payload).valueOr:
+    return badRequest()
+  let auth = req.header("authorization")
+  ## Without a well-formed token there is nothing to check a key against, and
+  ## no reason to reach the connector for keys.
+  if splitJwt(bearerToken(auth)).isErr:
+    return plainResp(401, "unauthorized")
+  let nowMs = nowSec * 1000
+  discard refreshBotKeys(fetch, nowMs)
+  var verdict = verifyBotRequest(auth, activity.serviceUrl, activity.channelId,
+                                 cfg.teamsAppId, currentBotKeys(), nowSec)
+  if verdict.isErr and verdict.error.unknownKey:
+    discard refreshBotKeys(fetch, nowMs, unknownKey = true)
+    verdict = verifyBotRequest(auth, activity.serviceUrl, activity.channelId,
+                               cfg.teamsAppId, currentBotKeys(), nowSec)
+  if verdict.isErr:
+    return plainResp(verdict.error.status,
+                     if verdict.error.status == 403: "forbidden" else: "unauthorized")
+  if not pushActivity(activity):
+    return serviceUnavailable()
+  plainResp(200)
+
+proc handleTeams(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
+  handleTeamsAt(cfg, req, epochTime().int64, defaultKeyFetch())
+
 proc handleWebhookRequest*(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
   ## Pure-ish request → response mapping (payload dispatch is the only effect).
   ## Never raises: malformed input maps to a 4xx response.
@@ -517,6 +558,7 @@ proc handleWebhookRequest*(cfg: WebhookConfig; req: WebhookRequest): WebhookResp
   of WeComPath:    handleWeCom(cfg, req)
   of WeChatPath:   handleWeChat(cfg, req)
   of QQOneBotPath: handleQQOneBot(cfg, req)
+  of TeamsPath:    handleTeams(cfg, req)
   else:            notFound()
 
 func anyRouteConfigured*(cfg: WebhookConfig): bool =
@@ -529,7 +571,8 @@ func anyRouteConfigured*(cfg: WebhookConfig): bool =
     cfg.whatsappVerifyToken.len > 0 or
     cfg.wecomToken.len > 0 or
     cfg.wechatToken.len > 0 or
-    cfg.qqOneBotEnabled
+    cfg.qqOneBotEnabled or
+    cfg.teamsAppId.len > 0
 
 # ── HTTP server ───────────────────────────────────────────────────────────────
 

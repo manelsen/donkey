@@ -57,6 +57,7 @@ type
     email*:     OutboundChannelPort
     cli*:       OutboundChannelPort
     line*:      OutboundChannelPort
+    teams*:     OutboundChannelPort
 
 # ── pure helpers ──────────────────────────────────────────────────────────────
 

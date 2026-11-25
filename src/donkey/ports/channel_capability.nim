@@ -90,6 +90,12 @@ const
     sendKeyboard: false, editKeyboard: false, setMessageReaction: false,
     downloadFile: false, sendMedia: false, sendVoice: false)
 
+  # Teams: text replies in the thread (Markdown); no edits or media yet
+  TeamsCapability = ChannelCapabilityDescriptor(
+    send: true, sendReturnId: false, editMessage: false,
+    sendKeyboard: false, editKeyboard: false, setMessageReaction: false,
+    downloadFile: false, sendMedia: false, sendVoice: false)
+
   # QQ supports sendKeyboard but not editKeyboard
   QQCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: false, editMessage: false,
@@ -123,6 +129,7 @@ proc channelCapabilityRegistry*(): ChannelCapabilityRegistry =
   result[ckEmail]      = EmailCapability
   result[ckCli]        = CliCapability
   result[ckLine]       = LineCapability
+  result[ckTeams]      = TeamsCapability
   for kind in [ckWeCom, ckWeChat, ckFeishu, ckSlack, ckWhatsApp]:
     result[kind].repliesToRequester = true
 

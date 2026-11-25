@@ -20,6 +20,7 @@ import signal
 import slack
 import dingtalk
 import line
+import teams
 import cli_repl
 import whatsapp
 
@@ -83,7 +84,8 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
                          waAdapter: ptr WhatsAppAdapter;
                          cliAdapter: ptr CliAdapter;
                          signalAdapter: ptr SignalAdapter = nil;
-                         lineAdapter: ptr LineAdapter = nil): OutboundChannelPorts =
+                         lineAdapter: ptr LineAdapter = nil;
+                         teamsAdapter: ptr TeamsAdapter = nil): OutboundChannelPorts =
 
   # ── Telegram (full capability) ────────────────────────────────────────────
   result.telegram = OutboundChannelPort(
@@ -249,6 +251,21 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
     setMessageReaction: unsupportedSetMessageReaction,
     downloadFile: proc(fileId: string): Result[FileDownload, string] {.gcsafe.} =
       mxAdapter[].downloadFile(fileId),
+  )
+
+  # ── Teams — capability descriptor says: send only ─────────────────────────
+  result.teams = OutboundChannelPort(
+    send: if teamsAdapter != nil:
+            proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
+              teamsAdapter[].send(msg)
+          else:
+            unsupportedSend,
+    sendReturnId: unsupportedSendReturnId,
+    editMessage: unsupportedEditMessage,
+    sendKeyboard: unsupportedSendKeyboard,
+    editKeyboard: unsupportedEditKeyboard,
+    setMessageReaction: unsupportedSetMessageReaction,
+    downloadFile: unsupportedDownloadFile,
   )
 
   # ── LINE — capability descriptor says: send only ──────────────────────────
