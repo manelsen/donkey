@@ -4,6 +4,7 @@
 import std/json
 import std/options
 import std/strutils
+import ./blocking_executor
 import chronos
 import chronos/asyncsync
 import ../core/pipeops
@@ -29,7 +30,6 @@ import ./session_manager
 import ../app/prompt_building
 import ../app/provider_executor
 import ../infra/event_queue
-import ../infra/thread_handle
 import ../infra/thread_owner
 import ./metrics
 
@@ -59,27 +59,28 @@ type ToolCallResult* = object
 
 type ToolBatchResult* = ToolBatchState
 
-# ── Thread-based streaming ─────────────────────────────────────────────────────
+# ── Streaming on the executor's stream pool ───────────────────────────────────
 #
-# The provider call blocks, so it runs on its own thread. Nothing GC-managed is
-# shared with it: the job carries the request (copied into the thread), a
-# `nimcall` factory and an atomically counted channel. The thread builds the
-# provider closure itself, sends tokens and then one final event, and the
-# event loop polls the queue.
+# The provider call blocks, so it runs as a job on the blocking executor's
+# stream pool (app/blocking_executor, `opStream`): a fixed set of workers of
+# its own, so streams never take the workers per-message calls need. Nothing
+# GC-managed is shared: the job carries the request (copied), a `nimcall`
+# factory and an event queue. The worker builds the provider closure itself,
+# sends tokens and then one final event, and the event loop polls the queue.
 #
-# A stopped turn returns at once and leaves its thread to be reaped in the
-# background, so a hung provider could pile threads up. Every stream counts
-# against `MaxLiveStreams` until it is joined; at the cap the tool loop falls
-# back to the executor (bounded queue) instead of streaming.
+# A stopped turn returns at once and leaves its stream to drain in the
+# background. Every stream counts against `MaxLiveStreams` (the pool's size)
+# until its final event is read; at the cap the tool loop falls back to the
+# routed completion instead of streaming.
 
 const
   StreamFlushMs* = 1_000
   StreamPollMs = 30
   StreamChannelDepth = 512
-  MaxLiveStreams* = 8
+  MaxLiveStreams* = StreamWorkerCount
 
 var gLiveStreams {.threadvar.}: int
-  ## Started and not yet joined. Event loop state: another thread would see
+  ## Started and not yet drained. Event loop state: another thread would see
   ## its own zero and slip past the cap, so gStreamsOwner refuses it.
 var gStreamsOwner: ThreadOwner
 
@@ -89,7 +90,7 @@ proc liveStreams*(): int {.gcsafe.} =
 proc streamSlotAvailable*(): bool {.gcsafe.} =
   ## False on any thread but the loop's: streaming is only counted there.
   gStreamsOwner.isOwner("live stream count") and
-    gLiveStreams < MaxLiveStreams
+    gLiveStreams < min(MaxLiveStreams, poolCapacity(opStream))
 
 proc streamStarted() {.gcsafe.} =
   if gStreamsOwner.isOwner("live stream count"): inc gLiveStreams
@@ -109,7 +110,9 @@ type
     req:     CompletionRequest
     events:  EventQueue[StreamEvent]
 
-proc runStreamJob(job: StreamJob) {.thread, nimcall, raises: [].} =
+proc runStreamJob(job: StreamJob): Result[bool, string] {.nimcall, gcsafe, raises: [].} =
+  ## A job on the executor's stream pool: tokens and then one final event go
+  ## through `events`; the provider closure is built here, on the worker.
   let events = job.events
   var final = StreamEvent(done: true)
   try:
@@ -127,12 +130,12 @@ proc runStreamJob(job: StreamJob) {.thread, nimcall, raises: [].} =
   except Exception as e:  ## effect boundary: callee raises are unannotated
     final.error = e.msg
   events.waitPush(final)
+  ok(true)
 
-proc reapStream(handle: ThreadHandle[StreamJob];
-                events: EventQueue[StreamEvent]) {.async: (raises: []).} =
+proc reapStream(events: EventQueue[StreamEvent]) {.async: (raises: []).} =
   ## Drains an abandoned stream (stopped or cancelled turn) until its final
-  ## event, then joins the thread, without blocking the event loop meanwhile.
-  var h = handle
+  ## event, then frees the queue, without blocking the event loop meanwhile.
+  ## The worker goes back to the pool when the provider call ends.
   var q = events
   while true:
     var ev: StreamEvent
@@ -140,8 +143,7 @@ proc reapStream(handle: ThreadHandle[StreamJob];
       if ev.done: break
     else:
       try: await sleepAsync(milliseconds(StreamPollMs))
-      except CancelledError: return  ## shutting down: leave the thread be
-  joinAndFree(h)
+      except CancelledError: return  ## shutting down: leave the worker be
   q.dispose()
   streamReaped()
 
@@ -157,7 +159,9 @@ proc streamToOutbox*(factory:   StreamFactory;
                     shown: ref bool = nil):
                     Future[Result[CompletionResponse, string]] {.async.} =
   ## Streams one completion into `outbox` as partial edits and a final
-  ## message. A stop returns at once; the thread is reaped in the background.
+  ## message. The provider call runs on the executor's stream pool (its own
+  ## workers, never the ones per-message calls use). A stop returns at once;
+  ## the stream is drained in the background.
   ## `shown`, when given, turns true once a partial reached the outbox: a
   ## stream that failed before that can be retried without the user seeing
   ## two answers.
@@ -165,13 +169,9 @@ proc streamToOutbox*(factory:   StreamFactory;
     return err("streaming saturated: " & $gLiveStreams &
                " stream(s) still running")
   var events = initEventQueue[StreamEvent]("stream", StreamChannelDepth)
-  var handle: ThreadHandle[StreamJob]
-  try:
-    handle = spawnThread(runStreamJob,
-                         StreamJob(factory: factory, req: req, events: events))
-  except CatchableError as e:
-    events.dispose()
-    return err("stream thread: " & e.msg)
+  let running = runOffLoop(runStreamJob,
+                           StreamJob(factory: factory, req: req, events: events),
+                           pool = opStream)
   streamStarted()
 
   var accumulated = ""
@@ -189,7 +189,6 @@ proc streamToOutbox*(factory:   StreamFactory;
         if not ev.done:
           accumulated.add(ev.token)
           continue
-        joinAndFree(handle)
         events.dispose()
         streamReaped()
         joined = true
@@ -237,10 +236,26 @@ proc streamToOutbox*(factory:   StreamFactory;
             bridgeToken: bridgeToken,
           ))
 
+      ## The job pushes its final event before it returns, so a finished job
+      ## with an error and no final event never ran (pool full) or failed
+      ## outside the provider call: nothing more will come. Disposing the
+      ## queue here is safe because runOffLoop's future completes either
+      ## before the handoff to a worker, or only after the worker finished
+      ## the job and returned (it is never cancelled here), so no writer
+      ## remains.
+      if running.finished:
+        let outcome =
+          try: running.read()
+          except CatchableError as e: err(Result[bool, string], e.msg)
+        if outcome.isErr:
+          events.dispose()
+          streamReaped()
+          joined = true
+          return err("stream: " & outcome.error)
       await sleepAsync(milliseconds(StreamPollMs))
   finally:
     if not joined:
-      asyncSpawn reapStream(handle, events)
+      asyncSpawn reapStream(events)
 
 # ── Typing loop ───────────────────────────────────────────────────────────────
 

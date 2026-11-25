@@ -27,6 +27,10 @@ import ../infra/thread_handle
 
 const
   BlockingWorkerCount* = 4
+    ## Per-message calls (Backtrail, recall's embedding, channel polls).
+  StreamWorkerCount* = 8
+    ## Streamed replies, which hold a worker for their whole length: their
+    ## own pool, so they can never take the workers calls need.
   BlockingQueueDepth* = 128
   BlockingPollIntervalMs = 5
 
@@ -36,6 +40,10 @@ type
     ## `I` and `O` are plain data (`sharesNothing`), copied across.
 
   BlockingFn* = OffLoopFn[string, string]
+
+  OffLoopPool* = enum
+    opBlocking  ## short calls
+    opStream    ## streamed replies
 
   BlockingJobState[I, O] = object
     lock:      Lock
@@ -58,10 +66,12 @@ static:
     "BlockingJob must hold plain data only: it crosses to a worker thread"
 
 var
-  gBlockingQueue {.global.}: Channel[BlockingJob]
-  gBlockingWorkers {.global.}: array[BlockingWorkerCount, Thread[void]]
-  gBlockingPoolStarted = false
-  gBlockingPoolAttempted = false
+  gQueues {.global.}: array[OffLoopPool, Channel[BlockingJob]]
+  gBlockingWorkers {.global.}: array[BlockingWorkerCount, Thread[OffLoopPool]]
+  gStreamWorkers {.global.}: array[StreamWorkerCount, Thread[OffLoopPool]]
+  gPoolStarted: array[OffLoopPool, bool]
+  gPoolAttempted: array[OffLoopPool, bool]
+  gPoolWorkers: array[OffLoopPool, int]   ## workers that actually started
 
 proc releaseState[I, O](state: ptr BlockingJobState[I, O]) {.gcsafe.} =
   ## Drops one reference; the last owner drains, closes and frees.
@@ -110,43 +120,55 @@ proc runJob[I, O](p: pointer) {.nimcall, gcsafe, raises: [].} =
   release(state[].lock)
   releaseState(state)
 
-proc blockingWorker() {.thread.} =
+proc poolWorker(pool: OffLoopPool) {.thread.} =
   while true:
-    let job = gBlockingQueue.recv()
+    let job = gQueues[pool].recv()
     job.run(job.state)
 
-proc ensurePool(): Result[void, string] =
+proc ensurePool(pool: OffLoopPool): Result[void, string] =
   ## Loop thread only. A failed start is not retried, so nothing is queued
   ## where no worker will read it.
-  if gBlockingPoolStarted:
+  if gPoolStarted[pool]:
     return ok()
-  if gBlockingPoolAttempted:
-    return err("blocking executor: worker pool failed to start")
-  gBlockingPoolAttempted = true
+  if gPoolAttempted[pool]:
+    return err("blocking executor: " & $pool & " pool failed to start")
+  gPoolAttempted[pool] = true
   try:
-    gBlockingQueue.open(BlockingQueueDepth)
+    gQueues[pool].open(BlockingQueueDepth)
   except CatchableError as e:
     return err("blocking executor: cannot open queue: " & e.msg)
   var started = 0
   var firstError = ""
-  for i in 0 ..< BlockingWorkerCount:
+  let count = if pool == opStream: StreamWorkerCount else: BlockingWorkerCount
+  for i in 0 ..< count:
     try:
-      createThread(gBlockingWorkers[i], blockingWorker)
+      if pool == opStream: createThread(gStreamWorkers[i], poolWorker, pool)
+      else: createThread(gBlockingWorkers[i], poolWorker, pool)
       inc started
     except CatchableError as e:
       if firstError.len == 0:
         firstError = e.msg
   if started == 0:
     return err("blocking executor: no workers started: " & firstError)
-  gBlockingPoolStarted = true
+  gPoolWorkers[pool] = started
+  gPoolStarted[pool] = true
   ok()
 
-proc awaitOffLoop[I, O](fn: OffLoopFn[I, O]; input: I): Future[Result[O, string]] {.async.} =
+proc poolCapacity*(pool: OffLoopPool): int =
+  ## How many jobs the pool runs at once: the workers that started (a
+  ## partial start gives fewer), or the configured size before first use.
+  if gPoolStarted[pool]: gPoolWorkers[pool]
+  elif gPoolAttempted[pool]: 0
+  elif pool == opStream: StreamWorkerCount
+  else: BlockingWorkerCount
+
+proc awaitOffLoop[I, O](fn: OffLoopFn[I, O]; input: I;
+                        pool: OffLoopPool): Future[Result[O, string]] {.async.} =
   if fn == nil:
     return err(Result[O, string], "blocking executor: no function")
-  let pool = ensurePool()
-  if pool.isErr:
-    return err(Result[O, string], pool.error)
+  let started = ensurePool(pool)
+  if started.isErr:
+    return err(Result[O, string], started.error)
   let state = cast[ptr BlockingJobState[I, O]](allocShared0(sizeof(BlockingJobState[I, O])))
   if state == nil:
     return err(Result[O, string], "blocking executor: out of memory")
@@ -162,7 +184,7 @@ proc awaitOffLoop[I, O](fn: OffLoopFn[I, O]; input: I): Future[Result[O, string]
   state[].inputs.send(input)
   state[].refs = 2
   let job = BlockingJob(run: runJob[I, O], state: state)
-  if not gBlockingQueue.trySend(job):
+  if not gQueues[pool].trySend(job):
     state[].refs = 1
     releaseState(state)
     return err(Result[O, string],
@@ -193,7 +215,8 @@ proc awaitOffLoop[I, O](fn: OffLoopFn[I, O]; input: I): Future[Result[O, string]
           discard leftover.msg
     releaseState(state)
 
-proc runOffLoop*[I, O](fn: OffLoopFn[I, O]; input: I): Future[Result[O, string]] =
+proc runOffLoop*[I, O](fn: OffLoopFn[I, O]; input: I;
+                       pool = opBlocking): Future[Result[O, string]] =
   ## Runs `fn(input)` on a worker and awaits the result. Cancelling the
   ## future marks the job cancelled and returns at once. `I` and `O` must
   ## hold no `ref` and no closure: refused at compile time.
@@ -201,4 +224,4 @@ proc runOffLoop*[I, O](fn: OffLoopFn[I, O]; input: I): Future[Result[O, string]]
     {.error: "runOffLoop: the input type holds a ref or a closure".}
   when not sharesNothing(O):
     {.error: "runOffLoop: the result type holds a ref or a closure".}
-  awaitOffLoop(fn, input)
+  awaitOffLoop(fn, input, pool)

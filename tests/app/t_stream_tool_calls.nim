@@ -7,6 +7,7 @@ import donkey/app/native_tools
 import donkey/app/session_state
 import donkey/app/session_manager
 import donkey/app/tool_loop_runtime
+import donkey/app/blocking_executor
 import donkey/core/log
 import donkey/core/pipeops
 import donkey/core/types
@@ -53,6 +54,19 @@ proc threadRecordingFactory(credential: string): StreamFn {.nimcall, gcsafe.} =
       ): Result[CompletionResponse, string] {.gcsafe.} =
     onToken("oi")
     ok(CompletionResponse(text: "oi"))
+
+var gStreamThreads: array[64, Atomic[int]]
+var gStreamThreadCount: Atomic[int]
+
+proc threadNotingFactory(credential: string): StreamFn {.nimcall, gcsafe.} =
+  ## Notes the thread each stream runs on.
+  let slot = gStreamThreadCount.fetchAdd(1)
+  if slot < gStreamThreads.len:
+    gStreamThreads[slot].store(getThreadId())
+  proc(req: CompletionRequest; onToken: proc(tok: string) {.gcsafe.}
+      ): Result[CompletionResponse, string] {.gcsafe.} =
+    onToken("ok")
+    ok(CompletionResponse(text: "ok"))
 
 proc slowFactory(credential: string): StreamFn {.nimcall, gcsafe.} =
   proc(req: CompletionRequest; onToken: proc(tok: string) {.gcsafe.}
@@ -156,6 +170,18 @@ proc runTests*() =
         check msg.replyKind != rkTurnError
 
   suite "streamToOutbox — tool calls":
+
+    test "streams run on a fixed pool, not a thread per reply":
+      gStreamThreadCount.store(0)
+      for i in 0 ..< 20:
+        let outbox = newAsyncQueue[OutboundMessage]()
+        check (waitFor streamToOutbox(StreamFactory(build: threadNotingFactory),
+          CompletionRequest(), outbox, UserId("u1"), ckTelegram, "", "sid" & $i)).isOk
+      var ids: seq[int]
+      for i in 0 ..< 20:
+        let id = gStreamThreads[i].load()
+        if id notin ids: ids.add id
+      check ids.len <= StreamWorkerCount
 
     test "returns tool calls and does not emit a fake final text":
       let build: StreamBuilder = proc(credential: string): StreamFn {.nimcall, gcsafe.} =

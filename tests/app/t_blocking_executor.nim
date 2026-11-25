@@ -80,6 +80,31 @@ proc runTests*() =
     test "a ref can not cross to a worker":
       check not compiles(runOffLoop(givesRef, "x"))
 
+    test "streams have their own workers: a busy stream pool leaves calls alone":
+      ## Long streams must never take the workers per-message calls
+      ## (Backtrail, recall) need, and the other way round.
+      var streams: seq[Future[Result[string, string]]]
+      for i in 0 ..< StreamWorkerCount:
+        streams.add(runOffLoop(slow, "s" & $i, pool = opStream))
+      let started = Moment.now()
+      check (waitFor runOffLoop(upper, "call")).get == "CALL"
+      check (Moment.now() - started).milliseconds < 200
+      waitFor allFutures(streams)
+
+    test "a pool's capacity is the workers that started":
+      ## Both pools have run jobs above, so they are started.
+      check poolCapacity(opBlocking) == BlockingWorkerCount
+      check poolCapacity(opStream) == StreamWorkerCount
+
+    test "and a busy call pool leaves streams alone":
+      var calls: seq[Future[Result[string, string]]]
+      for i in 0 ..< BlockingWorkerCount:
+        calls.add(runOffLoop(slow, "c" & $i))
+      let started = Moment.now()
+      check (waitFor runOffLoop(upper, "stream", pool = opStream)).get == "STREAM"
+      check (Moment.now() - started).milliseconds < 200
+      waitFor allFutures(calls)
+
     test "a cancelled job does not crash the worker or leak into the next one":
       let f = runOffLoop(slow, "gone")
       waitFor sleepAsync(chronos.milliseconds(20))
