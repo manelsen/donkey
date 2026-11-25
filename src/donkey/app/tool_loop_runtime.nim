@@ -32,6 +32,7 @@ import ../app/provider_executor
 import ../infra/event_queue
 import ../infra/thread_owner
 import ./metrics
+import ../domain/turn_journal_pure
 
 export tool_loop
 
@@ -375,6 +376,11 @@ proc executeToolCallUntimed(globalOutbox: AsyncQueue[OutboundMessage];
     toolName: tc.name,
     summary:  tc.inputJson[0 ..< min(tc.inputJson.len, 80)],
   ))
+
+  ## Write-ahead: the turn journal learns of an effect before it happens, so
+  ## a crash in between never leads to running it twice.
+  if nativeCtx.beforeEffect != nil and isEffectfulTool(tc.name):
+    nativeCtx.beforeEffect(tc.name)
 
   let nr = await executeNativeTool(tc, nativeCtx, state, history)
   if nr.handled:

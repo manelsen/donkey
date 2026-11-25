@@ -28,6 +28,8 @@ import donkey/app/provider_executor
 import donkey/app/session_manager
 import donkey/app/session_state
 import donkey/ports/tool
+import donkey/ports/turn_journal
+import donkey/core/types
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -119,6 +121,49 @@ proc longText(prefix: string; targetLen: int): string =
 
 proc fastDebounce(): Environment =
   environmentOf({"DONKEY_DEBOUNCE_MIN_MS": "10", "DONKEY_DEBOUNCE_SHORT_EXT_MS": "10"})
+
+type JournalSpy = ref object
+  events: seq[string]
+  records: seq[TurnRecord]
+
+proc spyJournal(spy: JournalSpy): TurnJournalPort =
+  TurnJournalPort(
+    begin: proc(r: TurnRecord): Result[void, string] {.gcsafe, raises: [].} =
+      spy.records.add r
+      spy.events.add "begin " & r.id
+      ok(),
+    markEffect: proc(id, toolName: string): Result[void, string] {.gcsafe, raises: [].} =
+      spy.events.add "effect " & toolName
+      ok(),
+    finish: proc(id: string): Result[void, string] {.gcsafe, raises: [].} =
+      spy.events.add "finish " & id
+      ok(),
+    pending: proc(): Result[seq[TurnRecord], string] {.gcsafe, raises: [].} =
+      ok(newSeq[TurnRecord]()))
+
+proc journalTurn(dir, userId: string; completeFn: CompleteFn;
+                 msg: AgentMessage; spy: JournalSpy;
+                 tools: seq[ToolDescription] = @[]): Future[void] {.async.} =
+  ## One turn through a real orchestrator with the spy as its journal.
+  let userDir = dir / userId
+  createDir(userDir)
+  writeFile(userDir / "USER.md", "# Test")
+  let mem = MdFileAdapter(paddocksDir: dir)
+  let inbox = newAsyncQueue[AgentMessage]()
+  let outbox = newAsyncQueue[OutboundMessage]()
+  var session = makeSessionEntry()
+  session.inbox = inbox
+  let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), completeFn,
+    newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], tools, userDir,
+    newSessionState(), env = fastDebounce(), fs = newFsAdapter(),
+    journal = spyJournal(spy))
+  await inbox.put(msg)
+  if msg.taskKind == tkUserMsg:
+    discard await outbox.get()
+  else:
+    await sleepAsync(chronos.milliseconds(200))
+  await inbox.put(newCancelMsg())
+  await orchFut
 
 proc runTests*() =
   # The orchestrator uses the production adaptive debounce window (1.2s plus
@@ -1001,6 +1046,70 @@ proc runTests*() =
       check j["outcome"].getStr == "ok"
       check j["tokens"]["input"].getInt == 7
       check "privada" notin lines and "secreta" notin lines
+
+    test "a turn is journalled from its start to its end":
+      let tmpDir = getTempDir() / "donkey_test_journal_turn"
+      removeDir(tmpDir)
+      defer: removeDir(tmpDir)
+      let spy = JournalSpy()
+      waitFor journalTurn(tmpDir, "u-j1", stubComplete,
+        newTaskMsg("req-j1", tkUserMsg, "u-j1", "resume o relatório", ckTelegram, "10:20"), spy)
+      check spy.events.len == 2
+      check spy.events[0].startsWith("begin ")
+      check spy.events[1] == "finish " & spy.records[0].id
+      let r = spy.records[0]
+      check r.userId == "u-j1" and r.channel == ckTelegram and r.replyTo == "10:20"
+      check r.preview == "resume o relatório"
+      check r.payload == "resume o relatório"
+      check r.resumes == 0 and r.effects.len == 0
+
+    test "a tool with an effect is journalled before it runs; a reading tool is not":
+      let tmpDir = getTempDir() / "donkey_test_journal_effect"
+      removeDir(tmpDir)
+      defer: removeDir(tmpDir)
+      proc complete(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
+        if req.messages.len > 0 and req.messages[^1].role == "user":
+          return ok(CompletionResponse(toolCalls: @[
+            ToolCallRequest(id: "c1", name: "calc", inputJson: """{"expression":"1+1"}"""),
+            ToolCallRequest(id: "c2", name: "send_email", inputJson: "{}")]))
+        ok(CompletionResponse(text: "feito"))
+      let spy = JournalSpy()
+      waitFor journalTurn(tmpDir, "u-j2", complete,
+        newTaskMsg("req-j2", tkUserMsg, "u-j2", "manda o email"), spy,
+        tools = @[ToolDescription(name: "send_email")])
+      check spy.events.len == 3
+      check spy.events[1] == "effect send_email"
+      check spy.events[2].startsWith("finish ")
+
+    test "a turn the provider failed still ends in the journal":
+      let tmpDir = getTempDir() / "donkey_test_journal_failed"
+      removeDir(tmpDir)
+      defer: removeDir(tmpDir)
+      let spy = JournalSpy()
+      waitFor journalTurn(tmpDir, "u-j3", stubProvider500,
+        newTaskMsg("req-j3", tkUserMsg, "u-j3", "oi"), spy)
+      check spy.events.len == 2
+      check spy.events[1].startsWith("finish ")
+
+    test "a scheduled turn is not journalled: it fires again":
+      let tmpDir = getTempDir() / "donkey_test_journal_schedule"
+      removeDir(tmpDir)
+      defer: removeDir(tmpDir)
+      let spy = JournalSpy()
+      waitFor journalTurn(tmpDir, "u-j4", stubComplete,
+        newTaskMsg("req-j4", tkSchedule, "u-j4", "lembrete"), spy)
+      check spy.events.len == 0
+
+    test "a replayed turn keeps its journal id and counts the replay":
+      let tmpDir = getTempDir() / "donkey_test_journal_resumed"
+      removeDir(tmpDir)
+      defer: removeDir(tmpDir)
+      let spy = JournalSpy()
+      var msg = newTaskMsg("req-j5", tkUserMsg, "u-j5", "de novo")
+      msg.resumeOf = "1800-abc"
+      waitFor journalTurn(tmpDir, "u-j5", stubComplete, msg, spy)
+      check spy.events == @["begin 1800-abc", "finish 1800-abc"]
+      check spy.records[0].resumes == 1
 
     test "provider errors are explained without leaking raw payloads":
       let tmpDir = getTempDir() / "donkey_test_provider_error_explain"

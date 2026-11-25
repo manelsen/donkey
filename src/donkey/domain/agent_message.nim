@@ -42,6 +42,8 @@ type
     bridgeToken*: uint64   ## API turn generation copied from the inbound message
     route*:    string      ## recall requests: Backtrail's route for the
                            ## message ("" when unknown); sets recall's policy
+    resumeOf*: string      ## a turn replayed after a crash: its journal id
+                           ## (domain/turn_journal_pure); "" otherwise
 
 func newTaskMsg*(id: string; kind: TaskKind; userId, payload: string;
                  channel = ckTelegram; replyTo = ""): AgentMessage =

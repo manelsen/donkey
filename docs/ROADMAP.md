@@ -29,7 +29,7 @@
 
 | # | Frente | Decisão | Domínio (ganho estimado) | Épico |
 |---:|---|---|---|---|
-| 1 | Retomada de turno após queda | Retomar do início só se nenhuma ferramenta com efeito rodou; senão perguntar ao usuário | Durabilidade (~1 ponto) | E1 |
+| 1 | Retomada de turno após queda | Retomar do início só se nenhuma ferramenta com efeito rodou; senão perguntar ao usuário. **Feito** (journal em `state/turns/`) | Durabilidade (~1 ponto) | E1 |
 | 2 | Canal Microsoft Teams | Canal novo, antes do resto (há usuária em Teams) | Canais (~0,5) | E2 |
 | 3 | Multi-bot | Vários bots por canal numa instância; só a fachada (token, nome, persona, modelo); usuários, memória e sessões são os da instância. Telegram, Discord e WhatsApp, e Teams depois de E2 | Multiagente (~1) | E3 |
 | 4 | Kanban mínimo | Quadro de tarefas sem UI: ferramenta, comando e atribuição a agentes nomeados | Ferramentas (~1,5–2) | E4 |
