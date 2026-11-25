@@ -50,7 +50,8 @@ Ganho somado estimado: ~6 pontos, para ~84%.
 
 ## 4. Pendências fora do código
 
-- Trocar a chave da OpenRouter que foi colada numa conversa.
+- Revogar a chave da OpenRouter que foi colada numa conversa (criar outra) e
+  conferir no painel o uso desde então.
 - Ativar o Backtrail: `donkey ctl secret set PERPLEXITY_API_KEY` e reiniciar;
   confirmar por escrito o termo de não-treinamento da Perplexity.
 - Testar o streaming do Bedrock com credenciais reais da AWS.

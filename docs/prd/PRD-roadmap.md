@@ -26,8 +26,11 @@ novo e mínimo.
   *Aceite:* um turno normal deixa início e fim; um com `fs_write` deixa também
   o efeito; o arquivo é 0600; a compactação descarta turnos encerrados.
 - **E1.2 Ligado ao orquestrador.** O turno grava início antes da primeira
-  chamada ao provider, efeito ao executar a primeira ferramenta com efeito e
-  fim depois da entrega final (ou do erro explicado).
+  chamada ao provider, efeito **antes** de executar a primeira ferramenta com
+  efeito (write-ahead: uma queda entre o registro e a execução só faz o turno
+  ser tratado como tendo efeito, nunca o repete) e fim depois da entrega final
+  (ou do erro explicado). Basta o primeiro efeito: qualquer efeito já impede a
+  retomada automática.
   *Aceite:* teste no orquestrador para cada caminho (resposta, erro de
   provider, parada pelo usuário, que conta como fim).
 - **E1.3 Retomada na subida.** Na inicialização, para cada turno sem fim: sem
@@ -161,7 +164,9 @@ por servidor.
 - **E5.2 Aprovação.** O pedido vira um cartão no canal do usuário: "o servidor
   ‹nome› quer usar o modelo: ‹resumo do pedido›", com **aprovar uma vez**,
   **sempre para este servidor** e **negar**. "Sempre" fica registrado no
-  `tools.toml` do servidor e pode ser revogado por comando e pela TUI.
+  `tools.toml` do servidor, ligado à identidade dele (o comando e argumentos,
+  ou a URL), não só ao nome: se a identidade muda, a aprovação cai. Pode ser
+  revogado por comando e pela TUI.
   Sem resposta no prazo: negado.
 - **E5.3 Limites e registro.** Teto de tokens por pedido e por dia por
   servidor; cada pedido aparece no traço do turno e nas métricas.
