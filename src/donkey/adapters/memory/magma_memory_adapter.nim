@@ -557,13 +557,25 @@ when defined(withPostgres) or defined(withSqlite):
       for rank, node in temporalNodes:
         if node.nodeType == NtMemory:
           addSignal(node, temporal = rrfScoreWeighted(rank, policy.temporalWeight))
+      ## The memories next to the strongest hits in time: each takes the
+      ## best score it gets (rrf.neighborScores), not one per hit, so filler
+      ## next to many weak hits cannot outscore what is next to the best.
+      var neighborsOfHits: seq[seq[string]]
+      var neighborNodes: Table[string, MagmaNode]
       for hit in semanticHits:
+        if neighborsOfHits.len >= NeighborSourceHits:
+          break
         if hit.node.nodeType != NtMemory:
           continue
-        let temporalNeighbors = a.graph.traverseNeighbors(
-          hit.node.id, edgeTypes = @[EdgeTemporal], maxDepth = 2)
-        for rank, neighbor in temporalNeighbors:
-          addSignal(neighbor, neighbor = rrfScoreWeighted(rank, policy.neighborWeight))
+        var ids: seq[string]
+        for neighbor in a.graph.traverseNeighbors(
+            hit.node.id, edgeTypes = @[EdgeTemporal], maxDepth = 2):
+          ids.add neighbor.id
+          neighborNodes[neighbor.id] = neighbor
+        neighborsOfHits.add ids
+      for id, score in neighborScores(neighborsOfHits, policy.neighborWeight):
+        if id in neighborNodes:   ## filled in the same loop as the ids
+          addSignal(neighborNodes[id], neighbor = score)
 
     if rankedById.len == 0:
       for m in recentNodes:

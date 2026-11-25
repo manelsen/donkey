@@ -1,6 +1,6 @@
 ## Tests for Reciprocal Rank Fusion
 
-import std/[sequtils, algorithm]
+import std/[sequtils, algorithm, tables]
 import unittest2
 import ../../../src/donkey/domain/memory/rrf
 
@@ -220,5 +220,36 @@ proc runTests*() =
         # docC fourth (only in bm25 at rank 2)
         check docCPos == 3
 
+proc runNeighborTests*() =
+  suite "neighbour scores on time questions":
+    ## Recall used to add every semantic hit's neighbours, up to 64 hits, so a
+    ## filler memory next to many weak hits outscored what sits next to the
+    ## best one.
+
+    test "a memory next to many hits takes its best score, not their sum":
+      var hits: seq[seq[string]]
+      for i in 0 ..< 10:
+        hits.add @["filler"]
+      let scores = neighborScores(hits, 0.10)
+      check scores["filler"] <= rrfScoreWeighted(0, 0.10) + 1e-12
+
+    test "only the strongest hits lend their neighbours":
+      var hits: seq[seq[string]]
+      for i in 0 ..< NeighborSourceHits + 3:
+        hits.add @["n" & $i]
+      let scores = neighborScores(hits, 0.10)
+      check "n0" in scores
+      check ("n" & $(NeighborSourceHits - 1)) in scores
+      check ("n" & $NeighborSourceHits) notin scores
+
+    test "a neighbour of the top hit outranks one of a weaker hit":
+      let scores = neighborScores(@[@["near-best"], @["x"], @["y"], @["near-fifth"]], 0.10)
+      check scores["near-best"] > scores["near-fifth"]
+
+    test "nearer neighbours of the same hit score higher":
+      let scores = neighborScores(@[@["first", "second"]], 0.10)
+      check scores["first"] > scores["second"]
+
 when isMainModule:
   runTests()
+  runNeighborTests()
