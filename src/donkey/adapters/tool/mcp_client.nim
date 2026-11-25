@@ -1,17 +1,20 @@
-## McpClientAdapter — ToolPort for MCP servers and Deno/Clawhub skills.
+## mcp_client — an MCP server over stdio, on the event loop (PRD-roadmap E5.0).
 ##
-## Spawns a subprocess and communicates via stdin/stdout JSON-RPC 2.0.
-## Both MCP servers and Deno skills are treated identically.
+## The server is a subprocess speaking JSON-RPC 2.0, one message per line on
+## its stdin and stdout; its stderr is left to the daemon's. Everything is
+## asynchronous (Chronos asyncproc): a slow tool no longer stops every
+## channel, and a request the server makes in the middle of a call (sampling)
+## can wait for the person without blocking anything.
 ##
-## Protocol:
-##   1. Spawn process (command + args)
-##   2. Send "initialize" handshake
-##   3. "tools/list" → seq[ToolSchema]
-##   4. "tools/call" → ToolResult
-##
-## Timeout: 30 seconds for each round-trip.
+## While waiting for its own response the client answers the server's
+## requests (through `onServerRequest`, or with "method not found"), skips
+## notifications and any stale response. One call at a time per server (the
+## client is shared by every session), each under a deadline.
 
-import std/[json, osproc, streams, strutils]
+import std/[json, strutils]
+import chronos
+import chronos/asyncproc
+import chronos/asyncsync
 import ../../ports/tool
 import ../../core/pipeops
 import ../../core/app_meta
@@ -45,127 +48,189 @@ func parseToolResult*(callId: string; j: JsonNode): ToolResult =
     isError: j.getOrDefault("isError").getBool(false),
   )
 
-# ── Adapter type ──────────────────────────────────────────────────────────────
+# ── The client ────────────────────────────────────────────────────────────────
 
 type
-  McpClientAdapter* = object
-    command*:     string
-    args*:        seq[string]
-    process:      Process
-    initialized*: bool
-    nextId:       int
+  ServerRequestHandler* = proc(meth: string; params: JsonNode):
+      Future[Result[JsonNode, string]] {.async: (raises: []), gcsafe.}
+    ## A request the server makes (sampling/createMessage): the JSON result,
+    ## or an error message sent back to the server.
 
-proc listTools*(c: var McpClientAdapter): Result[seq[ToolSchema], string] {.gcsafe.}
-proc invoke*(c: var McpClientAdapter; call: ToolCall): Result[ToolResult, string] {.gcsafe.}
-proc close*(c: var McpClientAdapter) {.gcsafe.}
+  McpClient* = ref object
+    command*:   string
+    args*:      seq[string]
+    timeoutMs*: int
+    onServerRequest*: ServerRequestHandler
+    offeredCapabilities*: JsonNode   ## what `initialize` told the server
+    process:    AsyncProcessRef
+    nextId:     int
+    lock:       AsyncLock
+    initialized: bool
+    schemas:    seq[ToolSchema]      ## from the last tools/list
 
-proc toRuntimePort*(c: McpClientAdapter): ToolRuntimePort =
-  var client = c
-  ToolRuntimePort(
-    listTools: proc(): Result[seq[ToolSchema], string] {.gcsafe.} = client.listTools(),
-    invoke:    proc(call: ToolCall): Result[ToolResult, string] {.gcsafe.} = client.invoke(call),
-    close:     proc() {.gcsafe.} = client.close(),
-  )
+const
+  DefaultMcpTimeoutMs* = 120_000
+  MaxMcpLineBytes = 16 * 1024 * 1024
 
-# ── Constructor ───────────────────────────────────────────────────────────────
+proc newMcpClient*(command: string; args: seq[string] = @[];
+                   timeoutMs = DefaultMcpTimeoutMs;
+                   onServerRequest: ServerRequestHandler = nil): McpClient =
+  McpClient(command: command, args: args, timeoutMs: timeoutMs,
+            onServerRequest: onServerRequest, nextId: 1, lock: newAsyncLock(),
+            offeredCapabilities: newJObject())
 
-proc newMcpClient*(command: string; args: seq[string] = @[]): McpClientAdapter =
-  McpClientAdapter(command: command, args: args, initialized: false, nextId: 1)
+func responseLine(id: JsonNode; res: Result[JsonNode, string]): string =
+  if res.isOk:
+    $(%* {"jsonrpc": "2.0", "id": id, "result": res.get})
+  else:
+    $(%* {"jsonrpc": "2.0", "id": id,
+          "error": {"code": -32601, "message": res.error}})
 
-# ── Internal I/O ──────────────────────────────────────────────────────────────
-
-proc ensureStarted(c: var McpClientAdapter): Result[void, string] =
-  if c.process != nil and c.process.running():
+proc ensureStarted(c: McpClient): Future[Result[void, string]] {.async: (raises: []).} =
+  if not c.process.isNil:
+    let alive = c.process.running()
+    if alive.isOk and alive.get:
+      return ok()
+  try:
+    c.process = await startProcess(c.command, arguments = c.args,
+      options = {AsyncProcessOption.UsePath},
+      stdinHandle = AsyncProcess.Pipe, stdoutHandle = AsyncProcess.Pipe)
+    c.initialized = false
     return ok()
-  try:
-    c.process = startProcess(
-      c.command,
-      args    = c.args,
-      options = {poUsePath, poStdErrToStdOut}
-    )
-    ok()
+  except CancelledError:
+    return err("MCP start cancelled")
   except CatchableError as e:
-    err("Failed to start MCP process '" & c.command & "': " & e.msg)
+    return err("Failed to start MCP process '" & c.command & "': " & e.msg)
 
-proc sendLine(c: var McpClientAdapter; line: string): Result[void, string] =
+proc sendLine(c: McpClient; line: string): Future[Result[void, string]] {.async: (raises: []).} =
   try:
-    let inp = c.process.inputStream()
-    inp.writeLine(line)
-    inp.flush()
-    ok()
+    await c.process.stdinStream.write(line & "\n")
+    return ok()
+  except CancelledError:
+    return err("MCP write cancelled")
   except CatchableError as e:
-    err("Write to MCP stdin failed: " & e.msg)
+    return err("Write to MCP stdin failed: " & e.msg)
 
-proc readLine(c: var McpClientAdapter): Result[string, string] =
-  try:
-    let outp = c.process.outputStream()
-    ok(outp.readLine())
-  except CatchableError as e:
-    err("Read from MCP stdout failed: " & e.msg)
+proc exchange(c: McpClient; id: int; line: string): Future[Result[JsonNode, string]]
+    {.async: (raises: [CancelledError]).} =
+  ## Sends one request and reads until its response, serving the server in
+  ## between.
+  ? await c.sendLine(line)
+  while true:
+    let text =
+      try: await c.process.stdoutStream.readLine(limit = MaxMcpLineBytes, sep = "\n")
+      except CancelledError as e: raise e
+      except CatchableError as e: return err("Read from MCP stdout failed: " & e.msg)
+    if text.len == 0:
+      let alive = c.process.running()
+      if alive.isErr or not alive.get:
+        return err("MCP process '" & c.command & "' exited")
+      continue
+    let msg =
+      try: parseJson(text)
+      except CatchableError: continue   ## not JSON-RPC: skip it
+    if msg.kind != JObject:
+      continue
+    if msg.hasKey("method"):
+      if msg.hasKey("id"):
+        ## The server asks us something (sampling) before it answers.
+        let answer =
+          if c.onServerRequest.isNil:
+            Result[JsonNode, string].err("Method not found: " & msg{"method"}.getStr)
+          else:
+            await c.onServerRequest(msg{"method"}.getStr, msg{"params"})
+        ? await c.sendLine(responseLine(msg{"id"}, answer))
+      continue   ## a notification, or a request now answered
+    if msg{"id"}.getInt(-1) != id:
+      continue   ## a response to a request that timed out earlier
+    if msg.hasKey("error"):
+      let e = msg{"error"}
+      return err("MCP error: " & e{"message"}.getStr($e))
+    if not msg.hasKey("result"):
+      return err("MCP response without a result")
+    return ok(msg{"result"})
 
-proc rpc(c: var McpClientAdapter;
-         meth:   string;
-         params: JsonNode): Result[JsonNode, string] =
-  let id  = c.nextId
+proc rpcUnlocked(c: McpClient; meth: string; params: JsonNode): Future[Result[JsonNode, string]]
+    {.async: (raises: [CancelledError]).} =
+  let id = c.nextId
   inc c.nextId
-  let req = buildRequest(id, meth, params)
-  ? c.sendLine(req)
-  let line = ? c.readLine()
-  try:
-    let resp = parseJson(line)
-    if resp.hasKey("error"):
-      let errNode = resp["error"]
-      let msg = errNode.getOrDefault("message").getStr($errNode)
-      return err("MCP error from '" & meth & "': " & msg)
-    if not resp.hasKey("result"):
-      return err("MCP response missing 'result' for method '" & meth & "'")
-    ok(resp["result"])
-  except CatchableError as e:
-    err("Failed to parse MCP response: " & e.msg)
+  let pending = c.exchange(id, buildRequest(id, meth, params))
+  let inTime =
+    try: await pending.withTimeout(chronos.milliseconds(c.timeoutMs))
+    except CancelledError as e: raise e
+  if not inTime:
+    await pending.cancelAndWait()
+    return err("MCP '" & meth & "' timed out after " & $c.timeoutMs & " ms")
+  return await pending
 
-proc initialize(c: var McpClientAdapter): Result[void, string] =
+proc initialize(c: McpClient): Future[Result[void, string]] {.async: (raises: [CancelledError]).} =
   if c.initialized:
     return ok()
-  ? c.ensureStarted()
-  let params = %* {
+  ? await c.ensureStarted()
+  c.offeredCapabilities = newJObject()
+  if not c.onServerRequest.isNil:
+    c.offeredCapabilities["sampling"] = newJObject()
+  discard ? await c.rpcUnlocked("initialize", %* {
     "protocolVersion": "2024-11-05",
-    "capabilities": {},
-    "clientInfo": {"name": AppSlug, "version": AppVersion}
-  }
-  let _ = ? c.rpc("initialize", params)
-  # Send initialized notification (no response expected)
-  let notif = $(%* {"jsonrpc": "2.0", "method": "notifications/initialized", "params": %* {}})
-  ? c.sendLine(notif)
+    "capabilities": c.offeredCapabilities,
+    "clientInfo": {"name": AppSlug, "version": AppVersion}})
+  ? await c.sendLine($(%* {"jsonrpc": "2.0", "method": "notifications/initialized",
+                            "params": {}}))
   c.initialized = true
-  ok()
+  return ok()
 
-# ── ToolPort conformance ──────────────────────────────────────────────────────
+proc rpc(c: McpClient; meth: string; params: JsonNode): Future[Result[JsonNode, string]]
+    {.async: (raises: []).} =
+  ## One exchange at a time per server.
+  try:
+    await c.lock.acquire()
+  except CancelledError:
+    return err("MCP call cancelled")
+  try:
+    ? await c.initialize()
+    return await c.rpcUnlocked(meth, params)
+  except CancelledError:
+    return err("MCP call cancelled")
+  finally:
+    try: c.lock.release()
+    except AsyncLockError: discard
 
-proc listTools*(c: var McpClientAdapter): Result[seq[ToolSchema], string] =
-  ? c.initialize()
-  let resultNode = ? c.rpc("tools/list", %* {})
-  let toolsNode = resultNode.getOrDefault("tools")
-  if toolsNode == nil or toolsNode.kind != JArray:
+proc listToolsAsync*(c: McpClient): Future[Result[seq[ToolSchema], string]] {.async: (raises: []).} =
+  let res = ? await c.rpc("tools/list", %* {})
+  let tools = res{"tools"}
+  if tools.isNil or tools.kind != JArray:
     return err("tools/list response missing 'tools' array")
   var schemas: seq[ToolSchema]
-  for item in toolsNode:
-    schemas.add(parseToolSchema(item))
-  ok(schemas)
+  for item in tools:
+    if item.kind == JObject and item{"name"}.getStr.len > 0:
+      schemas.add ToolSchema(name: item{"name"}.getStr,
+                             description: item{"description"}.getStr,
+                             inputSchema: item{"inputSchema"})
+  c.schemas = schemas
+  return ok(schemas)
 
-proc invoke*(c: var McpClientAdapter; call: ToolCall): Result[ToolResult, string] =
-  ? c.initialize()
-  let params = %* {
-    "name":      call.name,
-    "arguments": call.input
-  }
-  let resultNode = ? c.rpc("tools/call", params)
-  ok(parseToolResult(call.id, resultNode))
+proc invokeAsync*(c: McpClient; call: ToolCall): Future[Result[ToolResult, string]] {.async: (raises: []).} =
+  let res = ? await c.rpc("tools/call", %* {"name": call.name, "arguments": call.input})
+  try:
+    return ok(parseToolResult(call.id, res))
+  except CatchableError as e:
+    return err("MCP tools/call result: " & e.msg)
 
-proc close*(c: var McpClientAdapter) =
-  ## Terminates the subprocess if running.
-  if c.process != nil:
-    c.process.terminate()
-    discard c.process.waitForExit()
-    c.process.close()
-    c.process = nil
+proc closeAsync*(c: McpClient) {.async: (raises: []).} =
+  if c.process.isNil:
+    return
+  discard c.process.terminate()
+  try: discard await c.process.waitForExit(chronos.seconds(2))
+  except CatchableError: discard
+  await c.process.closeWait()
+  c.process = nil
   c.initialized = false
+
+proc toRuntimePort*(c: McpClient): ToolRuntimePort =
+  ## Calls go through `invokeAsync`, which the ToolAgent awaits without
+  ## blocking the loop; `listTools` returns what the last listing found.
+  ToolRuntimePort(
+    listTools: proc(): Result[seq[ToolSchema], string] {.gcsafe.} = ok(c.schemas),
+    invokeAsync: proc(call: ToolCall): Future[Result[ToolResult, string]]
+        {.gcsafe, raises: [CatchableError].} = c.invokeAsync(call),
+    close: proc() {.gcsafe.} = asyncSpawn c.closeAsync())

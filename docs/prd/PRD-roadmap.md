@@ -176,7 +176,19 @@ não funcionam com o Donkey.
 **Decisão.** Cada pedido pede aprovação do usuário; a aprovação pode ser fixada
 por servidor.
 
+**Achado (25/11/2026).** As chamadas MCP são síncronas e rodam no laço do
+daemon: enquanto um servidor MCP responde, todos os canais param. O sampling
+com aprovação travaria (o servidor pede a amostragem no meio de uma chamada,
+e a aprovação da pessoa precisa do laço). Daí a E5.0.
+
 **Histórias**
+- **E5.0 Cliente MCP stdio assíncrono.** O processo do servidor pelo
+  `asyncproc` do Chronos; a chamada vira `invokeAsync` (o ToolAgent já a
+  aguarda sem bloquear), um lock por cliente (ele é compartilhado entre
+  sessões), prazo por chamada, e o laço de RPC que responde a pedidos do
+  servidor e ignora notificações enquanto espera a própria resposta. A
+  lista de ferramentas é pedida com `await` na subida. O cliente HTTP fica
+  como está nesta etapa; o sampling começa pelo stdio.
 - **E5.1 Protocolo.** O cliente MCP (stdio e Streamable HTTP) anuncia a
   capacidade `sampling` e atende o pedido do servidor: mensagens, preferências
   de modelo, `maxTokens`; a chamada vai pela rota do usuário, sem ferramentas.
