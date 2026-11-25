@@ -514,6 +514,7 @@ proc handleDiscordEvent*(sm: var SessionManager;
       mediaUrl:  event.attachmentUrl,
       mediaFileName: event.attachmentName,
       mediaMimeType: event.attachmentMime,
+      quotedText: event.referencedContent,
     )
     if event.extraAttachments.len > 0:
       ## One attachment per turn is downloaded; say which ones were not.

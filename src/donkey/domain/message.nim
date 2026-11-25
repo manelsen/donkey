@@ -70,6 +70,7 @@ type
     chatId*:     string       ## source chat id (group id in groups)
     channel*:    ChannelKind
     bridgeToken*: uint64      ## API turn generation; 0 for channel traffic
+    quotedText*: string       ## the message this one replies to, when known
 
   OutboundMessage* = object
     userId*:    UserId

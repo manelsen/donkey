@@ -211,6 +211,7 @@ g2	tests/domain/channels/t_signal_pure.nim
 g2	tests/domain/channels/t_slack_pure.nim
 g2	tests/domain/channels/t_telegram_policy.nim
 g2	tests/domain/channels/t_telegram_pure.nim
+g2	tests/domain/t_reply_context_pure.nim
 g2	tests/domain/channels/t_telegram_split.nim
 g2	tests/domain/channels/t_telegram_upload_pure.nim
 g2	tests/domain/channels/t_wechat_pure.nim
