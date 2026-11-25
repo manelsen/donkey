@@ -130,7 +130,7 @@ The plural env alone also marks the provider as available, so a pool does not
 need a duplicate single key.
 
 > **OAuth is not implemented.** It is a long-term TODO, deferred by the
-> maintainer on 18/11/2026 (`tasks/prd-providers.md` §6.1). Every provider in the
+> maintainer on 18/11/2026 (the providers PRD, §6.1; in git history since `tasks/` was removed). Every provider in the
 > descriptor table is `atApiKey` or `atNone` (local endpoint); there is no
 > device-code flow, token store, refresh path or OAuth adapter in the codebase.
 > Do not plan around one being available.

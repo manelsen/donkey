@@ -559,7 +559,7 @@ curl -s -o /dev/null -w '%{http_code}\n' \
 
 Documented from the code, not smoothed over:
 
-1. **`[DONE]` after a mid-stream error.** `tasks/prd-interfaces.md` (US-003) asks
+1. **`[DONE]` after a mid-stream error.** the interfaces PRD (US-003; in git history since `tasks/` was removed) asks
    for `{"error":…}` **plus** `[DONE]`. The runtime sends the error event and
    closes without a finish chunk and without `[DONE]`; the test asserts exactly
    that. A failed stream is therefore not terminated like a success.

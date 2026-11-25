@@ -4,14 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## O que é o Donkey
 
-**Donkey** é um sistema de agentes de IA ("Claw") escrito em Nim, self-hosted em VPS, servindo equipes corporativas pequenas. O projeto tem ~67k LOC em 268 arquivos Nim com 275 arquivos de teste, seguindo rigorosamente arquitetura hexagonal e TDD. F1–F4 implementados: adapters de providers (Zhipu, OpenRouter, Anthropic, Gemini, MiniMax, DeepSeek, Ollama), canais (Telegram, Discord, WeCom), MCP/Deno tool integration, e arquitetura multi-agente com Chronos (OrchestratorAgent + MemoryAgent + ToolAgent por sessão).
+**Donkey** é um sistema de agentes de IA ("Claw") escrito em Nim, self-hosted em VPS, servindo equipes corporativas pequenas. São ~77 mil linhas em 342 módulos Nim, com 349 arquivos de teste, seguindo rigorosamente arquitetura hexagonal e TDD.
 
-**Estado atual (branch ralph/donkey-v1-sovereign-pipeops):**
-- Channels implementados: Telegram ✓, Discord ✓, WeCom ✓ — outros mapeados (F2+)
-- Providers implementados: OpenAI ✓, Anthropic ✓, OpenRouter ✓, Zhipu ✓, Gemini ✓, MiniMax ✓, DeepSeek ✓, Ollama ✓
-- Memória F1 (MdFile) ✓, Postgreyskull F2+ em andamento
-- Orchestrator multi-turn ✓, tool loop ✓, onboarding de 12 fases ✓
-- ZenAdapter (opencode gateway) — planejado, não implementado ainda
+**Estado atual (25/11/2026; o planejamento está em [`docs/ROADMAP.md`](docs/ROADMAP.md), o detalhe por épico em [`docs/prd/PRD-roadmap.md`](docs/prd/PRD-roadmap.md)):**
+- **Canais (14):** Telegram, Discord, Slack, WhatsApp (Cloud API), WeCom, WeChat, QQ (OneBot e oficial), Feishu, DingTalk, LINE, Matrix, Signal, Email, CLI
+- **Providers:** OpenRouter, Anthropic, OpenAI, DeepSeek, Gemini, MiniMax, ZAI, Groq, Ollama, OpenCode Go e Zen, NVIDIA, Alibaba, Fireworks, Mistral, Bedrock, Azure OpenAI; streaming pela rota escolhida
+- **Memória:** MAGMA (grafo em SQLite por padrão; PostgreSQL + pgvector opcional), busca em conversas antigas, Backtrail
+- Orchestrator multi-turn, tool loop, agentes nomeados e salas, sub-agentes, agendamentos, onboarding, MCP (stdio e HTTP com OAuth), métricas e traços por turno
 
 **Princípios inegociáveis:**
 - Arquitetura hexagonal (ports & adapters)
@@ -112,14 +111,21 @@ ToolPort → McpClientAdapter → [MCP server process]
 
 MCP é prioritário desde o primeiro dia.
 
-### Memória — duas fases
+### Memória — MAGMA
 
-**F1 (v1):** memória em arquivos `.md` no workspace do usuário. O agente lê e atualiza diretamente. Simples, hackável, sem banco.
+O grafo multi-relacional **MAGMA** guarda a memória de cada usuário: um nó por
+memória capturada (cada turno relevante), ligado no tempo (`TEMPORAL`) e a
+entidades e episódios. **SQLite embarcado é o padrão** (`withSqlite` em
+`config.nims`); PostgreSQL com pgvector é opcional (`-d:withPostgres`).
+Embeddings via `qwen3-embedding-8b` (OpenRouter), feitos fora do laço.
 
-**F2+:** **Postgreyskull** — PostgreSQL com:
-- **pgvector** — embeddings via `qwen3-embedding-8b` (OpenRouter), vetores de 4096 dimensões
-- **Apache AGE** — grafo de conhecimento pessoal com Cypher queries
-- Busca híbrida: vetorial (semântica) + traversal de grafo (relacional) combinados
+O recall funde por RRF a busca semântica e a lexical (acentos e prefixos de
+palavra), com uma política por pergunta: recência e vizinhos no tempo só para
+perguntas sobre um período (datas relativas viram janela). O Backtrail, quando
+ligado, classifica a mensagem e faz uma pré-busca nas conversas antigas.
+
+Os `.md` do paddock (`MEMORY.md` e os demais) são a vista legível; com o MAGMA,
+o grafo é a fonte de verdade.
 
 ### Providers — arquitetura
 
@@ -146,7 +152,7 @@ Quirks conhecidos por adapter:
 - **MiniMaxAdapter** — API MiniMax (série abab), formato próprio
 - **DeepSeekAdapter** — OpenAI-compatible com quirks de reasoning tokens
 - **OllamaAdapter** — instância local; sem streaming nativo, polling de resposta
-- **ZenAdapter** — PLANEJADO (F2+): gateway multi-protocolo do opencode CLI. Model IDs: `opencode/<model-id>`. Roteará: OpenAI → `/zen/v1/responses`, Anthropic → `/zen/v1/messages`. Não implementado ainda.
+- **OpenCode Zen e Go** — gateways curados do opencode (descritores `zen` e `opencode-go` em `domain/providers/descriptors.nim`), pela rota compatível com OpenAI (`/zen/v1/chat/completions`).
 
 Sem adapter genérico compartilhado — cada um tem o seu. OpenCode Zen é gateway curado (gratuitos disponíveis, zero markup), não OpenAI-compatible universal.
 
@@ -175,7 +181,7 @@ O ambiente é lido uma vez: `config/environment.readEnvironment` tira um snapsho
 |------|---------|----------|
 | `ProviderPort` | `complete(CompletionRequest) → Result[CompletionResponse, string]` + `caps()` | Zhipu, OpenRouter, Anthropic, Gemini, MiniMax |
 | `ToolPort` | `listTools() → Result[seq[ToolSchema], string]` + `invoke(ToolCall) → Result[ToolResult, string]` | `McpClientAdapter` (MCP servers + Deno skills) |
-| `MemoryPort` | `hasProfile`, `loadContext`, `saveUserMd`, `appendMemory`, `savePreferences` | `MdFileAdapter` (F1), `PostgresAdapter` (F2+) |
+| `MemoryPort` | `hasProfile`, `loadContext`, `saveUserMd`, `appendMemory`, `savePreferences` | `MdFileAdapter` (sem grafo), `MagmaMemoryAdapter` (MAGMA em SQLite ou PostgreSQL) |
 | `ChannelPort` | `send(OutboundMessage) → Result[void, string]` + `receive() → Result[seq[InboundMessage], string]` + `ack(string)` | `TelegramAdapter` |
 | `HttpPort` | `get(url, headers) → Result[HttpResponse, string]` + `post(url, body, headers) → Result[HttpResponse, string]` | `StdHttpAdapter` sobre `deadline_transport` (Chronos + bearssl, prazo por requisição) |
 
@@ -192,7 +198,7 @@ INBOUND ADAPTERS (adapters/channel/)
 
 APPLICATION LAYER (app/ — Chronos, effectful)
   SessionManager → OrchestratorAgent (por sessão, AsyncQueue[AgentMessage] como inbox)
-    ├── MemoryAgent  → MemoryPort  → MdFileAdapter (F1) / PostgresAdapter (F2+)
+    ├── MemoryAgent  → MemoryPort  → MdFileAdapter / MagmaMemoryAdapter (MAGMA)
     ├── ToolAgent    → ToolPort    → McpClientAdapter (MCP/Deno subprocess)
     └── NativeTools  → ProviderPort → OpenRouterAdapter / ZhipuAdapter / [8 providers]
 
@@ -254,26 +260,16 @@ Sessões pertencem ao **usuário** (UUID interno), não ao canal. Canal é entra
 
 Mapeamento: `(channel_type, channel_user_id) → user UUID`.
 
-## Grafo de conhecimento pessoal (F2+)
+## Grafo de conhecimento pessoal
 
-**Nós** — todos têm `id`, `user_id`, `embedding vector(4096)`, `created_at`, `confidence`:
-`Person`, `Fact`, `Preference`, `Solution`, `ErrorPattern`, `Concept`, `Document`, `Task`, `Memory`, `Session`
-
-**Arestas principais:**
-```
-(Person)-[:IS_CHILD_OF|IS_PARENT_OF|KNOWS]->(Person)
-(Fact)-[:ABOUT]->(Person|Concept)
-(Solution)-[:RESOLVES]->(ErrorPattern)
-(Solution)-[:USES]->(Concept)
-(Memory)-[:MENTIONS]->(Person|Concept|Task)
-(Memory)-[:FROM]->(Session)
-(Session)-[:CONTINUED_IN]->(Session)   ← cross-channel continuity
-(User)-[:HAS_PREFERENCE]->(Preference)
-```
+Tipos de nó no MAGMA: `memory` (a unidade de recall), `entity`, `episode`,
+`commitment`, `preference`, `user_profile`. Arestas: `TEMPORAL` (a ordem das
+memórias), `CAUSAL`, `MENTIONS`, `ABOUT`. A antiga proposta de Postgreyskull
+com Apache AGE e Cypher não foi adotada.
 
 ## Workspace por usuário
 
-Os `.md` são vistas legíveis do conhecimento do agente sobre o usuário. Sem grafo (F1), são o armazenamento: editáveis diretamente, o agente relê na próxima conversa. Com MAGMA, o grafo é a fonte de verdade e os `.md` são só exportação: editar um arquivo não muda o que o agente sabe; para trazer arquivos editados ao grafo, use `donkey ctl memory import <uuid>`.
+Os `.md` são vistas legíveis do conhecimento do agente sobre o usuário. Sem grafo, são o armazenamento: editáveis diretamente, o agente relê na próxima conversa. Com MAGMA, o grafo é a fonte de verdade e os `.md` são só exportação: editar um arquivo não muda o que o agente sabe; para trazer arquivos editados ao grafo, use `donkey ctl memory import <uuid>`.
 
 O caminho dos paddocks é configurável via `donkey.toml` (`paddocks = "~/.donkey/paddocks"`), padrão `{home}/paddocks/`.
 
@@ -333,22 +329,12 @@ WakeUp → ModeChoice → (Guided | Free) →
 
 Em modo Guided, o Donkey coleta dimensões de personalidade uma a uma. Em modo Free, pula direto para coleta de identidade. Ao final, `{paddocks}/{uuid}/` é criado com todos os arquivos e o usuário é informado que pode editar `USER.md` diretamente.
 
-## F1 — Escopo da primeira fase (em produção)
+## Escopo e próximos passos
 
-- **Channels:** Telegram ✓ (long polling para dev, webhook para produção), Discord ✓, WeCom ✓
-- **Providers:** todos 8 implementados; prioritários são Zhipu Coding e OpenRouter
-- **Memória:** arquivos `.md` no paddock do usuário ✓ — Postgreyskull é F2+
-- **MCP:** client desde o início ✓
-- **Bootstrapping:** onboarding de 12 fases ✓
-- **Native tools:** shell, web_fetch, web_search, calc, fs (read/write/find/grep), git ✓
-- **Sandbox:** OCI (Docker/Podman) e Wasm (wasmtime) para o tool bash (`app/sandbox.nim`)
-- **Binary:** `donkey` (daemon), `donkey ctl` (CLI de administração)
-- **Model catalog:** descoberta dinâmica de modelos via OpenRouter, Groq, Anthropic, Gemini e models.dev (com cache TTL)
-
-**Ainda não implementado (F2+):**
-- ZenAdapter (opencode gateway, `opencode/<model-id>`)
-- Postgreyskull (pgvector + Apache AGE)
-- Channels adicionais: QQ, Feishu, Slack, Signal, DingTalk, Matrix, Email, WhatsApp (adapters planejados)
+O que existe está no resumo do topo; o que vem a seguir, em ordem e com as
+decisões tomadas e as recusadas, está em [`docs/ROADMAP.md`](docs/ROADMAP.md).
+Binários: `donkey` (daemon) e `donkey ctl` (administração). Sandbox do `bash`:
+OCI (Docker/Podman) ou Wasm (wasmtime).
 
 ## Material de referência (`docs/`)
 
