@@ -11,6 +11,7 @@ import core/app_meta
 import config/types
 import config/tools_registry
 import adapters/tool/mcp_oauth
+import config/environment
 import config/skills_registry
 import config/clawhub_registry
 import config/dotenv
@@ -254,10 +255,56 @@ const McpOAuthRedirect* = "http://127.0.0.1:8976/callback"
   ## Nothing listens there: the browser fails to load it, and the operator
   ## copies the URL (with the code) from the address bar back into the CLI.
 
-proc ctlMcpLogin*(home, url: string): int =
-  ## `ctl mcp login <url>`: OAuth for a remote MCP server, browser-less.
+type McpLoginArgs* = object
+  clientId*:  string   ## pre-registered client; "" = dynamic registration
+  secretEnv*: string   ## the variable holding its secret; "" = public client
+
+func parseMcpLoginArgs*(args: seq[string]): Result[McpLoginArgs, string] =
+  ## `[--client-id ID [--client-secret-env NAME]]`
+  var parsed = McpLoginArgs()
+  var i = 0
+  while i < args.len:
+    case args[i]
+    of "--client-id", "--client-secret-env":
+      if i + 1 >= args.len or args[i + 1].len == 0:
+        return err(args[i] & " needs a value")
+      if args[i] == "--client-id": parsed.clientId = args[i + 1]
+      else: parsed.secretEnv = args[i + 1]
+      i += 2
+    else:
+      return err("unknown option: " & args[i])
+  if parsed.secretEnv.len > 0 and parsed.clientId.len == 0:
+    return err("--client-secret-env needs --client-id")
+  ok(parsed)
+
+func preregisteredFrom*(args: McpLoginArgs; env: Environment): Result[PreregisteredClient, string] =
+  ## The client to log in with; its secret read by name from the
+  ## environment snapshot (donkey.env or the vault), never from the command
+  ## line.
+  var secret = ""
+  if args.secretEnv.len > 0:
+    secret = env.get(args.secretEnv)
+    if secret.len == 0:
+      return err(args.secretEnv & " is not set; put the client secret there " &
+                 "(`donkey ctl secret set " & args.secretEnv & "`)")
+  ok(PreregisteredClient(clientId: args.clientId, secret: secret,
+                         secretEnv: args.secretEnv))
+
+proc ctlMcpLogin*(home, url: string; env = Environment();
+                  args: seq[string] = @[]): int =
+  ## `ctl mcp login <url> [--client-id ID [--client-secret-env NAME]]`:
+  ## OAuth for a remote MCP server, browser-less.
+  let options = parseMcpLoginArgs(args)
+  if options.isErr:
+    echo options.error
+    echo "usage: donkey ctl mcp login <url> [--client-id ID [--client-secret-env NAME]]"
+    return 1
+  let client = preregisteredFrom(options.get, env)
+  if client.isErr:
+    echo client.error
+    return 1
   let http = productionOAuthPort()
-  let pending = beginMcpLogin(url, McpOAuthRedirect, http)
+  let pending = beginMcpLogin(url, McpOAuthRedirect, http, client.get)
   if pending.isErr:
     echo pending.error
     return 1
@@ -815,7 +862,7 @@ proc dispatchCtl*(cfg: DonkeyConfig;
   if args[1] == "tool" and args.len >= 3 and args[2] == "add-http":
     return ctlToolAddHttp(cfg.home, registryPath, args[3 ..^ 1])
   if args[1] == "mcp" and args.len >= 4 and args[2] == "login":
-    return ctlMcpLogin(cfg.home, args[3])
+    return ctlMcpLogin(cfg.home, args[3], cfg.env, args[4 ..^ 1])
 
   # ── skill ──
   let skillsPath = cfg.home / "skills.toml"

@@ -333,7 +333,8 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
       let bearer = if entry.tokenEnv.len > 0: cfg.env.get(entry.tokenEnv) else: ""
       let tokenFn: McpHttpTokenFn =
         if entry.oauth:
-          mcpTokenSource(cfg.home / "state" / McpOAuthDirName, entry.url)
+          mcpTokenSource(cfg.home / "state" / McpOAuthDirName, entry.url,
+            secretOf = proc(name: string): string {.gcsafe.} = cfg.env.get(name))
         else: nil
       var client = newMcpHttpClient(entry.url, bearer = bearer, tokenFn = tokenFn)
       schemasRes = client.listTools()

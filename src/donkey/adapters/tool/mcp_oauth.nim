@@ -8,7 +8,11 @@
 ##      protected-resource metadata (else the well-known URLs, RFC 9728);
 ##   2. that metadata names the authorization server, whose metadata names
 ##      the endpoints (RFC 8414);
-##   3. register a public client (RFC 7591);
+##   3. register a public client (RFC 7591), or use a pre-registered one
+##      (`--client-id`, with `--client-secret-env NAME` for a confidential
+##      client: it authenticates at the token endpoint with Basic, or in the
+##      form when the server takes only that; the secret stays in the
+##      environment, the stored record names only its variable);
 ##   4. the operator opens the authorization URL (PKCE S256, state, resource)
 ##      in their own browser and pastes back the URL it was sent to;
 ##   5. the code is exchanged for tokens, stored 0600 under `state/mcp_oauth/`.
@@ -32,6 +36,14 @@ type
     clientId*:      string
     tokenEndpoint*: string
     tokens*:        OAuthTokens
+    clientSecretEnv*: string            ## the variable holding the secret
+    authMethod*:    ClientAuthMethod    ## camNone for a public client
+
+  PreregisteredClient* = object
+    ## A client the operator registered with the authorization server.
+    clientId*:  string
+    secret*:    string   ## read from the environment by the caller
+    secretEnv*: string   ## its variable's name, stored for refreshes
 
   McpLoginPending* = object
     serverUrl*:        string
@@ -41,6 +53,9 @@ type
     verifier*:         string
     state*:            string
     authorizationUrl*: string
+    secret*:           string
+    secretEnv*:        string
+    authMethod*:       ClientAuthMethod
 
   McpTokenFn* = proc(forceRefresh: bool): Result[string, string] {.gcsafe.}
 
@@ -102,12 +117,12 @@ proc discoverAuthServer*(serverUrl: string;
     proc(e: string): string = "oauth: no authorization-server metadata (" & e & ")")
   parseAuthServerMeta(metaJson)
 
-proc beginMcpLogin*(serverUrl, redirectUri: string;
-                    http: HttpRuntimePort): Result[McpLoginPending, string] =
-  let meta = ? discoverAuthServer(serverUrl, http)
+proc registerClient(meta: AuthServerMeta; redirectUri: string;
+                    http: HttpRuntimePort): Result[string, string] =
   if meta.registrationEndpoint.len == 0:
     return err("oauth: the authorization server offers no dynamic client " &
-               "registration; a pre-registered client is not supported yet")
+               "registration; register a client with it and log in with " &
+               "--client-id ID (and --client-secret-env NAME if it has a secret)")
   let reg = ? poster(http)(meta.registrationEndpoint,
     $registrationBody(redirectUri, AppName),
     @[(name: "Content-Type", value: "application/json"),
@@ -118,20 +133,34 @@ proc beginMcpLogin*(serverUrl, redirectUri: string;
                  except CatchableError: ""
   if clientId.len == 0:
     return err("oauth: registration returned no client_id")
+  ok(clientId)
+
+proc beginMcpLogin*(serverUrl, redirectUri: string; http: HttpRuntimePort;
+                    client = PreregisteredClient()): Result[McpLoginPending, string] =
+  ## `client` empty: register a public client. Otherwise use it, a public
+  ## one (no secret) or a confidential one.
+  let meta = ? discoverAuthServer(serverUrl, http)
+  let clientId =
+    if client.clientId.len > 0: client.clientId
+    else: ? registerClient(meta, redirectUri, http)
+  let authMethod = ? clientAuthMethodFor(meta, hasSecret = client.secret.len > 0)
   let verifier = ? randomToken(32)
   let state = ? randomToken(16)
   ok(McpLoginPending(
     serverUrl: serverUrl, redirectUri: redirectUri, clientId: clientId,
+    secret: client.secret, secretEnv: client.secretEnv, authMethod: authMethod,
     meta: meta, verifier: verifier, state: state,
     authorizationUrl: authorizationUrl(meta, clientId, redirectUri,
       pkceChallenge(verifier), state, serverUrl,
       scope = meta.scopes.join(" "))))
 
-proc postForm(http: HttpRuntimePort; url, form: string;
-              nowSec: int64): Result[OAuthTokens, string] =
-  let resp = ? poster(http)(url, form,
-    @[(name: "Content-Type", value: "application/x-www-form-urlencoded"),
-      (name: "Accept", value: "application/json")])
+proc postForm(http: HttpRuntimePort; url, form: string; nowSec: int64;
+              authMethod = camNone; clientId = "", secret = ""): Result[OAuthTokens, string] =
+  var headers = @[(name: "Content-Type", value: "application/x-www-form-urlencoded"),
+                  (name: "Accept", value: "application/json")]
+  if authMethod == camBasic:
+    headers.add((name: "Authorization", value: basicClientAuth(clientId, secret)))
+  let resp = ? poster(http)(url, form, headers)
   let body = try: parseJson(resp.body) except CatchableError: newJObject()
   if resp.status != 200 and not body.hasKey("error"):
     return err("oauth: token endpoint answered HTTP " & $resp.status)
@@ -141,9 +170,12 @@ proc completeMcpLogin*(p: McpLoginPending; pastedUrl: string; http: HttpRuntimeP
                        nowSec: int64): Result[McpOAuthRecord, string] =
   let code = ? codeFromRedirect(pastedUrl, p.state)
   let tokens = ? postForm(http, p.meta.tokenEndpoint,
-    tokenRequestForm(code, p.verifier, p.clientId, p.redirectUri, p.serverUrl), nowSec)
+    tokenRequestForm(code, p.verifier, p.clientId, p.redirectUri, p.serverUrl,
+                     clientSecret = (if p.authMethod == camPost: p.secret else: "")),
+    nowSec, p.authMethod, p.clientId, p.secret)
   ok(McpOAuthRecord(serverUrl: p.serverUrl, resource: p.serverUrl,
                     clientId: p.clientId, tokenEndpoint: p.meta.tokenEndpoint,
+                    clientSecretEnv: p.secretEnv, authMethod: p.authMethod,
                     tokens: tokens))
 
 # ── Storage ───────────────────────────────────────────────────────────────────
@@ -166,6 +198,7 @@ proc saveMcpOAuth*(dir: string; rec: McpOAuthRecord): Result[void, string] =
   fs.writePrivate(mcpOAuthPath(dir, rec.serverUrl), $(%* {
     "server_url": rec.serverUrl, "resource": rec.resource,
     "client_id": rec.clientId, "token_endpoint": rec.tokenEndpoint,
+    "client_secret_env": rec.clientSecretEnv, "auth_method": $rec.authMethod,
     "access_token": rec.tokens.accessToken,
     "refresh_token": rec.tokens.refreshToken,
     "expires_at": rec.tokens.expiresAt}))
@@ -178,6 +211,8 @@ proc loadMcpOAuth*(dir, serverUrl: string): Result[McpOAuthRecord, string] =
     ok(McpOAuthRecord(
       serverUrl: j{"server_url"}.getStr, resource: j{"resource"}.getStr,
       clientId: j{"client_id"}.getStr, tokenEndpoint: j{"token_endpoint"}.getStr,
+      clientSecretEnv: j{"client_secret_env"}.getStr(""),
+      authMethod: parseEnum[ClientAuthMethod](j{"auth_method"}.getStr("none"), camNone),
       tokens: OAuthTokens(accessToken: j{"access_token"}.getStr,
                           refreshToken: j{"refresh_token"}.getStr,
                           expiresAt: j{"expires_at"}.getBiggestInt(0))))
@@ -189,9 +224,12 @@ proc loadMcpOAuth*(dir, serverUrl: string): Result[McpOAuthRecord, string] =
 proc nowUnix(): int64 {.gcsafe.} = getTime().toUnix
 
 proc mcpTokenSource*(dir, serverUrl: string; http = HttpRuntimePort();
-                     clock: proc(): int64 {.gcsafe.} = nil): McpTokenFn =
+                     clock: proc(): int64 {.gcsafe.} = nil;
+                     secretOf: proc(name: string): string {.gcsafe.} = nil): McpTokenFn =
   ## A token for `serverUrl`, refreshed (and stored) when it is about to
-  ## expire or when `forceRefresh` says the server refused it.
+  ## expire or when `forceRefresh` says the server refused it. `secretOf`
+  ## reads a confidential client's secret by its variable's name (the
+  ## daemon gives the environment snapshot).
   let port = if http.postNoRedirect != nil or http.post != nil: http
              else: productionOAuthPort()
   let now = if clock != nil: clock else: nowUnix
@@ -204,8 +242,16 @@ proc mcpTokenSource*(dir, serverUrl: string; http = HttpRuntimePort();
     if rec.tokens.refreshToken.len == 0:
       return err("oauth: the token expired and there is no refresh token; " &
                  "run `donkey ctl mcp login " & serverUrl & "`")
+    var secret = ""
+    if rec.authMethod != camNone:
+      secret = if secretOf != nil: secretOf(rec.clientSecretEnv) else: ""
+      if secret.len == 0:
+        return err("oauth: the client secret variable " & rec.clientSecretEnv &
+                   " is empty; set it to refresh the token for " & serverUrl)
     let fresh = ? postForm(port, rec.tokenEndpoint,
-      refreshRequestForm(rec.tokens.refreshToken, rec.clientId, rec.resource), now())
+      refreshRequestForm(rec.tokens.refreshToken, rec.clientId, rec.resource,
+                         clientSecret = (if rec.authMethod == camPost: secret else: "")),
+      now(), rec.authMethod, rec.clientId, secret)
     rec.tokens = mergeRefreshed(rec.tokens, fresh)
     ? saveMcpOAuth(dir, rec)
     ok(rec.tokens.accessToken)

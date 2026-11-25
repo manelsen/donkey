@@ -215,6 +215,13 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
   ./donkey ctl mcp login https://mcp.example.com/mcp
   ```
 
+  When the authorization server has no dynamic registration, register a client with it yourself and log in with its id. A client with a secret keeps the secret in a variable (the vault or `donkey.env`); only the variable's name is stored with the tokens, and the secret is read again for each refresh.
+  ```bash
+  ./donkey ctl mcp login https://mcp.example.com/mcp --client-id my-app
+  ./donkey ctl secret set MCP_EXAMPLE_SECRET
+  ./donkey ctl mcp login https://mcp.example.com/mcp --client-id my-app --client-secret-env MCP_EXAMPLE_SECRET
+  ```
+
 ---
 
 ## 🌐 Supported Ecosystem
