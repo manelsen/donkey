@@ -35,8 +35,10 @@ proc listing(b: TaskBoard; state, assignee: string): Result[string, string] =
   var filter = none(TaskState)
   if state.strip.len > 0:
     filter = some(? parseTaskState(state))
+  ## A filter that names nobody is a mistake to report, not an empty board.
+  let who = ? normalAssignee(assignee)
   var view = TaskBoard(nextId: b.nextId)
-  view.tasks = b.filtered(filter, assignee)
+  view.tasks = b.filtered(filter, who)
   ok(renderMarkdown(view))
 
 proc performManageTasks*(fs: FsRuntimePort; paddockDir: string;

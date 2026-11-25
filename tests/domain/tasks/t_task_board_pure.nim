@@ -103,6 +103,9 @@ proc runTests*() =
       check parseDueDate("").get == 0
       check parseDueDate("20/01/2027").isErr
       check parseDueDate("amanhã").isErr
+      check parseDueDate("2027-1-5").isErr
+      check parseDueDate("2027-01-05x").isErr
+      check parseDueDate("2027-02-30").isErr
 
     test "a state is one of four":
       check parseTaskState("Doing").get == tsDoing

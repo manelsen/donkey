@@ -58,6 +58,7 @@ proc runTests*() =
       check "b" in mine and "· a" notin mine
       let todo = act(dir, ManageTasksContext(action: "list", state: "done")).get
       check "Nenhuma tarefa" in todo
+      check act(dir, ManageTasksContext(action: "list", assignee: "x")).isErr
 
     test "mistakes come back as errors the model can fix":
       let dir = paddock("errors")
