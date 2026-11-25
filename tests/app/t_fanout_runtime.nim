@@ -409,7 +409,7 @@ proc runTests*() =
       for child in agg.children:
         check child.status == ssCompleted
 
-    # ── Deferred findings C1–C7 (tasks/reviews/deferred-findings-v4.md) ─────────
+    # ── Deferred findings C1–C7 (V4 review; tasks/reviews/, in git history) ───
 
     test "awaitFanout does not publish before an in-flight shutdown settles":
       ## C1: `cancelAll` marks the fan-out done before it finishes settling the
