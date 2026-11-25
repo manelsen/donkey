@@ -213,3 +213,22 @@ func rrfScores*[T](fused: seq[FusionResult[T]]): seq[float] =
 func items*[T](fused: seq[FusionResult[T]]): seq[T] =
   ## Extract just the items from a fused list
   fused.mapIt(it.item)
+
+const NeighborSourceHits* = 5
+  ## On a time question, only the strongest semantic hits lend their
+  ## temporal neighbours a score.
+
+func neighborScores*(neighborsOfHits: seq[seq[string]]; weight: float;
+                     k: float = DefaultRrfK): Table[string, float] =
+  ## `neighborsOfHits[i]`: the temporal neighbours of the i-th semantic hit,
+  ## nearest first. A memory takes the best score it gets, not the sum: a
+  ## filler memory next to many weak hits must not outscore what sits next
+  ## to the best one. Each hit's neighbours are scaled by the hit's own rank,
+  ## so the top hit's neighbours lead, and only the first
+  ## `NeighborSourceHits` hits lend any.
+  for hitRank in 0 ..< min(neighborsOfHits.len, NeighborSourceHits):
+    let hitFactor = k / (k + float(hitRank))
+    for rank, id in neighborsOfHits[hitRank]:
+      let score = rrfScoreWeighted(rank, weight, k) * hitFactor
+      if score > result.getOrDefault(id, 0.0):
+        result[id] = score
