@@ -12,6 +12,9 @@
 
 import std/[options, strutils]
 import ../../core/pipeops
+import ../message
+import ../builtin_tools
+import ../more_tools
 
 const MaxAgentNameLen* = 32
 
@@ -124,3 +127,38 @@ func namedAgentSystem*(a: NamedAgent; notes, toolsSuffix: string): string =
     result.add("## Your notes\nThings you wrote down in earlier turns:\n" &
                notes.strip & "\n\n")
   result.add(toolsSuffix)
+
+# ── Tools for an agent that is consulted ──────────────────────────────────────
+
+const
+  ConsultedAgentToolNames* = [SessionSearchToolName, CurrentTimeToolName,
+                              CalcToolName, WebSearchToolName, FetchToolName,
+                              WebFetchToolName]
+    ## Read-only: an agent asked by another (ask_agent, a room) may look things
+    ## up but not act, and never reaches another agent (no ask_agent or
+    ## convene_agents, so no chain). The web tools still pass the user's web
+    ## policy when they run.
+  MaxConsultedToolRounds* = 4
+    ## Tool rounds before the agent must answer: the next request offers none.
+  ConsultDeadlineMs* = 120_000
+    ## Wall-clock time one consulted agent has, tool rounds included.
+
+func consultedAgentToolDescriptions*(webSearch: bool): seq[ToolDescription] =
+  ## The tools offered to a consulted agent; `web_search` only when a search
+  ## key exists (as for the main assistant).
+  result = @[
+    ToolDescription(name: SessionSearchToolName, description: SessionSearchToolDescription,
+                    schemaJson: SessionSearchToolSchema),
+    ToolDescription(name: CurrentTimeToolName, description: CurrentTimeToolDescription,
+                    schemaJson: CurrentTimeToolSchema),
+    ToolDescription(name: CalcToolName, description: CalcToolDescription,
+                    schemaJson: CalcToolSchema),
+    ToolDescription(name: FetchToolName, description: FetchToolDescription,
+                    schemaJson: FetchToolSchema),
+    ToolDescription(name: WebFetchToolName, description: WebFetchToolDescription,
+                    schemaJson: WebFetchToolSchema),
+  ]
+  if webSearch:
+    result.insert(ToolDescription(name: WebSearchToolName,
+                                  description: WebSearchToolDescription,
+                                  schemaJson: WebSearchToolSchema), 3)
