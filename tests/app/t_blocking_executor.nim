@@ -91,6 +91,11 @@ proc runTests*() =
       check (Moment.now() - started).milliseconds < 200
       waitFor allFutures(streams)
 
+    test "a pool's capacity is the workers that started":
+      ## Both pools have run jobs above, so they are started.
+      check poolCapacity(opBlocking) == BlockingWorkerCount
+      check poolCapacity(opStream) == StreamWorkerCount
+
     test "and a busy call pool leaves streams alone":
       var calls: seq[Future[Result[string, string]]]
       for i in 0 ..< BlockingWorkerCount:

@@ -71,6 +71,7 @@ var
   gStreamWorkers {.global.}: array[StreamWorkerCount, Thread[OffLoopPool]]
   gPoolStarted: array[OffLoopPool, bool]
   gPoolAttempted: array[OffLoopPool, bool]
+  gPoolWorkers: array[OffLoopPool, int]   ## workers that actually started
 
 proc releaseState[I, O](state: ptr BlockingJobState[I, O]) {.gcsafe.} =
   ## Drops one reference; the last owner drains, closes and frees.
@@ -149,8 +150,17 @@ proc ensurePool(pool: OffLoopPool): Result[void, string] =
         firstError = e.msg
   if started == 0:
     return err("blocking executor: no workers started: " & firstError)
+  gPoolWorkers[pool] = started
   gPoolStarted[pool] = true
   ok()
+
+proc poolCapacity*(pool: OffLoopPool): int =
+  ## How many jobs the pool runs at once: the workers that started (a
+  ## partial start gives fewer), or the configured size before first use.
+  if gPoolStarted[pool]: gPoolWorkers[pool]
+  elif gPoolAttempted[pool]: 0
+  elif pool == opStream: StreamWorkerCount
+  else: BlockingWorkerCount
 
 proc awaitOffLoop[I, O](fn: OffLoopFn[I, O]; input: I;
                         pool: OffLoopPool): Future[Result[O, string]] {.async.} =

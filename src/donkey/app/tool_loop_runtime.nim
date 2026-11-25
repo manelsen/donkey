@@ -90,7 +90,7 @@ proc liveStreams*(): int {.gcsafe.} =
 proc streamSlotAvailable*(): bool {.gcsafe.} =
   ## False on any thread but the loop's: streaming is only counted there.
   gStreamsOwner.isOwner("live stream count") and
-    gLiveStreams < MaxLiveStreams
+    gLiveStreams < min(MaxLiveStreams, poolCapacity(opStream))
 
 proc streamStarted() {.gcsafe.} =
   if gStreamsOwner.isOwner("live stream count"): inc gLiveStreams
@@ -238,7 +238,11 @@ proc streamToOutbox*(factory:   StreamFactory;
 
       ## The job pushes its final event before it returns, so a finished job
       ## with an error and no final event never ran (pool full) or failed
-      ## outside the provider call: nothing more will come.
+      ## outside the provider call: nothing more will come. Disposing the
+      ## queue here is safe because runOffLoop's future completes either
+      ## before the handoff to a worker, or only after the worker finished
+      ## the job and returned (it is never cancelled here), so no writer
+      ## remains.
       if running.finished:
         let outcome =
           try: running.read()
