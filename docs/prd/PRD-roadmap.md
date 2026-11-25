@@ -95,23 +95,42 @@ um usuário só, como os agentes nomeados).
 
 ```toml
 [[bots]]
-name     = "suporte"
-channel  = "telegram"
-token_env = "TELEGRAM_TOKEN_SUPORTE"
-agent    = "suporte"      # agente nomeado: persona, notas e modelo
+name      = "suporte"
+channel   = "telegram"
+token_env = "TELEGRAM_TOKEN_SUPORTE"   # Telegram, Discord
+agent     = "suporte"                  # {home}/agents/suporte.toml
+
+[[bots]]
+name            = "vendas"
+channel         = "whatsapp"
+phone_number_id = "1234567890"         # WhatsApp: o número na mesma conta
+agent           = "vendas"
 ```
 
-O bot leva um agente nomeado (o mecanismo de `@nome` já existe). A mensagem
-recebida carrega o bot de origem; a resposta sai pelo mesmo bot; a sessão do
-usuário guarda de qual bot veio cada turno. O bot padrão (as variáveis atuais)
-continua funcionando sem configuração nova.
+- **Persona do operador.** Os agentes nomeados de hoje são do usuário (no
+  paddock). A persona de um bot é decisão do operador e vale para todos: um
+  agente da instância em `{home}/agents/<agente>.toml`, no mesmo formato
+  (persona, provider, modelo). Um bot sem agente responde com a persona
+  padrão.
+- **Afinidade.** A sessão é do usuário e os turnos são em série: o bot pelo
+  qual a pessoa escreveu por último é o que responde. Cada canal mantém a
+  afinidade usuário → bot, atualizada a cada mensagem recebida, e tudo o que
+  sai para aquela pessoa naquele canal (envio, edição do streaming, teclados,
+  reações, digitação, download de anexos) vai pelo adapter desse bot. Duas
+  mensagens seguidas para bots diferentes já viram um turno só no debounce.
+  Lembretes e agendamentos saem pelo último bot usado; depois de um
+  reinício, pelo bot padrão até a pessoa escrever de novo.
+- **Mensagem.** `InboundMessage` carrega o nome do bot; o payload da sessão
+  também, e o turno aplica a persona do bot quando a mensagem não começa com
+  `@agente` (que continua valendo).
+- O bot padrão (as variáveis de hoje) continua funcionando sem `[[bots]]`.
 
 **Histórias**
 - **E3.1 Modelo de bot e configuração.** Tipos, leitura do `[[bots]]`,
   validação (token ausente, agente inexistente, nome repetido), doctor.
-- **E3.2 Bot na mensagem e na resposta.** `InboundMessage` e `OutboundMessage`
-  ganham o bot; o turno aplica o agente do bot (persona e modelo); a resposta
-  é roteada pelo adapter do bot certo.
+- **E3.2 Bot na mensagem e na persona.** `InboundMessage` e o payload da
+  sessão levam o bot; o turno aplica o agente da instância do bot (persona e
+  modelo); a afinidade de cada canal leva a resposta pelo adapter certo.
 - **E3.3 Telegram multi-bot.** Um long poll por token no executor; um adapter
   por bot.
 - **E3.4 Discord multi-bot.** Uma conexão de gateway por token na

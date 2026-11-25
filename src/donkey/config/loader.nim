@@ -316,6 +316,20 @@ proc applySandboxConfigPatch*(patch: SandboxConfigPatch; cfg: DonkeyConfig): Don
   if patch.sandboxReadOnlyRootfs.isSome:
     result.sandboxReadOnlyRootfs = patch.sandboxReadOnlyRootfs.get()
 
+proc parseBotSpecs*(doc: TomlValueRef): seq[BotSpec] =
+  ## `[[bots]]` entries as written; `validateBots` decides which run.
+  if not doc.hasKey("bots"):
+    return
+  for entry in doc["bots"].getElems():
+    result.add BotSpec(
+      name: entry.getOrDefault("name").getStr().strip(),
+      channel: entry.getOrDefault("channel").getStr().strip(),
+      agent: entry.getOrDefault("agent").getStr().strip(),
+      tokenEnv: entry.getOrDefault("token_env").getStr().strip(),
+      phoneNumberId: entry.getOrDefault("phone_number_id").getStr().strip(),
+      appId: entry.getOrDefault("app_id").getStr().strip(),
+      secretEnv: entry.getOrDefault("secret_env").getStr().strip())
+
 proc loadTomlConfig*(path: string): Option[TomlValueRef] =
   if not fileExists(path):
     return none(TomlValueRef)
@@ -346,4 +360,5 @@ proc loadConfig*(path: string; env: Environment): DonkeyConfig =
     applyMainConfigPatch(mainPatch) |>->
     applySecurityConfigPatch(securityPatch) |>->
     applySandboxConfigPatch(sandboxPatch)
+  (result.bots, result.botProblems) = validateBots(parseBotSpecs(doc))
   result = result.applyEnvOverrides(env)

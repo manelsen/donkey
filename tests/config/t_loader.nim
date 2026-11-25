@@ -314,5 +314,40 @@ allow_net = ["api.github.com"]
       check cfg.skillNetPolicy[0].skillName == "github_skill"
       check cfg.skillNetPolicy[0].allowNetHosts == @["api.github.com"]
 
+    test "reads [[bots]], keeps the good ones and says what is wrong with the rest":
+      let tmp = getTempDir() / "t_loader_bots.toml"
+      writeFile(tmp, """
+[[bots]]
+name = "suporte"
+channel = "telegram"
+token_env = "TELEGRAM_TOKEN_SUPORTE"
+agent = "suporte"
+
+[[bots]]
+name = "vendas"
+channel = "whatsapp"
+phone_number_id = "1234567890"
+
+[[bots]]
+name = "quebrado"
+channel = "telegram"
+""")
+      defer: removeFile(tmp)
+      let cfg = loadConfig(tmp, Environment())
+      check cfg.bots.len == 2
+      check cfg.bots[0].name == "suporte" and cfg.bots[0].kind == ckTelegram
+      check cfg.bots[0].tokenEnv == "TELEGRAM_TOKEN_SUPORTE"
+      check cfg.bots[0].agent == "suporte"
+      check cfg.bots[1].phoneNumberId == "1234567890"
+      check cfg.botProblems.len == 1
+      check "quebrado" in cfg.botProblems[0]
+
+    test "no [[bots]] means only the default bots":
+      let tmp = getTempDir() / "t_loader_nobots.toml"
+      writeFile(tmp, "[donkey]\nlog_level = \"info\"\n")
+      defer: removeFile(tmp)
+      let cfg = loadConfig(tmp, Environment())
+      check cfg.bots.len == 0 and cfg.botProblems.len == 0
+
 when isMainModule:
   runTests()
