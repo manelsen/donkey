@@ -3,7 +3,7 @@
 ## (RFC 8414), dynamic client registration (RFC 7591) and resource indicators
 ## (RFC 8707). The PKCE value is RFC 7636's own example (Appendix B).
 
-import std/[json, os, posix, sequtils, strutils, unittest, uri]
+import std/[base64, json, os, posix, sequtils, strutils, unittest, uri]
 import donkey/adapters/tool/mcp_http_client
 import donkey/adapters/tool/mcp_oauth
 import donkey/core/pipeops
@@ -21,6 +21,8 @@ type FakeAuth = ref object
   gets:  seq[string]
   tokenCalls: int
   mcpAuthorized: string   ## the bearer the MCP endpoint accepts
+  noRegistration: bool    ## the server offers no dynamic registration
+  authMethods: seq[string] ## token_endpoint_auth_methods_supported, if any
 
 func header(headers: seq[HttpHeader]; name: string): string =
   for h in headers:
@@ -34,12 +36,16 @@ proc fakePort(f: FakeAuth): HttpRuntimePort =
       return ok(HttpResponse(status: 200, body: $(%* {
         "resource": Server, "authorization_servers": ["https://auth.example.test"]})))
     if url == "https://auth.example.test/.well-known/oauth-authorization-server":
-      return ok(HttpResponse(status: 200, body: $(%* {
+      var meta = %* {
         "issuer": "https://auth.example.test",
         "authorization_endpoint": "https://auth.example.test/authorize",
         "token_endpoint": "https://auth.example.test/token",
-        "registration_endpoint": "https://auth.example.test/register",
-        "code_challenge_methods_supported": ["S256"]})))
+        "code_challenge_methods_supported": ["S256"]}
+      if not f.noRegistration:
+        meta["registration_endpoint"] = %"https://auth.example.test/register"
+      if f.authMethods.len > 0:
+        meta["token_endpoint_auth_methods_supported"] = %f.authMethods
+      return ok(HttpResponse(status: 200, body: $meta))
     ok(HttpResponse(status: 404, body: ""))
   let post = proc (url, body: string; headers: seq[HttpHeader] = @[]):
                 Result[HttpResponse, string] {.gcsafe.} =
@@ -168,6 +174,29 @@ proc runTests*() =
       let refresh = refreshRequestForm("rt", "cid", "https://h.test/mcp")
       check "grant_type=refresh_token" in refresh and "refresh_token=rt" in refresh
 
+  suite "mcp_oauth_pure — a pre-registered client":
+    test "the basic credentials of RFC 6749's example":
+      check basicClientAuth("s6BhdRkqt3", "7Fjfp0ZBr1KtDRbnfVdmIw") ==
+            "Basic czZCaGRSa3F0Mzo3RmpmcDBaQnIxS3REUmJuZlZkbUl3"
+
+    test "each part is form-encoded before Basic: space, plus, percent, colon":
+      ## RFC 6749 2.3.1: application/x-www-form-urlencoded, so a space is "+"
+      ## and a literal "+" is "%2B"; a ":" in the id cannot split the pair.
+      let header = basicClientAuth("my app:1", "a b+c%d")
+      check header == "Basic " & base64.encode("my+app%3A1:a+b%2Bc%25d")
+
+    test "how the client authenticates at the token endpoint":
+      let none = AuthServerMeta()
+      check clientAuthMethodFor(none, hasSecret = false).get == camNone
+      ## RFC 8414: no list means client_secret_basic
+      check clientAuthMethodFor(none, hasSecret = true).get == camBasic
+      check clientAuthMethodFor(AuthServerMeta(tokenAuthMethods: @["client_secret_post"]),
+                                hasSecret = true).get == camPost
+      check clientAuthMethodFor(AuthServerMeta(tokenAuthMethods:
+        @["client_secret_basic", "client_secret_post"]), hasSecret = true).get == camBasic
+      check clientAuthMethodFor(AuthServerMeta(tokenAuthMethods: @["private_key_jwt"]),
+                                hasSecret = true).isErr
+
   suite "mcp oauth — the login flow and the token source":
     test "discovery from the 401, registration, the URL, the code exchange":
       removeDir(StoreDir)
@@ -192,6 +221,80 @@ proc runTests*() =
       let exchange = f.posts[^1][1]
       check "code=the-code" in exchange
       check "code_verifier=" & p.verifier in exchange
+
+    test "without dynamic registration, login asks for a client id":
+      let f = FakeAuth(noRegistration: true)
+      let r = beginMcpLogin(Server, Redirect, fakePort(f))
+      check r.isErr
+      check "--client-id" in r.error
+
+    test "a pre-registered public client skips registration and sends no secret":
+      let f = FakeAuth(noRegistration: true)
+      let p = beginMcpLogin(Server, Redirect, fakePort(f),
+                            PreregisteredClient(clientId: "app-42")).get
+      check p.clientId == "app-42"
+      check f.posts.allIt(it[0] != "https://auth.example.test/register")
+      check ("client_id", "app-42") in toSeq(decodeQuery(parseUri(p.authorizationUrl).query))
+      let rec = completeMcpLogin(p, Redirect & "?code=c&state=" & p.state, fakePort(f), 1000)
+      check rec.isOk
+      check header(f.posts[^1][2], "Authorization") == ""
+      check "client_secret" notin f.posts[^1][1]
+      check "code_verifier=" in f.posts[^1][1]   ## PKCE as for any public client
+
+    test "a confidential client authenticates with basic credentials; the secret is not stored":
+      removeDir(StoreDir)
+      let f = FakeAuth(noRegistration: true)
+      let p = beginMcpLogin(Server, Redirect, fakePort(f), PreregisteredClient(
+        clientId: "app-42", secret: "s3cr3t", secretEnv: "MCP_APP_SECRET")).get
+      let rec = completeMcpLogin(p, Redirect & "?code=c&state=" & p.state, fakePort(f), 1000).get
+      check header(f.posts[^1][2], "Authorization") == basicClientAuth("app-42", "s3cr3t")
+      check "client_secret" notin f.posts[^1][1]
+      check saveMcpOAuth(StoreDir, rec).isOk
+      let stored = readFile(mcpOAuthPath(StoreDir, Server))
+      check "s3cr3t" notin stored
+      check "MCP_APP_SECRET" in stored
+      ## the refresh reads the secret again, by the variable's name
+      var saved = loadMcpOAuth(StoreDir, Server).get
+      saved.tokens.expiresAt = 10
+      discard saveMcpOAuth(StoreDir, saved)
+      let source = mcpTokenSource(StoreDir, Server, fakePort(f), clock = proc(): int64 = 1000,
+        secretOf = proc(name: string): string {.gcsafe.} =
+          if name == "MCP_APP_SECRET": "s3cr3t" else: "")
+      check source(false).isOk
+      check "grant_type=refresh_token" in f.posts[^1][1]
+      check header(f.posts[^1][2], "Authorization") == basicClientAuth("app-42", "s3cr3t")
+
+    test "client_secret_post when that is all the server takes":
+      let f = FakeAuth(noRegistration: true, authMethods: @["client_secret_post"])
+      let p = beginMcpLogin(Server, Redirect, fakePort(f), PreregisteredClient(
+        clientId: "app-42", secret: "s3cr3t", secretEnv: "MCP_APP_SECRET")).get
+      discard completeMcpLogin(p, Redirect & "?code=c&state=" & p.state, fakePort(f), 1000).get
+      check "client_secret=s3cr3t" in f.posts[^1][1]
+      check header(f.posts[^1][2], "Authorization") == ""
+
+    test "a confidential record without a variable name says to log in again":
+      removeDir(StoreDir)
+      let f = FakeAuth()
+      discard saveMcpOAuth(StoreDir, McpOAuthRecord(serverUrl: Server, clientId: "app-42",
+        resource: Server, tokenEndpoint: "https://auth.example.test/token",
+        authMethod: camBasic,
+        tokens: OAuthTokens(accessToken: "old", refreshToken: "rt", expiresAt: 10)))
+      let r = mcpTokenSource(StoreDir, Server, fakePort(f), clock = proc(): int64 = 1000)(false)
+      check r.isErr
+      check "--client-secret-env" in r.error
+      check f.tokenCalls == 0
+
+    test "a refresh without the secret's variable says which one is missing":
+      removeDir(StoreDir)
+      let f = FakeAuth()
+      discard saveMcpOAuth(StoreDir, McpOAuthRecord(serverUrl: Server, clientId: "app-42",
+        resource: Server, tokenEndpoint: "https://auth.example.test/token",
+        clientSecretEnv: "MCP_APP_SECRET", authMethod: camBasic,
+        tokens: OAuthTokens(accessToken: "old", refreshToken: "rt", expiresAt: 10)))
+      let source = mcpTokenSource(StoreDir, Server, fakePort(f), clock = proc(): int64 = 1000)
+      let r = source(false)
+      check r.isErr and "MCP_APP_SECRET" in r.error
+      check f.tokenCalls == 0
 
     test "a pasted URL from another login is refused before any token request":
       let f = FakeAuth()

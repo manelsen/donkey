@@ -10,6 +10,7 @@ import donkey/config/types
 import donkey/adapters/memory/md_file
 import donkey/adapters/memory/dm_allowlist
 import donkey/ctl_handler
+import donkey/config/environment
 import donkey/config/skills_registry
 
 # ── helpers ────────────────────────────────────────────────────────────────────
@@ -245,5 +246,30 @@ proc runTests*() =
       finally:
         cleanupPaddock(tmp)
 
+proc runMcpLoginArgTests*() =
+  suite "ctl mcp login options":
+    test "no options: dynamic registration":
+      let o = parseMcpLoginArgs(@[]).get
+      check o.clientId == "" and o.secretEnv == ""
+
+    test "a pre-registered client, with or without a secret variable":
+      check parseMcpLoginArgs(@["--client-id", "app-42"]).get.clientId == "app-42"
+      let o = parseMcpLoginArgs(@["--client-id", "app-42", "--client-secret-env", "MCP_SECRET"]).get
+      check o.secretEnv == "MCP_SECRET"
+
+    test "a secret without a client id, or an unknown option, is refused":
+      check parseMcpLoginArgs(@["--client-secret-env", "X"]).isErr
+      check parseMcpLoginArgs(@["--client-id"]).isErr
+      check parseMcpLoginArgs(@["--bogus"]).isErr
+
+    test "the secret is read from the environment by name, and must be set":
+      let env = environmentOf({"MCP_SECRET": "s3cr3t"})
+      let client = preregisteredFrom(parseMcpLoginArgs(@["--client-id", "a",
+        "--client-secret-env", "MCP_SECRET"]).get, env).get
+      check client.secret == "s3cr3t" and client.secretEnv == "MCP_SECRET"
+      check preregisteredFrom(parseMcpLoginArgs(@["--client-id", "a",
+        "--client-secret-env", "UNSET_VAR"]).get, env).isErr
+
 when isMainModule:
   runTests()
+  runMcpLoginArgTests()

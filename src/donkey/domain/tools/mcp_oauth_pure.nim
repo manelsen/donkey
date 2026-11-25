@@ -23,6 +23,13 @@ type
     tokenEndpoint*:         string
     registrationEndpoint*:  string
     scopes*:                seq[string]
+    tokenAuthMethods*:      seq[string]  ## token_endpoint_auth_methods_supported
+
+  ClientAuthMethod* = enum
+    ## How the client authenticates at the token endpoint (RFC 6749 2.3).
+    camNone  = "none"                 ## public client: PKCE only
+    camBasic = "client_secret_basic"  ## HTTP Basic with id and secret
+    camPost  = "client_secret_post"   ## id and secret in the form
 
   OAuthTokens* = object
     accessToken*:  string
@@ -84,7 +91,13 @@ proc parseAuthServerMeta*(j: JsonNode): Result[AuthServerMeta, string] =
     issuer: j{"issuer"}.getStr(""),
     authorizationEndpoint: j{"authorization_endpoint"}.getStr(""),
     tokenEndpoint: j{"token_endpoint"}.getStr(""),
-    registrationEndpoint: j{"registration_endpoint"}.getStr(""))
+    registrationEndpoint: j{"registration_endpoint"}.getStr(""),
+    tokenAuthMethods: block:
+      var methods: seq[string]
+      let listed = j{"token_endpoint_auth_methods_supported"}
+      if not listed.isNil and listed.kind == JArray:
+        for m in listed: methods.add(m.getStr)
+      methods)
   if meta.authorizationEndpoint.len == 0 or meta.tokenEndpoint.len == 0:
     return err("oauth: metadata without authorization or token endpoint")
   let methods = j{"code_challenge_methods_supported"}
@@ -139,14 +152,21 @@ func codeFromRedirect*(pasted, expectedState: string): Result[string, string] =
     return err("oauth: no code in the pasted URL")
   ok(code)
 
-func tokenRequestForm*(code, verifier, clientId, redirectUri, resource: string): string =
-  encodeQuery(@[("grant_type", "authorization_code"), ("code", code),
-                ("redirect_uri", redirectUri), ("client_id", clientId),
-                ("code_verifier", verifier), ("resource", resource)])
+func tokenRequestForm*(code, verifier, clientId, redirectUri, resource: string;
+                       clientSecret = ""): string =
+  ## `clientSecret` only for client_secret_post.
+  var params = @[("grant_type", "authorization_code"), ("code", code),
+                 ("redirect_uri", redirectUri), ("client_id", clientId),
+                 ("code_verifier", verifier), ("resource", resource)]
+  if clientSecret.len > 0: params.add(("client_secret", clientSecret))
+  encodeQuery(params)
 
-func refreshRequestForm*(refreshToken, clientId, resource: string): string =
-  encodeQuery(@[("grant_type", "refresh_token"), ("refresh_token", refreshToken),
-                ("client_id", clientId), ("resource", resource)])
+func refreshRequestForm*(refreshToken, clientId, resource: string;
+                         clientSecret = ""): string =
+  var params = @[("grant_type", "refresh_token"), ("refresh_token", refreshToken),
+                 ("client_id", clientId), ("resource", resource)]
+  if clientSecret.len > 0: params.add(("client_secret", clientSecret))
+  encodeQuery(params)
 
 proc parseTokenResponse*(j: JsonNode; nowSec: int64): Result[OAuthTokens, string] =
   if j.isNil or j.kind != JObject:
@@ -169,3 +189,21 @@ func mergeRefreshed*(old, fresh: OAuthTokens): OAuthTokens =
   result = fresh
   if result.refreshToken.len == 0:
     result.refreshToken = old.refreshToken
+
+func clientAuthMethodFor*(meta: AuthServerMeta; hasSecret: bool): Result[ClientAuthMethod, string] =
+  ## A pre-registered client with a secret authenticates as the server
+  ## allows: client_secret_basic when listed or when nothing is listed (RFC
+  ## 8414's default), else client_secret_post. Without a secret: public.
+  if not hasSecret:
+    return ok(camNone)
+  if meta.tokenAuthMethods.len == 0 or $camBasic in meta.tokenAuthMethods:
+    return ok(camBasic)
+  if $camPost in meta.tokenAuthMethods:
+    return ok(camPost)
+  err("oauth: the token endpoint takes none of client_secret_basic, " &
+      "client_secret_post (it lists " & meta.tokenAuthMethods.join(", ") & ")")
+
+func basicClientAuth*(clientId, secret: string): string =
+  ## RFC 6749 2.3.1: each part form-encoded, then Basic.
+  "Basic " & base64.encode(encodeUrl(clientId, usePlus = true) & ":" &
+                           encodeUrl(secret, usePlus = true))
