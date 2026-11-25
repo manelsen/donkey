@@ -82,3 +82,9 @@ optional due date (`YYYY-MM-DD`) and notes. It lives in the paddock as
 editing `TASKS.md` changes nothing. `/tasks` shows the board on any channel.
 At most 200 tasks; subagents and consulted agents cannot use the tool.
 
+A task held by an agent with a due date becomes that agent's turn on the
+day: a one-time schedule (`task-<id>` among the person's schedules) fires at
+noon UTC with a prompt that starts with `@agent`, so the turn answers as
+that agent and records its progress on the board. Moving the due date,
+reassigning, finishing or deleting the task moves or removes the turn.
+
