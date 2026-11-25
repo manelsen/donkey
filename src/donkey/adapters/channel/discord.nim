@@ -31,6 +31,8 @@ import ../../core/media_download
 import ../http/std_http
 import ../identity/identity_resolver
 import ./ws_client
+import ../network/persistent_socket
+import ../network/gateway_family
 import ../../infra/event_queue
 import ../../infra/thread_handle
 import ../../core/channels/recent_ids
@@ -97,27 +99,9 @@ const
   DiscordGatewayUrl = "wss://gateway.discord.gg"
   DiscordIntents    = 37376  ## GUILD_MESSAGES(512) + DIRECT_MESSAGES(4096) + MESSAGE_CONTENT(32768)
 
-type
-  GatewayState = object
-    ws:           WsClient
-    heartbeatMs:  int
-    lastBeatMs:   int64   ## epoch ms of last heartbeat sent
-    lastSeq:      int     ## last dispatch sequence number
-    sessionId:    string
-    resumeUrl:    string  ## provided in READY for resume
-    awaitingAck:  bool    ## a heartbeat was sent and not yet ACKed (op 11)
-    stopped:      bool    ## a close code reconnecting cannot fix (bad token, intents)
-  DiscordReconnect = object of IOError  ## OP=7 is normal, not an error
-
 proc epochMs(): int64 =
   let t = getTime()
   t.toUnix() * 1000 + (t.nanosecond div 1_000_000)
-
-proc sendHeartbeat(state: var GatewayState) =
-  let payload = if state.lastSeq > 0: $state.lastSeq else: "null"
-  state.ws.sendFrame("{\"op\":1,\"d\":" & payload & "}")
-  state.lastBeatMs = epochMs()
-  state.awaitingAck = true
 
 func messageEventOf*(r: DsParseResult): DiscordRawEvent =
   ## The event of a parsed MESSAGE_CREATE: live (gateway) and recovered
@@ -214,184 +198,97 @@ proc handleDispatch(t: string; d: JsonNode; logger: Logger) =
     )
     bufferOrPush(event)
 
-proc runGatewaySession(token: string; state: var GatewayState; logger: Logger) =
-  ## Single gateway session: connect, identify/resume, loop until error.
-  let host =
-    if state.resumeUrl.startsWith("wss://"):
-      let noScheme = state.resumeUrl[6 .. ^1]
-      if '/' in noScheme: noScheme[0 ..< noScheme.find('/')] else: noScheme
-    else: DiscordGatewayUrl[6 .. ^1]  ## strip "wss://" from the constant
+## The gateway connection: adapters/network/persistent_socket keeps it
+## (thread, backoff, idle timeout, stop) and gateway_family speaks the
+## protocol Discord shares with QQ official. What is Discord's own is here:
+## the URL, the identify payload, READY and the dispatches.
 
-  logger.info("discord: connecting to " & host)
-  state.ws = wsConnect(host, Port(443), "/?v=10&encoding=json", useTls = true)
+type
+  DiscordGatewayConfig = object
+    ## Plain data, copied to the connection thread.
+    token: string
 
-  ## 1. Hello → get heartbeat interval.
-  let helloRes = state.ws.recvFrame()
-  if helloRes.isErr:
-    raise newException(IOError, "Discord hello failed: " & helloRes.error)
-  let hello = parseJson(helloRes.get().data)
-  state.heartbeatMs = hello["d"]["heartbeat_interval"].getInt(41250)
-  state.awaitingAck = false
-  logger.debug("discord: hello, heartbeat=" & $state.heartbeatMs)
+  DiscordGatewayState = object
+    ## Lives on the connection thread, across reconnections.
+    family: FamilyState
 
-  ## 2. Send first heartbeat with random jitter (Discord requirement).
-  ## Use smaller jitter at startup (max 5s) for faster initial response.
-  randomize()
-  let jitter = rand(min(state.heartbeatMs, 5000))  # 0-5s instead of 0-41s
-  let startMs = epochMs()
-  while epochMs() - startMs < jitter:
-    sleep(100)
-  state.sendHeartbeat()
+proc discordLocate(cfg: DiscordGatewayConfig; state: var DiscordGatewayState;
+                   log: Logger): Result[SocketTarget, string]
+                  {.nimcall, gcsafe, raises: [CatchableError].} =
+  ## A session is resumed on the URL READY gave; a new one on the default.
+  let url = if state.family.resumeUrl.startsWith("wss://"): state.family.resumeUrl
+            else: DiscordGatewayUrl
+  var host = url[6 .. ^1]
+  if '/' in host: host = host[0 ..< host.find('/')]
+  log.info("discord: connecting to " & host)
+  ok(SocketTarget(host: host, port: Port(443), path: "/?v=10&encoding=json",
+                  useTls: true))
 
-  ## 3. Identify or Resume.
-  if state.sessionId.len > 0:
-    logger.info("discord: resuming session " & state.sessionId)
-    state.ws.sendFrame($ %* {
-      "op": 6,
-      "d": {"token": token, "session_id": state.sessionId, "seq": state.lastSeq},
-    })
+proc discordOpened(cfg: DiscordGatewayConfig; state: var DiscordGatewayState;
+                   ws: WsClient; log: Logger): SessionStep
+                  {.nimcall, gcsafe, raises: [CatchableError].} =
+  let now = epochMs()
+  ## The first heartbeat waits a random 0-5 s (Discord asks for jitter; the
+  ## full 0-41 s would delay startup), sent by the tick.
+  familyHello(ws, state.family, now, jitterMs = 0).isOkOr:
+    log.warn("discord: " & error)
+    return ssReconnect
+  state.family.lastBeatMs = now - state.family.heartbeatMs +
+                            randomJitter(state.family.heartbeatMs)
+  if state.family.sessionId.len > 0:
+    log.info("discord: resuming session " & state.family.sessionId)
   else:
-    logger.info("discord: identifying")
-    state.ws.sendFrame($ %* {
-      "op": 2,
-      "d": {
-        "token":      token,
-        "intents":    DiscordIntents,
-        "properties": {"os": "linux", "browser": AppSlug, "device": AppSlug},
-      },
-    })
+    log.info("discord: identifying")
+  familyIdentify(ws, state.family, %* {
+    "token":      cfg.token,
+    "intents":    DiscordIntents,
+    "properties": {"os": "linux", "browser": AppSlug, "device": AppSlug},
+  }, resumeToken = cfg.token)
+  ssKeep
 
-  ## 4. Main receive loop.
-  while true:
-    case heartbeatStep(epochMs(), state.lastBeatMs, state.heartbeatMs,
-                       state.awaitingAck)
-    of hbWait: discard
-    of hbSend: state.sendHeartbeat()
-    of hbZombie:
-      logger.warn("discord: heartbeat not acknowledged; reconnecting to resume")
-      break
+proc discordReady(data: JsonNode; logger: Logger) =
+  ## A new session: messages that arrived before it wait in the buffer, and
+  ## a session after a lost one asks the daemon to recover the gap.
+  logger.info("discord: ready, session=" & data{"session_id"}.getStr(""))
+  gDiscordReady = true
+  if readyNeedsResync(gDiscordEverReady):
+    logger.info("discord: new session after a lost one; recovering the gap")
+    gDiscordEvents.push(DiscordRawEvent(kind: deResync))
+  gDiscordEverReady = true
+  let pendingCount = gDiscordPending.len
+  if pendingCount > 0:
+    logger.info("discord: flushing " & $pendingCount & " buffered message(s)")
+    for event in gDiscordPending:
+      gDiscordEvents.push(event)
+    gDiscordPending = @[]
 
+proc discordFrame(cfg: DiscordGatewayConfig; state: var DiscordGatewayState;
+                  ws: WsClient; frame: WsFrame; log: Logger): SessionStep
+                 {.nimcall, gcsafe, raises: [CatchableError].} =
+  let event = familyFrame(ws, state.family, frame, closeAction, log, "discord")
+  case event.kind
+  of fkReady, fkDispatch:
     try:
-      let frameRes = state.ws.recvFrame()
-      if frameRes.isErr:
-        if frameRes.error == "timeout":
-          continue
-        logger.warn("discord: receive failed: " & frameRes.error)
-        break
-      let frame = frameRes.get()
-      case frame.opcode
+      if event.kind == fkReady: discordReady(event.data, log)
+      else: handleDispatch(event.name, event.data, log)
+    except Exception as e:  ## effect boundary: callee raises are unannotated
+      log.warn("discord: dispatch " & event.name & " failed: " & e.msg)
+  of fkStep:
+    return event.step
+  of fkNone, fkResumed:
+    discard
+  ssKeep
 
-      of WsOpcodeText:
-        let j = parseJson(frame.data)
-        let op = j["op"].getInt()
+proc discordTick(cfg: DiscordGatewayConfig; state: var DiscordGatewayState;
+                 ws: WsClient; nowMs: int64; log: Logger): SessionStep
+                {.nimcall, gcsafe, raises: [CatchableError].} =
+  familyTick(ws, state.family, nowMs, log, "discord")
 
-        case op
-        of 0:  ## Dispatch
-          let s = j["s"].getInt(0)
-          if s > 0: state.lastSeq = s
-          let t = j["t"].getStr("")
-          let d = j["d"]
-          if t == "READY":
-            state.sessionId = d["session_id"].getStr()
-            let rgu = d.getOrDefault("resume_gateway_url")
-            if rgu != nil: state.resumeUrl = rgu.getStr()
-            logger.info("discord: ready, session=" & state.sessionId)
-            ## Gateway is now ready — flush buffered messages.
-            gDiscordReady = true
-            if readyNeedsResync(gDiscordEverReady):
-              logger.info("discord: new session after a lost one; recovering the gap")
-              gDiscordEvents.push(DiscordRawEvent(kind: deResync))
-            gDiscordEverReady = true
-            let pendingCount = gDiscordPending.len
-            if pendingCount > 0:
-              logger.info("discord: flushing " & $pendingCount & " buffered message(s)")
-              for event in gDiscordPending:
-                gDiscordEvents.push(event)
-              gDiscordPending = @[]
-          else:
-            handleDispatch(t, d, logger)
+const DiscordGatewayProtocol = SocketProtocol[DiscordGatewayConfig, DiscordGatewayState](
+  locate: discordLocate, opened: discordOpened, frame: discordFrame, tick: discordTick)
 
-        of 7:  ## Reconnect
-          logger.info("discord: reconnect requested (op=7)")
-          break
-
-        of 9:  ## Invalid Session
-          logger.warn("discord: invalid session (op=9)")
-          if not j["d"].getBool(false):
-            state.sessionId = ""; state.resumeUrl = ""; state.lastSeq = 0
-          ## Discord requires a 1-5s wait before a new IDENTIFY.
-          sleep(1000 + rand(4000))
-          break
-
-        of 1:  ## The gateway asks for a heartbeat now
-          state.sendHeartbeat()
-        of 11:  ## Heartbeat ACK
-          state.awaitingAck = false
-        else:  discard
-
-      of WsOpcodePing:
-        state.ws.sendFrame(frame.data, WsOpcodePong)
-
-      of WsOpcodeClose:
-        let code = closeCodeOf(frame.data)
-        case closeAction(code)
-        of caStop:
-          logger.error("discord: gateway closed with " & $code &
-                       " (token or intents rejected); not reconnecting")
-          state.stopped = true
-        of caNewSession:
-          logger.warn("discord: gateway closed with " & $code &
-                      "; starting a new session")
-          state.sessionId = ""; state.resumeUrl = ""; state.lastSeq = 0
-        of caResume:
-          logger.warn("discord: websocket closed (" & $code & ")")
-        break
-
-      else: discard
-
-    except TimeoutError:
-      discard  ## no data — loop back to heartbeat check
-
-proc runGatewaySessionClosing(token: string; state: var GatewayState;
-                              logger: Logger) =
-  ## The socket is closed however the session ends; before, every reconnect
-  ## left the previous one open.
-  try:
-    runGatewaySession(token, state, logger)
-  finally:
-    ## `wsConnect` may have failed before a socket existed.
-    if not state.ws.sock.isNil:
-      state.ws.wsClose()
-      state.ws = WsClient()
-
-type GatewayArgs = object
-  token:  string
-  logger: LogSpec
-
-proc discordGatewayThread(arg: GatewayArgs) {.thread.} =
-  ## Entry point for the dedicated gateway OS thread.
-  ## Reconnects automatically with exponential backoff (capped at 60 s).
-  var state = GatewayState()
-  var backoffMs = 1000
-  while true:
-    try:
-      runGatewaySessionClosing(arg.token, state, arg.logger)
-      if state.stopped:
-        return
-      backoffMs = 1000 # Reset backoff on successful session
-      sleep(1000)  # a session the gateway keeps closing must not spin
-    except DiscordReconnect:
-      # OP=7 is normal - Discord requests reconnect for load balancing
-      arg.logger.info("discord: reconnecting…")
-      sleep(1000) # Brief pause before reconnect
-    except CatchableError as e:
-      arg.logger.error("discord: gateway error: " & e.msg & " — reconnecting in " & $backoffMs & " ms")
-      sleep(backoffMs)
-      backoffMs = min(backoffMs * 2, 60_000)
-
-## Thread handle for the Discord gateway OS thread.
-## Safe: only assigned once via createThread, never mutated concurrently.
-var gGatewayThread: ThreadHandle[GatewayArgs]  ## shared memory: a global pointer is gcsafe
+var gDiscordGateway: PersistentSocket[DiscordGatewayConfig, DiscordGatewayState]
+  ## Pointers only: gcsafe to touch from the daemon.
 
 # ── DiscordAdapter ─────────────────────────────────────────────────────────────
 
@@ -850,8 +747,19 @@ proc ack*(a: DiscordAdapter; channelId: string) =
 # ── Gateway management ─────────────────────────────────────────────────────────
 
 proc startGateway*(a: DiscordAdapter; logger: Logger) {.gcsafe.} =
-  ## Starts the Discord gateway thread. Call once at daemon startup.
-  gGatewayThread = spawnThread(discordGatewayThread, GatewayArgs(token: a.token, logger: logger.spec))
+  ## Starts the Discord gateway connection. Call once at daemon startup.
+  if gDiscordGateway.running:
+    return
+  let started = startPersistentSocket("discord", DiscordGatewayProtocol,
+    DiscordGatewayConfig(token: a.token), defaultSocketPolicy(), logger)
+  if started.isErr:
+    logger.error("discord: " & started.error)
+    return
+  gDiscordGateway = started.get
+
+proc stopGateway*() =
+  ## Closes the gateway connection at shutdown. Safe when it never started.
+  gDiscordGateway.stop()
 
 proc tryRecvEvent*(a: DiscordAdapter): (bool, DiscordRawEvent) =
   ## Non-blocking poll for gateway events. Returns (false, default) when empty.
