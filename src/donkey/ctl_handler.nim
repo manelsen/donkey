@@ -4,7 +4,7 @@
 ## Each subcommand group (user, session, tool, skill, provider, memory, status)
 ## has its own handler proc; `dispatchCtl` routes to the right one.
 
-import std/[options, os, sets, strutils, tables, terminal, times]
+import std/[algorithm, options, os, sets, strutils, tables, terminal, times]
 import core/types
 import core/pipeops
 import core/app_meta
@@ -12,6 +12,8 @@ import config/types
 import config/tools_registry
 import adapters/tool/mcp_oauth
 import config/environment
+import domain/memory/conversation_search_pure
+import domain/turn_trace_pure
 import config/skills_registry
 import config/clawhub_registry
 import config/dotenv
@@ -326,6 +328,49 @@ proc ctlMcpLogin*(home, url: string; env = Environment();
     echo "could not store the tokens: " & saved.error
     return 1
   echo "Logged in to " & url & "."
+  0
+
+type TraceArgs* = object
+  sinceMs*: int64
+  user*:    string
+
+func parseTraceArgs*(args: seq[string]; nowMs: int64): Result[TraceArgs, string] =
+  ## `[--since 7d|24h|2w|YYYY-MM-DD] [--user UUID]`
+  var parsed = TraceArgs()
+  var i = 0
+  while i < args.len:
+    if i + 1 >= args.len or args[i] notin ["--since", "--user"]:
+      return err("unknown or incomplete option: " & args[i])
+    if args[i] == "--since":
+      parsed.sinceMs = ? parseTimeBound(args[i + 1], nowMs, isUntil = false)
+    else:
+      parsed.user = args[i + 1]
+    i += 2
+  ok(parsed)
+
+proc exportTraces*(home: string; sinceMs: int64; user: string): seq[string] =
+  ## The trace lines in `{home}/state/traces`, oldest day first.
+  var files: seq[string]
+  for kind, path in walkDir(home / "state" / "traces"):
+    if kind == pcFile and path.endsWith(".jsonl"):
+      files.add path
+  files.sort()
+  for path in files:
+    let text = try: readFile(path) except IOError: ""
+    for line in text.splitLines:
+      if line.strip.len > 0 and traceMatches(line, sinceMs, user):
+        result.add line
+
+proc ctlTraces*(home: string; args: seq[string]): int =
+  ## `ctl traces [--since …] [--user UUID]`: per-turn traces as JSON lines
+  ## (written when DONKEY_TRACES is on), for export.
+  let options = parseTraceArgs(args, getTime().toUnix * 1000)
+  if options.isErr:
+    echo options.error
+    echo "usage: donkey ctl traces [--since 7d|24h|YYYY-MM-DD] [--user UUID]"
+    return 1
+  for line in exportTraces(home, options.get.sinceMs, options.get.user):
+    echo line
   0
 
 proc ctlToolAddHttp*(home, registryPath: string; args: seq[string]): int =
@@ -861,6 +906,8 @@ proc dispatchCtl*(cfg: DonkeyConfig;
     ctlToolInstall(registryPath, args[3], args[4 ..^ 1]); return 0
   if args[1] == "tool" and args.len >= 3 and args[2] == "add-http":
     return ctlToolAddHttp(cfg.home, registryPath, args[3 ..^ 1])
+  if args[1] == "traces":
+    return ctlTraces(cfg.home, args[2 ..^ 1])
   if args[1] == "mcp" and args.len >= 4 and args[2] == "login":
     return ctlMcpLogin(cfg.home, args[3], cfg.env, args[4 ..^ 1])
 

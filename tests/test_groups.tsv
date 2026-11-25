@@ -86,6 +86,8 @@ g0	tests/app/t_inspect_image.nim
 g0	tests/app/t_memory_consolidation.nim
 g0	tests/app/t_memory_ingest.nim
 g0	tests/app/t_metrics.nim
+g0	tests/app/t_turn_traces.nim
+g0	tests/domain/t_turn_trace_pure.nim
 g1	tests/app/t_native_approval.nim
 g1	tests/app/t_native_tools.nim
 g1	tests/app/t_onboarding_new_defaults.nim

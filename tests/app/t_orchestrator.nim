@@ -959,6 +959,49 @@ proc runTests*() =
       check "girassol42" in saved
       check "no reply" in saved
 
+    test "with traces on, a turn leaves one line about it, and nothing it said":
+      let tmpDir = getTempDir() / "donkey_test_turn_trace"
+      removeDir(tmpDir)
+      defer: removeDir(tmpDir)
+
+      proc answer(req: CompletionRequest): Result[CompletionResponse, string] =
+        ok(CompletionResponse(text: "a resposta secreta", inputTokens: 7, outputTokens: 3))
+
+      proc doTest(dir: string): Future[string] {.async.} =
+        ## Paddocks live at {home}/paddocks/{uuid}: traces go under {home}/state.
+        let paddocks = dir / "paddocks"
+        let userDir = paddocks / "u-trace"
+        createDir(userDir)
+        writeFile(userDir / "USER.md", "# Test")
+        let mem = MdFileAdapter(paddocksDir: paddocks)
+        let inbox = newAsyncQueue[AgentMessage]()
+        let outbox = newAsyncQueue[OutboundMessage]()
+        var session = makeSessionEntry()
+        session.inbox = inbox
+        let state = newSessionState()
+        let env = environmentOf({"DONKEY_DEBOUNCE_MIN_MS": "10",
+                                 "DONKEY_DEBOUNCE_SHORT_EXT_MS": "10",
+                                 "DONKEY_TRACES": "on"})
+        let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), answer,
+          newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], userDir, state, env = env,
+          fs = newFsAdapter())
+        await inbox.put(newTaskMsg("req-trace", tkUserMsg, "u-trace", "uma pergunta privada"))
+        discard await outbox.get()
+        await inbox.put(newCancelMsg())
+        await orchFut
+        var lines = ""
+        for kind, path in walkDir(dir / "state" / "traces"):
+          lines.add readFile(path)
+        lines
+
+      let lines = waitFor doTest(tmpDir)
+      check lines.strip.splitLines.len == 1
+      let j = parseJson(lines.strip)
+      check j["user"].getStr == "u-trace"
+      check j["outcome"].getStr == "ok"
+      check j["tokens"]["input"].getInt == 7
+      check "privada" notin lines and "secreta" notin lines
+
     test "provider errors are explained without leaking raw payloads":
       let tmpDir = getTempDir() / "donkey_test_provider_error_explain"
       removeDir(tmpDir)

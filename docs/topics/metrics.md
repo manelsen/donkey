@@ -43,3 +43,38 @@ histogram_quantile(0.95, sum by (le, provider) (rate(donkey_provider_latency_ms_
 sum by (provider) (increase(donkey_provider_tokens_total[1d]))  # tokens per day
 topk(5, sum by (tool) (rate(donkey_tool_calls_total{outcome="error"}[1h])))
 ```
+
+## Traces
+
+The metrics are totals. A trace is one turn's account, written when traces
+are on:
+
+```sh
+DONKEY_TRACES=on            # off when unset
+DONKEY_TRACES_DAYS=14       # days kept; default 14
+```
+
+Each agent turn appends one JSON line to `{home}/state/traces/YYYY-MM-DD.jsonl`
+(UTC days; the files are readable only by the daemon's user, and the first
+line of a new day removes the days past the retention):
+
+```json
+{"ts":1800000000000,"duration_ms":2310,"user":"<uuid>","channel":"telegram",
+ "kind":"user","session":"s-12","provider":"openrouter","streamed":true,
+ "tools":[{"name":"session_search","outcome":"output"}],
+ "tokens":{"input":1830,"output":212},"outcome":"ok"}
+```
+
+`agent_provider` appears when a named agent with its own provider answered.
+`outcome` is `ok`, `provider_error` or `stopped`; a tool's `outcome` is the
+status its result reported (`output`, `usage_error`, `operational_error`…) or
+`none` when no result came back. Nothing the person or the agent said is in a
+trace: no message, tool input or tool output.
+
+Export with the CLI, oldest first:
+
+```sh
+donkey ctl traces                       # everything kept
+donkey ctl traces --since 24h           # or 7d, 2w, YYYY-MM-DD
+donkey ctl traces --user <uuid> --since 7d
+```

@@ -38,6 +38,8 @@ import ../core/tooling/tool_loop
 import ../domain/agent_message
 import ../domain/gateway/identity_pure
 import ../domain/memory/capture_pure
+import ../domain/turn_trace_pure
+import ./turn_traces
 import ../domain/memory/provenance_pure
 import ../domain/message
 import ../domain/personality
@@ -585,8 +587,30 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
     providerOverride = routeProvider, modelOverride = routeModel,
     streamRoute = result.streamRouting.route,
     providerRuntime = result.streamRouting.runtime)
+  let turnEndedMs = epochMs()
   recordTurn(channelLabel(msg.channel), turnKindLabel(msg.taskKind),
-             float(epochMs() - turnStartedMs), ok = not loopResult.providerFailed)
+             float(turnEndedMs - turnStartedMs), ok = not loopResult.providerFailed)
+  ## The turn's own account, when traces are on (app/turn_traces): what
+  ## happened, never what was said.
+  if tracesEnabled(result.env):
+    let added =
+      if loopResult.history.len > history.len: loopResult.history[history.len .. ^1]
+      else: @[]
+    let trace = TurnTrace(
+      startedMs: turnStartedMs, durationMs: turnEndedMs - turnStartedMs,
+      userId: $turnSetup.uid, channel: channelLabel(msg.channel),
+      kind: turnKindLabel(msg.taskKind), sessionId: result.sessionId,
+      provider: providerLabel, agentProvider: routeProvider,
+      streamed: loopResult.wasStreamed, tools: toolCallsOfTurn(added),
+      inputTokens: loopResult.usage.inputTokens,
+      outputTokens: loopResult.usage.outputTokens,
+      outcome:
+        if loopResult.providerFailed: "provider_error"
+        elif sessionStopRequested(turnSetup.nativeCtx): "stopped"
+        else: "ok")
+    appendTurnTrace(fs, parentDir(parentDir(paddockDir)), trace, turnEndedMs,
+                    traceRetentionDays(result.env)).isOkOr:
+      log.warn("turn trace: " & error)
   result =
     result |>->
     withLoopResult(loopResult)
