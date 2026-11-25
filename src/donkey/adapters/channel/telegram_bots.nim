@@ -24,6 +24,8 @@ type
 
   TelegramBots* = object
     slots*:    seq[TelegramBotSlot]
+      ## Built once at startup and never resized: `adapterFor` hands out
+      ## pointers into it that the outbound ports and typing keep.
     affinity*: BotAffinity
 
 proc buildTelegramBots*(specs: openArray[BotSpec]; env: Environment;

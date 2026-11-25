@@ -532,8 +532,11 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
         proc(a: LoadedAgent): Option[LoadedAgent] = some(a))
     else:
       loadBotPersona(fs, result.botPersonas, userPayload.bot)
-  if persona.isErr and mention.isNone:
-    log.warn("bot " & userPayload.bot & ": persona not loaded: " & persona.error)
+  if persona.isErr:
+    if mention.isSome:
+      log.warn("named agent " & mention.get.name & " not loaded: " & persona.error)
+    else:
+      log.warn("bot " & userPayload.bot & ": persona not loaded: " & persona.error)
   if persona.isOk and persona.get.isSome:
     let loaded = persona.get.get
     block:
