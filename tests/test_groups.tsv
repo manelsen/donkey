@@ -225,6 +225,7 @@ g2	tests/domain/memory/t_graph_pure.nim
 g2	tests/domain/memory/t_ingest_pure.nim
 g2	tests/domain/memory/t_provenance_pure.nim
 g2	tests/domain/memory/t_query_policy_pure.nim
+g2	tests/domain/memory/t_relative_window.nim
 g2	tests/domain/memory/t_recall_pure.nim
 g2	tests/domain/memory/t_rrf.nim
 g2	tests/domain/memory/t_session_search_pure.nim
