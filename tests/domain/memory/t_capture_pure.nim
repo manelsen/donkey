@@ -52,5 +52,24 @@ proc runTests*() =
       let entry = formatAutoMemoryEntry("pergunta", "resposta")
       check entry == "- **User:** pergunta\n  **Response:** resposta\n"
 
+proc runUnansweredTests*() =
+  suite "capture of a turn whose reply failed":
+
+    test "what the person said is kept, marked as unanswered":
+      ## A failed provider leaves no reply, but the message may hold the one
+      ## fact worth remembering ("a senha do wifi é girassol42").
+      check shouldCaptureUnanswered("a senha do wifi é girassol42", replyFailed = true)
+      let entry = formatUnansweredMemoryEntry("a senha do wifi é girassol42")
+      check "girassol42" in entry
+      check "**User:**" in entry
+      check "no reply" in entry
+
+    test "only when the reply failed, and only for a substantive message":
+      check not shouldCaptureUnanswered("a senha é x", replyFailed = false)
+      check not shouldCaptureUnanswered("ok", replyFailed = true)
+      check not shouldCaptureUnanswered("/status", replyFailed = true)
+      check not shouldCaptureUnanswered("  ", replyFailed = true)
+
 when isMainModule:
   runTests()
+  runUnansweredTests()

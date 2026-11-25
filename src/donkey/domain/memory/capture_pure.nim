@@ -89,3 +89,13 @@ func clipAutoMemoryCapture*(text: string): string =
 func formatAutoMemoryEntry*(userText, responseText: string): string =
   "- **User:** " & clipAutoMemoryCapture(userText) & "\n" &
     "  **Response:** " & clipAutoMemoryCapture(responseText) & "\n"
+
+func shouldCaptureUnanswered*(userText: string; replyFailed: bool): bool =
+  ## A turn whose reply failed (the provider gave an error) has no response
+  ## to pair with, but what the person said may be the one thing worth
+  ## remembering: kept when it is substantive.
+  replyFailed and not isTrivialUserText(userText)
+
+func formatUnansweredMemoryEntry*(userText: string): string =
+  "- **User:** " & clipAutoMemoryCapture(userText) & "\n" &
+    "  **Response:** (no reply: the provider failed)\n"

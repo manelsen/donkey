@@ -610,6 +610,13 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
       formatAutoMemoryEntry(turnSetup.userText, loopResult.finalText),
       turnOrigin(result.sessionId)).isOkOr:
         log.warn("auto memory capture: " & error)
+  elif shouldCaptureUnanswered(turnSetup.userText, loopResult.providerFailed):
+    ## No reply to pair with, but what the person said is kept.
+    onboarding_runtime.safeAppendMemory(
+      memory, turnSetup.uid,
+      formatUnansweredMemoryEntry(turnSetup.userText),
+      turnOrigin(result.sessionId)).isOkOr:
+        log.warn("auto memory capture: " & error)
 
   if loopResult.finalText.len > 0:
     discard rememberCommitments(
