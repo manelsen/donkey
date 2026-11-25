@@ -66,6 +66,7 @@ type
     extraAttachments*: seq[string]  ## names of the attachments after the first
     referencedAuthorId*: string ## author of the message this one replies to
     referencedContent*:  string ## its text, when Discord included it
+    bot*:               string ## the `[[bots]]` entry it came through; "" = default
 
 # ── Gateway thread ─────────────────────────────────────────────────────────────
 
@@ -81,6 +82,16 @@ var gDiscordEvents* = initEventQueue[DiscordRawEvent]("discord")
 var gDiscordPending {.threadvar.}: seq[DiscordRawEvent]
 var gDiscordReady {.threadvar.}: bool
 var gDiscordEverReady {.threadvar.}: bool  ## a READY was seen before in this process
+var gDiscordBot {.threadvar.}: string
+  ## The bot this gateway thread connects (E3.4): each connection has its own
+  ## thread, so what it queues is tagged with its bot without any sharing.
+
+proc setGatewayBot*(bot: string) =
+  gDiscordBot = bot
+
+proc taggedEvent*(event: DiscordRawEvent): DiscordRawEvent =
+  result = event
+  result.bot = gDiscordBot
 
 func readyNeedsResync*(readyBefore: bool): bool =
   ## A READY answers an IDENTIFY. The first one is the startup, recovered by
@@ -91,9 +102,9 @@ func readyNeedsResync*(readyBefore: bool): bool =
 proc bufferOrPush(event: DiscordRawEvent) =
   ## Before READY the event waits; afterwards it goes to the daemon loop.
   if gDiscordReady:
-    gDiscordEvents.push(event)
+    gDiscordEvents.push(taggedEvent(event))
   else:
-    gDiscordPending.add(event)
+    gDiscordPending.add(taggedEvent(event))
 
 const
   DiscordApiBase*   = "https://discord.com/api/v10"
@@ -209,6 +220,7 @@ type
   DiscordGatewayConfig = object
     ## Plain data, copied to the connection thread.
     token: string
+    bot:   string   ## "" = the default bot
 
   DiscordGatewayState = object
     ## Lives on the connection thread, across reconnections.
@@ -218,6 +230,7 @@ proc discordLocate(cfg: DiscordGatewayConfig; state: var DiscordGatewayState;
                    log: Logger): Result[SocketTarget, string]
                   {.nimcall, gcsafe, raises: [CatchableError].} =
   ## A session is resumed on the URL READY gave; a new one on the default.
+  setGatewayBot(cfg.bot)
   let url = if state.family.resumeUrl.startsWith("wss://"): state.family.resumeUrl
             else: DiscordGatewayUrl
   var host = url[6 .. ^1]
@@ -253,7 +266,7 @@ proc discordReady(data: JsonNode; logger: Logger) =
   gDiscordReady = true
   if readyNeedsResync(gDiscordEverReady):
     logger.info("discord: new session after a lost one; recovering the gap")
-    gDiscordEvents.push(DiscordRawEvent(kind: deResync))
+    gDiscordEvents.push(taggedEvent(DiscordRawEvent(kind: deResync)))
   gDiscordEverReady = true
   let pendingCount = gDiscordPending.len
   if pendingCount > 0:
@@ -287,8 +300,13 @@ proc discordTick(cfg: DiscordGatewayConfig; state: var DiscordGatewayState;
 const DiscordGatewayProtocol = SocketProtocol[DiscordGatewayConfig, DiscordGatewayState](
   locate: discordLocate, opened: discordOpened, frame: discordFrame, tick: discordTick)
 
-var gDiscordGateway: PersistentSocket[DiscordGatewayConfig, DiscordGatewayState]
-  ## Pointers only: gcsafe to touch from the daemon.
+const MaxDiscordGateways* = 16
+  ## The default bot and the `[[bots]]` entries on Discord.
+
+var gDiscordGateways: array[MaxDiscordGateways, PersistentSocket[DiscordGatewayConfig, DiscordGatewayState]]
+var gDiscordGatewayCount: int
+  ## Pointers only: gcsafe to touch from the daemon, which alone starts and
+  ## stops them.
 
 # ── DiscordAdapter ─────────────────────────────────────────────────────────────
 
@@ -746,20 +764,24 @@ proc ack*(a: DiscordAdapter; channelId: string) =
 
 # ── Gateway management ─────────────────────────────────────────────────────────
 
-proc startGateway*(a: DiscordAdapter; logger: Logger) {.gcsafe.} =
-  ## Starts the Discord gateway connection. Call once at daemon startup.
-  if gDiscordGateway.running:
+proc startGateway*(a: DiscordAdapter; logger: Logger; bot = "") {.gcsafe.} =
+  ## Starts one bot's gateway connection. Call once per bot at daemon startup.
+  if gDiscordGatewayCount >= MaxDiscordGateways:
+    logger.error("discord: more than " & $MaxDiscordGateways & " bots; " &
+                 (if bot.len > 0: bot else: "default") & " not started")
     return
   let started = startPersistentSocket("discord", DiscordGatewayProtocol,
-    DiscordGatewayConfig(token: a.token), defaultSocketPolicy(), logger)
+    DiscordGatewayConfig(token: a.token, bot: bot), defaultSocketPolicy(), logger)
   if started.isErr:
     logger.error("discord: " & started.error)
     return
-  gDiscordGateway = started.get
+  gDiscordGateways[gDiscordGatewayCount] = started.get
+  inc gDiscordGatewayCount
 
 proc stopGateway*() =
-  ## Closes the gateway connection at shutdown. Safe when it never started.
-  gDiscordGateway.stop()
+  ## Closes every gateway connection at shutdown. Safe when none started.
+  for i in 0 ..< gDiscordGatewayCount:
+    gDiscordGateways[i].stop()
 
 proc tryRecvEvent*(a: DiscordAdapter): (bool, DiscordRawEvent) =
   ## Non-blocking poll for gateway events. Returns (false, default) when empty.

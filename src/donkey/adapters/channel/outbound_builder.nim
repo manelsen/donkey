@@ -103,6 +103,36 @@ proc telegramOutboundPort*(tg: ptr TelegramAdapter;
       tg[].downloadFile(fileId),
   )
 
+type DiscordPick* = proc(userId: UserId): ptr DiscordAdapter {.gcsafe.}
+  ## The adapter of the Discord bot a person last wrote to (discord_bots).
+
+proc discordOutboundPort*(dc: ptr DiscordAdapter;
+                          pick: DiscordPick = nil): OutboundChannelPort =
+  ## As on Telegram: what is addressed to a person goes through their bot. An
+  ## attachment is a CDN URL, fetched by the adapter the port was built for.
+  template forUser(userId: UserId): ptr DiscordAdapter =
+    (if pick != nil: pick(userId) else: dc)
+  OutboundChannelPort(
+    send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
+      forUser(msg.userId)[].send(msg),
+    sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} =
+      forUser(msg.userId)[].sendReturnId(msg),
+    editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+      discard isHtml
+      forUser(userId)[].editMessage(userId, msgId, text),
+    sendKeyboard: proc(userId: UserId; text: string;
+                        buttons: seq[seq[(string, string)]];
+                        replyTo = ""): Result[void, string] {.gcsafe.} =
+      forUser(userId)[].sendKeyboard(userId, text, buttons).map(proc(s: string): void = discard s),
+    editKeyboard: proc(userId: UserId; msgId, text: string;
+                        buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} =
+      forUser(userId)[].editKeyboard(userId, msgId, text, buttons),
+    setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} =
+      forUser(userId)[].setMessageReaction(userId, channelId, msgId, emoji),
+    downloadFile: proc(fileId: string): Result[FileDownload, string] {.gcsafe.} =
+      dc[].downloadFile(fileId),
+  )
+
 proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
                          dcAdapter: ptr DiscordAdapter;
                          wcAdapter: ptr WeComAdapter;
@@ -118,32 +148,14 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
                          signalAdapter: ptr SignalAdapter = nil;
                          lineAdapter: ptr LineAdapter = nil;
                          teamsAdapter: ptr TeamsAdapter = nil;
-                         tgPick: TelegramPick = nil): OutboundChannelPorts =
+                         tgPick: TelegramPick = nil;
+                         dcPick: DiscordPick = nil): OutboundChannelPorts =
 
   # ── Telegram (full capability) ────────────────────────────────────────────
   result.telegram = telegramOutboundPort(tgAdapter, tgPick)
 
   # ── Discord (full capability) ─────────────────────────────────────────────
-  result.discord = OutboundChannelPort(
-    send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
-      dcAdapter[].send(msg),
-    sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} =
-      dcAdapter[].sendReturnId(msg),
-    editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
-      discard isHtml
-      dcAdapter[].editMessage(userId, msgId, text),
-    sendKeyboard: proc(userId: UserId; text: string;
-                        buttons: seq[seq[(string, string)]];
-                        replyTo = ""): Result[void, string] {.gcsafe.} =
-      dcAdapter[].sendKeyboard(userId, text, buttons).map(proc(s: string): void = discard s),
-    editKeyboard: proc(userId: UserId; msgId, text: string;
-                        buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} =
-      dcAdapter[].editKeyboard(userId, msgId, text, buttons),
-    setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} =
-      dcAdapter[].setMessageReaction(userId, channelId, msgId, emoji),
-    downloadFile: proc(fileId: string): Result[FileDownload, string] {.gcsafe.} =
-      dcAdapter[].downloadFile(fileId),
-  )
+  result.discord = discordOutboundPort(dcAdapter, dcPick)
 
   # ── WeCom — capability descriptor says: send only ─────────────────────────
   result.wecom = OutboundChannelPort(

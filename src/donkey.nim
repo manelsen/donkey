@@ -47,6 +47,7 @@ import donkey/adapters/filesystem/fs_adapter
 import donkey/adapters/channel/common_runtime
 import donkey/adapters/channel/telegram_runtime
 import donkey/adapters/channel/telegram_bots
+import donkey/adapters/channel/discord_bots
 import donkey/adapters/channel/discord
 import donkey/adapters/channel/discord_runtime
 import donkey/adapters/channel/wecom
@@ -231,6 +232,8 @@ type DaemonAdapters = object
   tg: TelegramAdapter
   tgBots: TelegramBots       ## the `[[bots]]` on Telegram (E3.3)
   tgBotProblems: seq[string] ## bots left out, logged at startup
+  dcBots: DiscordBots        ## the `[[bots]]` on Discord (E3.4)
+  dcBotProblems: seq[string]
   dc: DiscordAdapter
   wc: WeComAdapter
   wch: WeChatAdapter
@@ -254,6 +257,13 @@ proc telegramPick(adapters: var DaemonAdapters): TelegramPick =
   result = proc(userId: UserId): ptr TelegramAdapter {.gcsafe.} =
     adapterFor(bots, primary, userId)
 
+proc discordPick(adapters: var DaemonAdapters): DiscordPick =
+  ## The adapter of the Discord bot each person last wrote to.
+  let bots = addr adapters.dcBots
+  let primary = addr adapters.dc
+  result = proc(userId: UserId): ptr DiscordAdapter {.gcsafe.} =
+    adapterFor(bots, primary, userId)
+
 proc buildRuntimeOutboundPorts(adapters: var DaemonAdapters): OutboundChannelPorts =
   let signalPtr =
     if adapters.signal.account.len > 0: addr adapters.signal
@@ -263,7 +273,7 @@ proc buildRuntimeOutboundPorts(adapters: var DaemonAdapters): OutboundChannelPor
     addr adapters.wch, addr adapters.qq, addr adapters.fs, addr adapters.mx,
     addr adapters.em, addr adapters.sl, addr adapters.dt, addr adapters.wa,
     addr adapters.cli, signalPtr, addr adapters.ln, addr adapters.teams,
-    tgPick = telegramPick(adapters))
+    tgPick = telegramPick(adapters), dcPick = discordPick(adapters))
 
 type DaemonServices = object
   toolClients:      seq[ToolRuntimePort]
@@ -602,6 +612,7 @@ proc initDaemonAdapters(cfg: DonkeyConfig; env: DaemonEnv): DaemonAdapters =
   result.dc = newDiscordAdapter(env.discordToken, env.identityPath,
                                 requireMention = discordRequireMention(cfg.env),
                                 allowedChannels = discordAllowedChannels(cfg.env))
+  (result.dcBots, result.dcBotProblems) = buildDiscordBots(cfg.bots, cfg.env, result.dc)
   result.wc = newWeComAdapter(env.wecomCorpId, cfg.env.get("WECOM_CORP_SECRET"),
                               cfg.env.get("WECOM_CALLBACK_TOKEN"), env.wecomAgentId,
                               env.identityPath)
@@ -724,13 +735,15 @@ proc loadDaemonBootstrap(cfg: DonkeyConfig;
 proc startOptionalDiscordGateway(dcAdapter: var DiscordAdapter;
                                  discordToken: string;
                                  discordGuildId: string;
-                                 log: Logger) =
+                                 log: Logger;
+                                 bot = "") =
   if discordToken.len == 0:
     log.info("DISCORD_BOT_TOKEN not set — Discord disabled")
     return
 
-  log.info("Discord gateway starting (token len=" & $discordToken.len & ")")
-  dcAdapter.startGateway(log)
+  log.info("Discord gateway starting" & (if bot.len > 0: " for bot " & bot else: "") &
+           " (token len=" & $discordToken.len & ")")
+  dcAdapter.startGateway(log, bot)
   let appId = dcAdapter.getAppId().valueOr:
     log.warn("Discord getAppId failed: " & error); ""
   if appId.len > 0:
@@ -1330,6 +1343,9 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
 proc startDaemonIngress(ctx: DaemonContext;
                         log: Logger) =
   startOptionalDiscordGateway(ctx.adapters.dc, ctx.env.discordToken, ctx.env.discordGuildId, log)
+  for slot in ctx.adapters.dcBots.slots.mitems:
+    startOptionalDiscordGateway(slot.adapter, slot.adapter.token, ctx.env.discordGuildId,
+                                log, bot = slot.name)
   startOptionalWeComGateway(ctx.env.wecomCorpId, log)
   startOptionalWeChatGateway(ctx.env.wechatAppId, log)
   startOptionalFeishuGateway(ctx.adapters.fs, ctx.env.feishuAppId, log)
@@ -1426,7 +1442,7 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
 
   initGatewayDrainer(
     drainDiscord = proc(): bool =
-      drainDiscordGateway(ctx.env.discordToken.len > 0, proc(): bool =
+      drainDiscordGateway(ctx.env.discordToken.len > 0 or ctx.adapters.dcBots.slots.len > 0, proc(): bool =
         discord_runtime.drainDiscordEvents(
           ctx.runtime.sm, ctx.adapters.dc, ctx.env.discordToken, ctx.runtime.presentationState, cmdEnv,
           ctx.runtime.msgSeq, log,
@@ -1435,7 +1451,11 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
           proc(msg: InboundMessage) =
             completeReaction(ctx.runtime.presentationState, outboundPorts, msg.channel, msg.userId,
               msg.channelId, statusMessageId(msg), false),
-          fallback)
+          fallback,
+          pickBot = proc(bot: string): ptr DiscordAdapter {.gcsafe.} =
+            slotAdapter(addr ctx.adapters.dcBots, addr ctx.adapters.dc, bot),
+          noteInbound = proc(userId: UserId; bot: string) {.gcsafe.} =
+            noteInbound(ctx.adapters.dcBots, userId, bot))
         true
       ),
     drainWeCom = proc(): bool =
@@ -1757,7 +1777,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   activateDaemonBootstrap(ctx, cfg, memory, log)
   let sessionServices = buildDaemonSessionServices(ctx, cfg, memory, log)
   ## `[[bots]]` entries left out, and why (domain/bots_pure).
-  for problem in cfg.botProblems & ctx.adapters.tgBotProblems:
+  for problem in cfg.botProblems & ctx.adapters.tgBotProblems & ctx.adapters.dcBotProblems:
     log.warn("[[bots]] " & problem)
   ## Turns the previous process died in: replayed when nothing they did
   ## could be repeated, otherwise the user is told. The replays and notices
