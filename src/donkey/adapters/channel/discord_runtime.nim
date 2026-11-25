@@ -515,6 +515,7 @@ proc handleDiscordEvent*(sm: var SessionManager;
       mediaFileName: event.attachmentName,
       mediaMimeType: event.attachmentMime,
       quotedText: event.referencedContent,
+      bot:       event.bot,   ## the turn answers with that bot's persona
     )
     if event.extraAttachments.len > 0:
       ## One attachment per turn is downloaded; say which ones were not.

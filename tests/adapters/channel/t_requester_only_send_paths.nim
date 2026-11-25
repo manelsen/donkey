@@ -593,6 +593,30 @@ proc runTests*() =
       check not anyRequest(proc(r: Recorded): bool = "chan-x" in r.target)
       check noted == @["ops"]
 
+    test "Discord: a bot's message reaches the session tagged with the bot":
+      ## The tag is what makes the turn answer with the bot's persona (E3.2).
+      reset()
+      var sm = openSessions()
+      var msgSeq = 0
+      var state = initPresentationState()
+      let dc = newDiscordAdapter("TOK", Tmp / "dc-tag" / "ids.tsv", apiBase = base())
+      var botB = newDiscordAdapter("TOK-B", "", apiBase = base() & "/botb")
+      botB.resolver = dc.resolver
+      botB.cursor = nil
+      let pb = addr botB
+      var reached: seq[InboundMessage]
+      let capture = proc(msg: InboundMessage) {.gcsafe.} =
+        {.cast(gcsafe).}:
+          reached.add msg
+      gDiscordEvents.push(DiscordRawEvent(kind: deMessage, discordUserId: "75",
+        content: "bom dia", channelId: "dm-75", messageId: "tm1", bot: "ops"))
+      drainDiscordEvents(sm, dc, "TOK", state, env("dc-tag"), msgSeq, logger,
+        noop, noop, capture,
+        pickBot = proc(bot: string): ptr DiscordAdapter {.gcsafe.} = pb)
+      check reached.len == 1
+      check reached[0].bot == "ops"
+      check reached[0].text == "bom dia"
+
     test "Discord: without a default token, the bots' events are still served":
       reset()
       var sm = openSessions()
