@@ -162,6 +162,14 @@ proc runTests*() =
         assignee: "@x", due: "2027-01-10"))
       check a.rows.len == 0
 
+    test "without schedules the reply says the agent's turn will not come":
+      let dir = paddock("agent-unavailable")
+      defer: removeDir(dir)
+      let r = performManageTasks(newFsAdapter(), dir, ManageTasksContext(action: "add",
+        title: "x", assignee: "@pesquisa", due: "2027-01-20"), Now,
+        TaskAgenda(userId: "alice", channel: "telegram")).get
+      check "not be scheduled" in r
+
     test "the tool is dispatched for real and denied to subagents":
       let dir = paddock("dispatch")
       defer: removeDir(dir)

@@ -635,6 +635,7 @@ proc runTests*() =
       check parseTrigger("@at").isErr
       check parseTrigger("@at amanhã").isErr
       check parseTrigger("@at -5").isErr
+      check parseTrigger("@at 0").isErr
 
     test "it runs once: the instant itself, then never again":
       let spec = makeSpec("@at " & $dayAt(3, 9, 0))

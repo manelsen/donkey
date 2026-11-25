@@ -67,16 +67,18 @@ proc syncAgentTurn(agenda: TaskAgenda; taskId: string; task: Option[BoardTask];
   ## One schedule per task (`task-<id>` among the person's schedules), kept
   ## while an agent holds the task, it has a due day still ahead and it is not
   ## done; removed otherwise. Returns a sentence for the reply, or "".
+  let wantsTurn = task.isSome and task.get.assignee.startsWith("@") and
+                  task.get.dueMs > 0 and task.get.state != tsDone and
+                  task.get.dueMs + AgentTurnHourMs > nowMs
   if not agenda.schedules.schedulesAvailable or agenda.userId.len == 0:
-    return ""
+    return (if wantsTurn: " (Schedules are off here, so the agent's turn will not be scheduled.)"
+            else: "")
   let id = userScheduleId(agenda.userId, "task-" & taskId)
   discard agenda.schedules.remove(id)
-  if task.isNone:
+  if not wantsTurn:
     return ""
   let t = task.get
   let at = t.dueMs + AgentTurnHourMs
-  if not t.assignee.startsWith("@") or t.dueMs == 0 or t.state == tsDone or at <= nowMs:
-    return ""
   let spec = ScheduleSpec(id: id, cronExpr: AtPrefix & " " & $at, userId: agenda.userId,
                           channel: agenda.channel, payload: agentTurnPrompt(t),
                           catchUp: scOnce, enabled: true, createdAtMs: nowMs)
@@ -95,6 +97,7 @@ proc performManageTasks*(fs: FsRuntimePort; paddockDir: string;
     "Error: the task board cannot be read (" & e & "); it was left as it is"))
   var next: TaskBoard
   var reply: string
+  var addedId = ""
   case ctx.action
   of "list":
     return board.listing(ctx.state, ctx.assignee).mapErr(proc(e: string): string = "Error: " & e)
@@ -106,6 +109,7 @@ proc performManageTasks*(fs: FsRuntimePort; paddockDir: string;
       added = ? added.assignTask(task.id, ctx.assignee, nowMs).mapErr(
         proc(e: string): string = "Error: " & e)
     next = added
+    addedId = task.id
     reply = "Added " & task.id & ": " & task.title
     if ctx.assignee.strip.len > 0:
       reply.add " (" & ctx.assignee.strip.toLowerAscii & ")"
@@ -136,8 +140,6 @@ proc performManageTasks*(fs: FsRuntimePort; paddockDir: string;
     return err("Error: unknown action '" & ctx.action & "'")
   ? saveBoard(fs, paddockDir, next).mapErr(proc(e: string): string =
     "Error: the task board was not saved (" & e & ")")
-  let changed =
-    if ctx.action == "add": next.tasks[^1].id
-    else: ctx.id.strip.toLowerAscii
+  let changed = if addedId.len > 0: addedId else: ctx.id.strip.toLowerAscii
   reply.add syncAgentTurn(agenda, changed, next.find(changed), nowMs)
   ok(reply)

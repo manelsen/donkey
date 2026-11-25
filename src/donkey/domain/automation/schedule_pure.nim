@@ -165,6 +165,8 @@ func parseTrigger*(expr: string): Result[Trigger, string] =
       var at = 0'i64
       for c in digits:
         at = at * 10 + int64(ord(c) - ord('0'))
+      if at <= 0:
+        return err("a one-time schedule needs an instant after the epoch")
       return ok(Trigger(kind: tkOnce, atMs: at))
     if word == EveryPrefix:
       let period = ? parseInterval(s[EveryPrefix.len .. ^1].replace(" ", ""))
