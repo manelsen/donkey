@@ -55,10 +55,14 @@ proc sendHeartbeat*(ws: WsClient; state: var FamilyState; nowMs: int64) =
   state.lastBeatMs = nowMs
   state.awaitingAck = true
 
+proc randomJitter*(intervalMs: int; capMs = 5_000): int =
+  ## The first beat's delay: random, at most the interval or `capMs`.
+  if capMs <= 0: 0 else: rand(min(intervalMs, capMs))
+
 proc familyHello*(ws: WsClient; state: var FamilyState; nowMs: int64;
-                  jitterMs: int; defaultIntervalMs = 41_250): Result[void, string] =
-  ## Reads the hello and schedules the first heartbeat `jitterMs` from now
-  ## (the platforms ask for a random delay). The tick sends it: the thread
+                  jitterCapMs: int; defaultIntervalMs = 41_250): Result[void, string] =
+  ## Reads the hello and schedules the first heartbeat after a random delay
+  ## of at most `jitterCapMs` (0: due at once). The tick sends it: the thread
   ## never sleeps here, so a stop is not held up.
   let hello = ws.recvFrame(timeoutMs = 10_000)
   if hello.isErr:
@@ -71,12 +75,9 @@ proc familyHello*(ws: WsClient; state: var FamilyState; nowMs: int64;
   except CatchableError as e:
     return err("hello unreadable: " & e.msg)
   state.awaitingAck = false
-  state.lastBeatMs = nowMs - state.heartbeatMs + jitterMs
+  state.lastBeatMs = nowMs - state.heartbeatMs +
+                     randomJitter(state.heartbeatMs, jitterCapMs)
   ok()
-
-proc randomJitter*(intervalMs: int; capMs = 5_000): int =
-  ## The first beat's delay: random, at most the interval or `capMs`.
-  rand(min(intervalMs, capMs))
 
 proc familyIdentify*(ws: WsClient; state: FamilyState; identify: JsonNode;
                      resumeToken: string) =
@@ -152,8 +153,9 @@ proc familyFrame*(ws: WsClient; state: var FamilyState; frame: WsFrame;
     log.info(label & ": reconnect requested (op 7)")
     stepEvent(ssReconnect)
   of 9:
-    ## The platforms ask for a 1-5 s wait before a new IDENTIFY; the
-    ## socket's backoff pause after a session (at least 1 s) gives it.
+    ## The platforms ask for a 1-5 s wait before a new IDENTIFY. The socket
+    ## pauses at least `reconnectMinMs` before any reconnection, and both
+    ## gateways run on `defaultSocketPolicy` (1 s; pinned by a test).
     log.warn(label & ": invalid session (op 9)")
     if not j.getOrDefault("d").getBool(false):
       state.resetSession()

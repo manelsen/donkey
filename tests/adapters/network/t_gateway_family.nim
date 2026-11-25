@@ -64,16 +64,28 @@ proc runTests*() =
   suite "Discord-family gateway":
 
     test "hello sets the interval and schedules the first beat within the jitter":
+      for _ in 0 ..< 20:
+        var p = pair()
+        var state = FamilyState()
+        p.serverSends($ %* {"op": 10, "d": {"heartbeat_interval": 41250}})
+        check familyHello(p.ws, state, nowMs = 100_000, jitterCapMs = 3000).isOk
+        check state.heartbeatMs == 41250
+        check not state.awaitingAck
+        ## Due within the cap: no sleep on the connection thread.
+        check heartbeatStep(100_000 + 3000, state.lastBeatMs, state.heartbeatMs, false) == hbSend
+        p.close()
+
+    test "without a jitter cap the first beat is due at once":
       var p = pair()
       defer: p.close()
       var state = FamilyState()
-      p.serverSends($ %* {"op": 10, "d": {"heartbeat_interval": 41250}})
-      check familyHello(p.ws, state, nowMs = 100_000, jitterMs = 3000).isOk
-      check state.heartbeatMs == 41250
-      check not state.awaitingAck
-      ## Due exactly `jitterMs` from now: no sleep on the connection thread.
-      check heartbeatStep(100_000 + 2999, state.lastBeatMs, state.heartbeatMs, false) == hbWait
-      check heartbeatStep(100_000 + 3000, state.lastBeatMs, state.heartbeatMs, false) == hbSend
+      p.serverSends($ %* {"op": 10, "d": {"heartbeat_interval": 45000}})
+      check familyHello(p.ws, state, nowMs = 5_000, jitterCapMs = 0).isOk
+      check heartbeatStep(5_000, state.lastBeatMs, state.heartbeatMs, false) == hbSend
+
+    test "the gateways wait at least 1 s before identifying again (op 9)":
+      ## Discord and QQ ask for 1-5 s; the socket's shortest pause gives it.
+      check defaultSocketPolicy().reconnectMinMs >= 1_000
 
     test "a fresh session identifies; a known one resumes from its sequence":
       var p = pair()

@@ -230,11 +230,9 @@ proc discordOpened(cfg: DiscordGatewayConfig; state: var DiscordGatewayState;
   let now = epochMs()
   ## The first heartbeat waits a random 0-5 s (Discord asks for jitter; the
   ## full 0-41 s would delay startup), sent by the tick.
-  familyHello(ws, state.family, now, jitterMs = 0).isOkOr:
+  familyHello(ws, state.family, now, jitterCapMs = 5_000).isOkOr:
     log.warn("discord: " & error)
     return ssReconnect
-  state.family.lastBeatMs = now - state.family.heartbeatMs +
-                            randomJitter(state.family.heartbeatMs)
   if state.family.sessionId.len > 0:
     log.info("discord: resuming session " & state.family.sessionId)
   else:
