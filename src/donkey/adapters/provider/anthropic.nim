@@ -24,6 +24,7 @@ import ../../core/json_helpers
 import ../../ports/http
 import ./provider_http
 import ./sse
+import ../../domain/providers/anthropic_stream_pure
 
 const
   AnthropicEndpoint*     = "https://api.anthropic.com/v1/messages"
@@ -253,12 +254,15 @@ proc makeStreamFn*(a: AnthropicAdapter): StreamFn =
       let body = $adapter.buildStreamBody(req)
       let url  = adapter.messagesUrl()
       let resp = ? postProviderStream(adapter.http, "Anthropic", url, body, headers)
-      sseAccumulate(resp, parseAnthropicSseLine, onToken)
-      ok(CompletionResponse(
-        text:         accumulated,
-        inputTokens:  inputTokens,
-        outputTokens: outputTokens,
-      ))
+      ## Tool calls and joined text blocks, as a non-streamed call gives them
+      ## (domain/providers/anthropic_stream_pure).
+      var acc = initAnthropicStream()
+      var line = ""
+      while not acc.done and resp.readLine(line):
+        let token = ? acc.feed(line)
+        if token.len > 0:
+          onToken(token)
+      acc.finish("Anthropic")
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 

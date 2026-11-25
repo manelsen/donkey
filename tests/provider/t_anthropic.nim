@@ -7,6 +7,15 @@ import results
 import donkey/adapters/provider/anthropic
 import donkey/core/pipeops
 import donkey/domain/message
+import donkey/ports/http
+
+
+proc fakeStreamPort(body: string): HttpRuntimePort =
+  ## A transport that answers every request with `body` (the SSE text).
+  HttpRuntimePort(postNoRedirect: proc(url, payload: string;
+                                       headers: seq[HttpHeader] = @[]):
+                                       Result[HttpResponse, string] {.gcsafe.} =
+    ok(HttpResponse(status: 200, body: body)))
 
 proc runTests*() =
   suite "AnthropicAdapter caps":
@@ -183,6 +192,32 @@ proc runTests*() =
       check not parsed.isErr
       let chunk = parsed.value
       check chunk.done
+
+  suite "AnthropicAdapter stream (adapter level)":
+
+    test "a streamed tool call reaches the response":
+      var a = newAnthropicAdapter("k")
+      a.http = fakeStreamPort(
+        "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3}}}\n" &
+        "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"calc\",\"input\":{}}}\n" &
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{}\"}}\n" &
+        "data: {\"type\":\"message_stop\"}\n")
+      var tokens: seq[string]
+      let r = a.makeStreamFn()(CompletionRequest(),
+                               proc(tok: string) {.gcsafe.} = discard)
+      check r.isOk
+      check r.get.toolCalls.len == 1
+      check r.get.toolCalls[0].name == "calc"
+
+    test "a stream cut before message_stop is an error at the adapter too":
+      var a = newAnthropicAdapter("k")
+      a.http = fakeStreamPort(
+        "data: {\"type\":\"message_start\",\"message\":{\"usage\":{}}}\n" &
+        "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"meio\"}}\n")
+      let r = a.makeStreamFn()(CompletionRequest(),
+                               proc(tok: string) {.gcsafe.} = discard)
+      check r.isErr
+      check "truncated" in r.error
 
   suite "AnthropicAdapter image content":
 
