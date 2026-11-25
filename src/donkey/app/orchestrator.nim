@@ -157,6 +157,7 @@ type OrchestratorState = object
   stopGeneration*: uint64
   sessionId*:     string
   journal*:       TurnJournalPort ## turns in flight, for resuming after a crash
+  botPersonas*:   BotPersonas     ## the operator's personas for `[[bots]]` (E3)
   turnId*:        string          ## the journal id of the turn running now
 
 func newOrchestratorState*(): OrchestratorState =
@@ -522,12 +523,25 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   var routeProvider = ""
   var routeModel = ""
   var turnStreamFactory = streamFactory
+  ## A message that came through one of the `[[bots]]` is answered with that
+  ## bot's persona (an agent in {home}/agents), unless it names an agent.
   let mention = agentMention(userPayload.text)
-  if mention.isSome:
-    let loaded = loadNamedAgent(fs, paddockDir, mention.get.name)
-    if loaded.isOk:
-      let agent = loaded.get.agent
-      systemBase = namedAgentSystem(agent, loaded.get.notes, toolsSuffix)
+  let persona =
+    if mention.isSome:
+      loadNamedAgent(fs, paddockDir, mention.get.name).map(
+        proc(a: LoadedAgent): Option[LoadedAgent] = some(a))
+    else:
+      loadBotPersona(fs, result.botPersonas, userPayload.bot)
+  if persona.isErr:
+    if mention.isSome:
+      log.warn("named agent " & mention.get.name & " not loaded: " & persona.error)
+    else:
+      log.warn("bot " & userPayload.bot & ": persona not loaded: " & persona.error)
+  if persona.isOk and persona.get.isSome:
+    let loaded = persona.get.get
+    block:
+      let agent = loaded.agent
+      systemBase = namedAgentSystem(agent, loaded.notes, toolsSuffix)
       routeProvider = agent.provider
       routeModel = agent.model
       if agent.provider.len > 0 and result.streamRouting.route == nil:
@@ -968,7 +982,8 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
                       streamRouting: StreamRouting = StreamRouting();
                       process:        ProcessRuntimePort = unavailableProcess();
                       attachments:    AttachmentStorePort = unavailableAttachments();
-                      journal:        TurnJournalPort = TurnJournalPort()): Future[void] {.async.} =
+                      journal:        TurnJournalPort = TurnJournalPort();
+                      botPersonas:    BotPersonas = BotPersonas()): Future[void] {.async.} =
   ## Persistent actor. Loops: debounce → memory → LLM → reply → repeat.
   ## `env` is the snapshot tool and turn settings are read from.
   if daemonShuttingDown():
@@ -995,6 +1010,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
   stateRuntime.process = process
   stateRuntime.attachments = attachments
   stateRuntime.journal = journal
+  stateRuntime.botPersonas = botPersonas
   stateRuntime.subagents = newSubagentManager(subagentWorkspace)
   stateRuntime.stopGeneration = currentSessionStopGeneration()
   let sessionId   = $nowMs()

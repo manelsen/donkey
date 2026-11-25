@@ -71,6 +71,38 @@ proc unsupportedDownloadFile(fileId: string): Result[FileDownload, string] {.gcs
 ## tick instead of storing them. Never pass the address of a stack local
 ## whose ports escape the current scope.
 
+type TelegramPick* = proc(userId: UserId): ptr TelegramAdapter {.gcsafe.}
+  ## The adapter of the bot a person last wrote to (adapters/channel/
+  ## telegram_bots); nil = one bot.
+
+proc telegramOutboundPort*(tg: ptr TelegramAdapter;
+                           pick: TelegramPick = nil): OutboundChannelPort =
+  ## Every operation addressed to a person goes through that person's bot:
+  ## the message ids, chats and keyboards of one bot mean nothing to another.
+  ## A file is fetched by the adapter this port was built for (the bot whose
+  ## update carried it).
+  template forUser(userId: UserId): ptr TelegramAdapter =
+    (if pick != nil: pick(userId) else: tg)
+  OutboundChannelPort(
+    send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
+      forUser(msg.userId)[].send(msg),
+    sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} =
+      forUser(msg.userId)[].sendReturnId(msg),
+    editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
+      forUser(userId)[].editMessage(userId, msgId, text, isHtml),
+    sendKeyboard: proc(userId: UserId; text: string;
+                        buttons: seq[seq[(string, string)]];
+                        replyTo = ""): Result[void, string] {.gcsafe.} =
+      forUser(userId)[].sendKeyboard(userId, text, buttons, replyTo).map(proc(s: string): void = discard s),
+    editKeyboard: proc(userId: UserId; msgId, text: string;
+                        buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} =
+      forUser(userId)[].editKeyboardText(userId, msgId, text, buttons),
+    setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} =
+      forUser(userId)[].setMessageReaction(userId, channelId, msgId, emoji),
+    downloadFile: proc(fileId: string): Result[FileDownload, string] {.gcsafe.} =
+      tg[].downloadFile(fileId),
+  )
+
 proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
                          dcAdapter: ptr DiscordAdapter;
                          wcAdapter: ptr WeComAdapter;
@@ -85,28 +117,11 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
                          cliAdapter: ptr CliAdapter;
                          signalAdapter: ptr SignalAdapter = nil;
                          lineAdapter: ptr LineAdapter = nil;
-                         teamsAdapter: ptr TeamsAdapter = nil): OutboundChannelPorts =
+                         teamsAdapter: ptr TeamsAdapter = nil;
+                         tgPick: TelegramPick = nil): OutboundChannelPorts =
 
   # ── Telegram (full capability) ────────────────────────────────────────────
-  result.telegram = OutboundChannelPort(
-    send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
-      tgAdapter[].send(msg),
-    sendReturnId: proc(msg: OutboundMessage): Result[string, string] {.gcsafe.} =
-      tgAdapter[].sendReturnId(msg),
-    editMessage: proc(userId: UserId; msgId, text: string; isHtml: bool): Result[void, string] {.gcsafe.} =
-      tgAdapter[].editMessage(userId, msgId, text, isHtml),
-    sendKeyboard: proc(userId: UserId; text: string;
-                        buttons: seq[seq[(string, string)]];
-                        replyTo = ""): Result[void, string] {.gcsafe.} =
-      tgAdapter[].sendKeyboard(userId, text, buttons, replyTo).map(proc(s: string): void = discard s),
-    editKeyboard: proc(userId: UserId; msgId, text: string;
-                        buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.} =
-      tgAdapter[].editKeyboardText(userId, msgId, text, buttons),
-    setMessageReaction: proc(userId: UserId; channelId, msgId, emoji: string): Result[void, string] {.gcsafe.} =
-      tgAdapter[].setMessageReaction(userId, channelId, msgId, emoji),
-    downloadFile: proc(fileId: string): Result[FileDownload, string] {.gcsafe.} =
-      tgAdapter[].downloadFile(fileId),
-  )
+  result.telegram = telegramOutboundPort(tgAdapter, tgPick)
 
   # ── Discord (full capability) ─────────────────────────────────────────────
   result.discord = OutboundChannelPort(

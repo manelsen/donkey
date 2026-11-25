@@ -5,7 +5,7 @@
 ##   streamFactory:     StreamFactory() for all non-streaming tests
 
 import donkey/adapters/filesystem/fs_adapter
-import std/[json, options, os, strutils, unittest]
+import std/[json, options, os, strutils, tables, unittest]
 import chronos
 import chronos/asyncsync
 import donkey/config/environment
@@ -23,6 +23,7 @@ import donkey/adapters/memory/md_file
 import donkey/app/memory_agent
 import donkey/app/tool_agent
 import donkey/app/orchestrator
+import donkey/app/named_agents
 import donkey/ports/provider
 import donkey/app/provider_executor
 import donkey/app/session_manager
@@ -507,6 +508,49 @@ proc runTests*() =
       discard waitFor doTest(tmpDir, "@desconhecido oi")
       check seen.len >= 1
       check "Revisa código" notin seen[^1].system
+      check seen[^1].providerOverride == ""
+
+    test "a message through a bot is answered with the bot's instance persona":
+      let tmpDir = getTempDir() / "donkey_test_orch_bot_persona"
+      removeDir(tmpDir)
+      defer: removeDir(tmpDir)
+      var seen {.threadvar.}: seq[CompletionRequest]
+      seen = @[]
+      proc capture(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
+        {.cast(gcsafe).}: seen.add(req)
+        ok(CompletionResponse(text: "ok", inputTokens: 1, outputTokens: 1))
+
+      proc doTest(dir: string; payload: string): Future[void] {.async.} =
+        ## {home}/agents holds the operator's personas; paddocks under it.
+        let home = dir
+        createDir(home / "agents")
+        writeFile(home / "agents" / "suporte.toml",
+          "name = \"suporte\"\ndescription = \"Atende o suporte da empresa.\"\nprovider = \"groq\"\n")
+        let userDir = home / "paddocks" / "u-bot"
+        createDir(userDir)
+        writeFile(userDir / "USER.md", "# Ana")
+        let mem = MdFileAdapter(paddocksDir: home / "paddocks")
+        let inbox = newAsyncQueue[AgentMessage]()
+        let outbox = newAsyncQueue[OutboundMessage]()
+        var session = makeSessionEntry()
+        session.inbox = inbox
+        let orchFut = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(), capture,
+          newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[], @[], userDir,
+          newSessionState(), env = fastDebounce(), fs = newFsAdapter(),
+          botPersonas = BotPersonas(home: home, agentOf: {"suporte-tg": "suporte"}.toTable))
+        await inbox.put(newTaskMsg("r1", tkUserMsg, "u-bot", payload))
+        discard await outbox.get()
+        await inbox.put(newCancelMsg())
+        await orchFut
+
+      waitFor doTest(tmpDir, $(%* {"text": "meu pedido sumiu", "bot": "suporte-tg"}))
+      check seen.len >= 1
+      check "Atende o suporte da empresa." in seen[^1].system
+      check seen[^1].providerOverride == "groq"
+
+      seen = @[]
+      waitFor doTest(tmpDir, $(%* {"text": "oi", "bot": "sem-persona"}))
+      check "Atende o suporte" notin seen[^1].system
       check seen[^1].providerOverride == ""
 
     test "userMsg produces a text reply":

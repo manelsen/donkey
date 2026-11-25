@@ -4,6 +4,9 @@ import ../core/types
 import ../core/security/dm_policy
 import ../core/app_meta
 import ./environment
+import ../domain/bots_pure
+
+export bots_pure
 
 type
   WebAccessRule* = object
@@ -45,6 +48,8 @@ type
     invalidDmPolicy*: string     ## Raw invalid value from TOML/env; blocks startup
     wiring*:        bool         ## Enable advanced session wiring; default: false
     env*:           Environment  ## The environment snapshot the config was loaded with
+    bots*:          seq[BotSpec] ## `[[bots]]` entries that are well formed (E3)
+    botProblems*:   seq[string]  ## why the other entries were left out
 
 func defaultConfig*(home: string): DonkeyConfig =
   DonkeyConfig(

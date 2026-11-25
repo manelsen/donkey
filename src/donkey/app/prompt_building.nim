@@ -44,6 +44,7 @@ type UserPayload* = object
   mediaUrls*:     seq[string]   ## every attachment of the turn (albums)
   mediaPaths*:    seq[string]   ## disk paths, index-aligned with mediaUrls
   recentContext*: string
+  bot*:           string        ## the bot the message came through ("" = default)
 
 func providerLabelFromPrefs*(prefs: string): string =
   ## Extracts "provider/model" label from PREFERENCES.md TOML content.
@@ -131,6 +132,7 @@ proc decodeUserPayload*(payload: string): UserPayload =
     result.text = j.getOrDefault("text").getStr(payload)
     result.mediaUrl = j.getOrDefault("mediaUrl").getStr("")
     result.recentContext = j.getOrDefault("recentContext").getStr("")
+    result.bot = j.getOrDefault("bot").getStr("")
     let urls = j.getOrDefault("mediaUrls")
     if urls != nil and urls.kind == JArray:
       for item in urls:
@@ -160,6 +162,7 @@ proc mergeUserPayloads*(payloads: openArray[string]): string =
   var mediaUrls: seq[string] = @[]
   var mediaPaths: seq[string] = @[]
   var recentContext = ""
+  var bot = ""
   var pathsUsable = true
 
   proc addAttachment(url, path: string) =
@@ -203,20 +206,27 @@ proc mergeUserPayloads*(payloads: openArray[string]): string =
       addAttachment(url, path)
     if recentContext.len == 0 and decoded.recentContext.len > 0:
       recentContext = decoded.recentContext
+    ## The last bot written to answers (domain/bots_pure affinity).
+    if decoded.bot.len > 0:
+      bot = decoded.bot
   let text = mergedText.join("\n\n")
   if not pathsUsable or mediaUrls.len == 0:
     mediaPaths = @[]
   elif mediaPaths.len != mediaUrls.len:
     mediaPaths = @[]
-  if mediaUrl.len == 0 and mediaUrls.len == 0 and recentContext.len == 0:
+  if mediaUrl.len == 0 and mediaUrls.len == 0 and recentContext.len == 0 and
+      bot.len == 0:
     return text
-  $(%* {
+  var j = %* {
     "text": text,
     "mediaUrl": mediaUrl,
     "mediaUrls": mediaUrls,
     "mediaPaths": mediaPaths,
     "recentContext": recentContext,
-  })
+  }
+  if bot.len > 0:
+    j["bot"] = %bot
+  $j
 
 func addUserTurn*(history: ConversationHistory;
                   userText: string;

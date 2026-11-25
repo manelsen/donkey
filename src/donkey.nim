@@ -46,6 +46,7 @@ import donkey/adapters/filesystem/attachment_store
 import donkey/adapters/filesystem/fs_adapter
 import donkey/adapters/channel/common_runtime
 import donkey/adapters/channel/telegram_runtime
+import donkey/adapters/channel/telegram_bots
 import donkey/adapters/channel/discord
 import donkey/adapters/channel/discord_runtime
 import donkey/adapters/channel/wecom
@@ -117,6 +118,7 @@ import donkey/app/session_bootstrap
 from donkey/app/skill_runtime import skillRegistry
 import donkey/app/credential_runtime
 import donkey/app/session_ingress
+import donkey/app/named_agents
 import donkey/adapters/state/turn_journal_store
 import donkey/app/doctor
 import donkey/app/setup_wizard
@@ -227,6 +229,8 @@ type DaemonEnv = object
 
 type DaemonAdapters = object
   tg: TelegramAdapter
+  tgBots: TelegramBots       ## the `[[bots]]` on Telegram (E3.3)
+  tgBotProblems: seq[string] ## bots left out, logged at startup
   dc: DiscordAdapter
   wc: WeComAdapter
   wch: WeChatAdapter
@@ -242,6 +246,14 @@ type DaemonAdapters = object
   cli: CliAdapter
   signal: SignalAdapter
 
+proc telegramPick(adapters: var DaemonAdapters): TelegramPick =
+  ## The adapter of the Telegram bot each person last wrote to. The adapters
+  ## live in the daemon context for the whole process (see buildOutboundPorts).
+  let bots = addr adapters.tgBots
+  let primary = addr adapters.tg
+  result = proc(userId: UserId): ptr TelegramAdapter {.gcsafe.} =
+    adapterFor(bots, primary, userId)
+
 proc buildRuntimeOutboundPorts(adapters: var DaemonAdapters): OutboundChannelPorts =
   let signalPtr =
     if adapters.signal.account.len > 0: addr adapters.signal
@@ -250,7 +262,8 @@ proc buildRuntimeOutboundPorts(adapters: var DaemonAdapters): OutboundChannelPor
     addr adapters.tg, addr adapters.dc, addr adapters.wc,
     addr adapters.wch, addr adapters.qq, addr adapters.fs, addr adapters.mx,
     addr adapters.em, addr adapters.sl, addr adapters.dt, addr adapters.wa,
-    addr adapters.cli, signalPtr, addr adapters.ln, addr adapters.teams)
+    addr adapters.cli, signalPtr, addr adapters.ln, addr adapters.teams,
+    tgPick = telegramPick(adapters))
 
 type DaemonServices = object
   toolClients:      seq[ToolRuntimePort]
@@ -585,6 +598,7 @@ proc initDaemonAdapters(cfg: DonkeyConfig; env: DaemonEnv): DaemonAdapters =
     env.telegramToken, env.identityPath,
     apiBase = cfg.env.get("DONKEY_TELEGRAM_API_BASE").strip(),
     pollTimeout = TelegramLongPollSec, settings = telegramSettings(cfg.env))
+  (result.tgBots, result.tgBotProblems) = buildTelegramBots(cfg.bots, cfg.env, result.tg)
   result.dc = newDiscordAdapter(env.discordToken, env.identityPath,
                                 requireMention = discordRequireMention(cfg.env),
                                 allowedChannels = discordAllowedChannels(cfg.env))
@@ -1121,6 +1135,11 @@ func buildDaemonSessionServices(ctx: DaemonContext;
   )
   ## Turns in flight, so a crash is followed by a replay or a notice (E1).
   result.journal = turnJournalPort(newTurnJournalStore(cfg.home / "state" / "turns"))
+  ## The `[[bots]]` personas: agent files in {home}/agents (E3).
+  result.botPersonas = BotPersonas(home: cfg.home)
+  for bot in cfg.bots:
+    if bot.agent.len > 0:
+      result.botPersonas.agentOf[bot.name] = bot.agent
 
 proc handleDaemonSessionFallback(runtime:  var DaemonRuntime;
                                   msg:      InboundMessage;
@@ -1191,19 +1210,35 @@ proc makeCompleteBuilder(): proc(preferencesMd: string): CompleteFn {.gcsafe.} =
   result = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
     buildCompleteFn(preferencesMd, buildProviderBundle)
 
+proc telegramTypingFn(ctx: DaemonContext; log: Logger): TypingFn =
+  ## Typing through the bot the person last wrote to (E3.3); `ctx` is alive
+  ## for the whole process.
+  result = proc(userId: UserId; channel: ChannelKind) {.gcsafe, raises: [].} =
+    if channel == ckTelegram:
+      try:
+        let tg = adapterFor(addr ctx.adapters.tgBots, addr ctx.adapters.tg, userId)
+        tg[].sendTyping(userId).isOkOr:
+          log.warn("tg sendTyping failed for user=" & $userId & " reason=" & error)
+      except CatchableError: discard
+
 proc drainTelegramEvents(runtime:      var DaemonRuntime;
                          tgAdapter:    var TelegramAdapter;
+                         poll:         var Future[Result[HttpResponse, string]];
+                         noteInbound:  proc(msg: var InboundMessage) {.gcsafe.};
                          outboundPorts: OutboundChannelPorts;
                          services:     SessionIngressServices;
                          memory:       MdFileAdapter;
                          modelCatalogLoader: ModelCatalogLoader;
                          log:          Logger): bool =
-  ## getUpdates runs on the blocking executor; this drain starts it and, on
-  ## a later tick, takes its result. The offset and identities stay here.
-  if runtime.tgPoll == nil:
-    runtime.tgPoll = runOffLoop(fetchTelegramUpdates, tgAdapter.pollRequest())
+  ## One bot's updates. getUpdates runs on the blocking executor; this drain
+  ## starts it and, on a later tick, takes its result. The offset stays in
+  ## the bot's adapter, the identities are shared by all bots. `noteInbound`
+  ## tags each authorized message with its bot and makes that bot the one
+  ## that answers the person (telegram_bots), before anything is sent.
+  if poll == nil:
+    poll = runOffLoop(fetchTelegramUpdates, tgAdapter.pollRequest())
     return false
-  let finished = runtime.tgPoll.takeFinished()
+  let finished = poll.takeFinished()
   if finished.isNone:
     return false
   let fetched = finished.get
@@ -1211,7 +1246,9 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
     log.error("telegram receive: " & error)
     return false
   ## The offset moved: the next long poll can start now.
-  runtime.tgPoll = runOffLoop(fetchTelegramUpdates, tgAdapter.pollRequest())
+  poll = runOffLoop(fetchTelegramUpdates, tgAdapter.pollRequest())
+  ## A file id belongs to the bot whose update carried it.
+  let mediaPort = telegramOutboundPort(addr tgAdapter)
   let completeBuilder = makeCompleteBuilder()
   let runtimePtr = addr runtime
 
@@ -1222,6 +1259,7 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
     if not auth.allowed:
       log.warn("telegram: unauthorized message from " & $msg.userId)
       continue
+    noteInbound(msg)
 
     let stagedReaction = shouldStageReaction(msg)
     if stagedReaction:
@@ -1230,7 +1268,7 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
       stageReaction(runtime.presentationState, outboundPorts, msg)
     
     # Download media if present
-    processInboundMediaDownload(msg, outboundPorts.telegram,
+    processInboundMediaDownload(msg, mediaPort,
                                 memory.paddockDir(msg.userId), log)
     
     if telegram_runtime.handleTelegramMessage(
@@ -1315,6 +1353,10 @@ proc startDaemonIngress(ctx: DaemonContext;
     ctx.adapters.tg.registerBotCommands().isOkOr:
       log.warn("Telegram registerBotCommands failed: " & error)
     log.info("Telegram bot started, polling active")
+  for slot in ctx.adapters.tgBots.slots:
+    slot.adapter.registerBotCommands().isOkOr:
+      log.warn("Telegram bot " & slot.name & " registerBotCommands failed: " & error)
+    log.info("Telegram bot " & slot.name & " started, polling active")
 
 proc setupDaemonRuntime(ctx: DaemonContext;
                         cfg: DonkeyConfig;
@@ -1528,13 +1570,24 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
       )
       count > 0,
     drainTelegram = proc(): bool =
-      if ctx.env.telegramToken.len == 0:
+      if ctx.env.telegramToken.len == 0 and ctx.adapters.tgBots.slots.len == 0:
         return true
       let services =
         buildDaemonSessionServices(ctx, cfg, memory, log) |>->
-        withTypingFn(ctx.services.tgTypingFn)
-      drainTelegramEvents(ctx.runtime, ctx.adapters.tg, outboundPorts, services, memory,
-                          ctx.services.modelCatalogLoader, log),
+        withTypingFn(telegramTypingFn(ctx, log))
+      result = true
+      if ctx.env.telegramToken.len > 0:
+        discard drainTelegramEvents(ctx.runtime, ctx.adapters.tg, ctx.runtime.tgPoll,
+          proc(msg: var InboundMessage) {.gcsafe.} =
+            noteInbound(ctx.adapters.tgBots, msg, ""),
+          outboundPorts, services, memory, ctx.services.modelCatalogLoader, log)
+      for i in 0 ..< ctx.adapters.tgBots.slots.len:
+        let name = ctx.adapters.tgBots.slots[i].name
+        discard drainTelegramEvents(ctx.runtime, ctx.adapters.tgBots.slots[i].adapter,
+          ctx.adapters.tgBots.slots[i].poll,
+          proc(msg: var InboundMessage) {.gcsafe.} =
+            noteInbound(ctx.adapters.tgBots, msg, name),
+          outboundPorts, services, memory, ctx.services.modelCatalogLoader, log),
     drainWhatsApp = proc(): bool =
       drainWhatsAppGateway(ctx.env.whatsappAccessToken.len > 0, proc(): bool =
         whatsapp_runtime.drainWhatsAppEvents(
@@ -1703,6 +1756,9 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     log.info("restored " & $restoredSessions.value & " sessions from registry")
   activateDaemonBootstrap(ctx, cfg, memory, log)
   let sessionServices = buildDaemonSessionServices(ctx, cfg, memory, log)
+  ## `[[bots]]` entries left out, and why (domain/bots_pure).
+  for problem in cfg.botProblems & ctx.adapters.tgBotProblems:
+    log.warn("[[bots]] " & problem)
   ## Turns the previous process died in: replayed when nothing they did
   ## could be repeated, otherwise the user is told. The replays and notices
   ## wait in the queues until the loop and the channels are up.

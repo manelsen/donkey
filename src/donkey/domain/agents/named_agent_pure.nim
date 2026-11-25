@@ -15,8 +15,10 @@ import ../../core/pipeops
 import ../message
 import ../builtin_tools
 import ../more_tools
+import ./agent_name_pure
 
-const MaxAgentNameLen* = 32
+export agent_name_pure
+
 
 type
   NamedAgent* = object
@@ -28,11 +30,6 @@ type
   AgentMention* = object
     name*: string   ## lower case
     text*: string   ## the message without the mention
-
-func validAgentName*(name: string): bool =
-  ## Lower-case letters, digits and '-', up to 32: safe as a file name.
-  name.len in 1 .. MaxAgentNameLen and
-    name.allCharsInSet({'a' .. 'z', '0' .. '9', '-'})
 
 func agentFileName*(name: string): string = name & ".toml"
 func agentNotesFileName*(name: string): string = name & ".notes.md"
