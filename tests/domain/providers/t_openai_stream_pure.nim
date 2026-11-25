@@ -63,6 +63,19 @@ proc runTests*() =
       check calls[0].id == "b" and calls[0].inputJson == """{"x":1}"""
       check calls[1].id == "a" and calls[1].inputJson == "{}"
 
+    test "deltas without an index: a new id starts a call, none continues the last":
+      ## Some compat backends omit `index`; defaulting it to 0 would merge
+      ## parallel calls into one.
+      let (acc, _) = feedAll([
+        """data: {"choices":[{"delta":{"tool_calls":[{"id":"a","function":{"name":"calc","arguments":"{\"x\":"}}]}}]}""",
+        """data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"1}"}}]}}]}""",
+        """data: {"choices":[{"delta":{"tool_calls":[{"id":"b","function":{"name":"current_time","arguments":"{}"}}]}}]}""",
+        "data: [DONE]"])
+      let calls = acc.finish("test").get.toolCalls
+      check calls.len == 2
+      check calls[0].id == "a" and calls[0].inputJson == """{"x":1}"""
+      check calls[1].id == "b" and calls[1].name == "current_time"
+
     test "a tool call that never got a name is dropped":
       let (acc, _) = feedAll([
         """data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"x","function":{"arguments":"{}"}}]}}]}""",

@@ -41,8 +41,18 @@ func intField(node: JsonNode; key: string): int =
   if value.isNil or value.kind != JInt: 0 else: value.getInt
 
 proc addToolDelta(acc: var OpenAiStream; delta: JsonNode) =
-  let index = delta{"index"}.getInt(0)
   let fn = delta{"function"}
+  ## The dialect numbers each call (`index`). Some compat backends omit it:
+  ## then a delta with a new `id` starts a call and one without continues
+  ## the last, instead of every delta merging into call 0.
+  let index =
+    if delta.hasKey("index"):
+      delta["index"].getInt(0)
+    elif acc.order.len > 0 and (delta{"id"}.getStr("").len == 0 or
+         delta{"id"}.getStr("") == acc.tools[acc.order[^1]].id):
+      acc.order[^1]
+    else:
+      (if acc.order.len > 0: max(acc.order) + 1 else: 0)
   let name = if fn.isNil: "" else: fn{"name"}.getStr("")
   let arguments = if fn.isNil: "" else: fn{"arguments"}.getStr("")
   let id = delta{"id"}.getStr("")
