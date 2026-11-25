@@ -90,7 +90,8 @@ proc runTests*() =
       check body["model"].getStr() == DefaultModelAlibaba
       check not body.hasKey("reasoning_effort")
       check not body.hasKey("include_reasoning")
-      check not body.hasKey("preserve_thinking")
+      ## the default model is one the reference lists for preserve_thinking
+      check body{"preserve_thinking"}.getBool(false) == alibabaPreservesThinking(DefaultModelAlibaba)
 
     test "the request equals what the Alibaba profile builds, header for header":
       ## Review E4: no source grep. The bundle's request is compared with the
@@ -101,8 +102,8 @@ proc runTests*() =
         system: "seja breve",
         messages: @[ChatMessage(role: roleUser, text: "oi")],
         reasoning: true)
-      let profile = alibabaCompatProfileAt(
-        providerEndpointFor("alibaba"))
+      let profile = alibabaCompatProfileFor(
+        providerEndpointFor("alibaba"), model)
       let expectedBody = buildCompatRequestBody(profile, model, req)
       let expectedHeaders = newCompatAdapter(
         "dashscope-test", model = model, providerName = "Alibaba",

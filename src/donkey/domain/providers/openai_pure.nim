@@ -72,6 +72,9 @@ type
     shortToolIds*:          bool  ## tool ids must be 9 alphanumerics (Mistral)
     echoReasoningContent*:  bool  ## every assistant turn carries
                                   ## reasoning_content, the text or " " (DeepSeek)
+    replayReasoning*:       bool  ## an assistant turn that had reasoning carries
+                                  ## it in reasoning_content; one without has no
+                                  ## field (Alibaba preserve_thinking)
 
 
 const
@@ -259,6 +262,8 @@ proc buildRequestBodyWithQuirks*(model: string; req: CompletionRequest;
       ## lacks the field; " " and not "", which DeepSeek V4 rejects (hermes
       ## message_sanitization.apply_reasoning_content_policy).
       node["reasoning_content"] = %(if msg.reasoning.len > 0: msg.reasoning else: " ")
+    elif quirks.replayReasoning and msg.role == roleAssistant and msg.reasoning.len > 0:
+      node["reasoning_content"] = %msg.reasoning
     msgs.add node
   result["messages"] = msgs
   if req.tools.len > 0:

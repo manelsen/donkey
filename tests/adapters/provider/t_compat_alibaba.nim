@@ -145,6 +145,65 @@ proc runTests*() =
       check body["stream"].getBool()
       check not body.hasKey("stream_options")
 
+  suite "alibaba compat — preserve_thinking (Qwen 3.6+, Kimi)":
+    ## Model Studio's Chat Completions reference: `preserve_thinking`
+    ## concatenates the reasoning_content of historical assistant messages into
+    ## the model input; the reasoning goes back in `reasoning_content` on those
+    ## messages, and a message without it is not an error.
+
+    proc history(): CompletionRequest =
+      var h = newHistory()
+      h.addUser("primeira")
+      h.addAssistant("resposta", reasoning = "pensei assim")
+      h.addUser("segunda")
+      h.addAssistant("sem raciocínio")
+      h.addUser("terceira")
+      CompletionRequest(messages: h)
+
+    test "a listed model asks for it and gets its reasoning back":
+      for model in ["qwen3.6-plus", "qwen3.6-flash-2026-04-16", "qwen3.7-max",
+                    "qwen3.8-flash", "qwen4-max", "kimi-k2.6"]:
+        let body = buildCompatRequestBody(alibabaCompatProfileFor(AlibabaEndpoint, model),
+                                          model, history())
+        check body{"preserve_thinking"}.getBool(false)
+        let msgs = body["messages"]
+        check msgs[1]["reasoning_content"].getStr == "pensei assim"
+        ## no reasoning, no field (and never " ")
+        check not msgs[3].hasKey("reasoning_content")
+        ## never concatenated into the content
+        check msgs[1]["content"].getStr == "resposta"
+
+    test "Kimi K3 keeps client reasoning by default: echoed, no parameter":
+      let body = buildCompatRequestBody(alibabaCompatProfileFor(AlibabaEndpoint, "kimi-k3"),
+                                        "kimi-k3", history())
+      check not body.hasKey("preserve_thinking")
+      check body["messages"][1]["reasoning_content"].getStr == "pensei assim"
+
+    test "a listed name or its dated snapshot, not any longer name":
+      check alibabaPreservesThinking("qwen3.6-plus")
+      check alibabaPreservesThinking("qwen3.6-plus-2026-04-02")
+      check alibabaPreservesThinking("qwen3.8-max-0902")
+      check alibabaPreservesThinking("kimi/kimi-k2.7-code-highspeed")
+      check alibabaPreservesThinking("kimi/kimi-k3.1-pro-highspeed")
+      check not alibabaPreservesThinking("qwen3.6-plus-preview")
+      check not alibabaPreservesThinking("qwen3.6-plus-35b")
+      check not alibabaPreservesThinking("qwen3.8-max-latest-experimental")
+
+    test "Kimi K3.1 Pro: kept by default on Model Studio, a parameter when direct":
+      let studio = alibabaCompatProfileFor(AlibabaEndpoint, "kimi-k3.1-pro")
+      check studio.quirks.replayReasoning
+      check studio.payloadExtras.isNil or not studio.payloadExtras.hasKey("preserve_thinking")
+      let direct = alibabaCompatProfileFor(AlibabaEndpoint, "kimi/kimi-k3.1-pro")
+      check direct.quirks.replayReasoning
+      check direct.payloadExtras{"preserve_thinking"}.getBool(false)
+
+    test "other models are unchanged":
+      for model in ["qwen3.6-35b-a3b", "qwen-plus", "qwen3-max", "qwq-plus"]:
+        let body = buildCompatRequestBody(alibabaCompatProfileFor(AlibabaEndpoint, model),
+                                          model, history())
+        check not body.hasKey("preserve_thinking")
+        check not body["messages"][1].hasKey("reasoning_content")
+
   suite "alibaba compat — headers and URL":
 
     test "requestHeaders carry only Authorization and Content-Type":
