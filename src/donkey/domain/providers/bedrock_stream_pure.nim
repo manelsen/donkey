@@ -143,7 +143,8 @@ func rawEventMessage*(headerBytes, payload: string): string =
   result.putBe32(crc32(result))
 
 func encodeEventMessage*(headers: openArray[(string, string)]; payload: string): string =
-  ## A framed message with string headers.
+  ## A framed message with string headers, for tests: names up to 255 bytes
+  ## and values up to 65535, as the format allows (not checked here).
   var headerBytes = ""
   for (name, value) in headers:
     headerBytes.add char(name.len)
@@ -199,8 +200,12 @@ proc converseStreamResponse*(body: string;
         if token.len > 0 and onToken != nil:
           onToken(token)
       elif delta.hasKey("toolUse"):
-        if index in tools:
-          tools[index].inputJson.add delta["toolUse"]{"input"}.getStr("")
+        ## Input for a block that never started is a broken stream: a tool
+        ## call would be lost in silence.
+        if index notin tools:
+          return err("Bedrock stream: tool input for block " & $index &
+                     " that never started")
+        tools[index].inputJson.add delta["toolUse"]{"input"}.getStr("")
       elif delta.hasKey("reasoningContent"):
         resp.reasoning.add delta["reasoningContent"]{"text"}.getStr("")
     of "messageStop":

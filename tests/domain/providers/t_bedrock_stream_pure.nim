@@ -122,6 +122,16 @@ proc runTests*() =
                           "delta": {"text": "meio"}}))
       check converseStreamResponse(body, nil).isErr
 
+    test "tool input for a block that never started is an error, not dropped":
+      let body = stream(
+        event("messageStart", %* {"role": "assistant"}),
+        event("contentBlockDelta", %* {"contentBlockIndex": 3,
+          "delta": {"toolUse": {"input": "{}"}}}),
+        event("messageStop", %* {"stopReason": "tool_use"}))
+      let r = converseStreamResponse(body, nil)
+      check r.isErr
+      check "block 3" in r.error
+
     test "a body that is not an event stream is an error":
       check converseStreamResponse("""{"message":"The security token is invalid"}""", nil).isErr
 
