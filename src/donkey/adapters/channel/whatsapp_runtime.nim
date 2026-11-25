@@ -23,6 +23,17 @@ proc drainWhatsAppEvents*(waAdapter: var WhatsAppAdapter;
 
   var (hasEvent, event) = waAdapter.tryRecvEvent()
   while hasEvent:
+    ## A Meta app shared by several numbers delivers every number's changes
+    ## to every webhook. One addressed to another number is not ours: no
+    ## identity, no ack, no reply (from our number) to a conversation we are
+    ## not part of. Hermes WA-001 (docs/hermes-mining/whatsapp/CASES.md).
+    ## Meta always names the number (metadata.phone_number_id): an event
+    ## without it is malformed and not shown to be ours, so it is skipped too.
+    if event.phoneNumberId != whatsappPhoneNumberId:
+      log.debug("whatsapp: message for number '" & event.phoneNumberId &
+                "' ignored (this one is " & whatsappPhoneNumberId & ")")
+      (hasEvent, event) = waAdapter.tryRecvEvent()
+      continue
     ## Only text/interactive events run the command dispatcher; a media
     ## caption containing `/continue <code>` must not mint an identity.
     let gateText =

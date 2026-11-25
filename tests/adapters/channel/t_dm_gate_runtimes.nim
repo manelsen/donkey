@@ -329,6 +329,42 @@ proc runTests*() =
       check not wa.tryRecvEvent()[0]
       check wa.resolver.lookup(ckWhatsApp, "5511999990010").isNone  ## denied sender not minted
 
+    test "whatsapp ignores messages sent to another number on the same Meta app":
+      ## A shared Meta app delivers every number's changes to every webhook;
+      ## answering one meant for a sibling number would reply, from ours, to
+      ## a conversation we are not part of (hermes WA-001).
+      removeDir(GateTmp / "whatsapp-bind")
+      var sm: SessionManager
+      sm.init()
+      sm.dmPolicy = DmPolicyOpen
+      var wa = newWhatsAppAdapter("token", "PN1", GateTmp / "whatsapp-bind" / "ids.tsv",
+                                  "http://127.0.0.1:1")
+      wa.openQueue()
+      let memory = MdFileAdapter(paddocksDir: GateTmp / "whatsapp-bind" / "paddocks")
+      let completeBuilder = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
+        proc(req: CompletionRequest): Result[CompletionResponse, string] =
+          ok(CompletionResponse(text: "x"))
+      var msgSeq = 0
+      var seen: seq[string]
+      proc message(phoneNumberId, sender, id: string): JsonNode =
+        %* {"entry": [{"changes": [{"value": {
+          "metadata": {"phone_number_id": phoneNumberId},
+          "messages": [{"from": sender, "id": id, "type": "text",
+                        "text": {"body": "oi"}}]}}]}]}
+      whatsapp.pushEvent(message("PN2", "5511999990077", "wamid.other"))
+      ## no metadata.phone_number_id: malformed, not shown to be ours
+      whatsapp.pushEvent(message("", "5511999990079", "wamid.unaddressed"))
+      whatsapp.pushEvent(message("PN1", "5511999990078", "wamid.ours"))
+      let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
+        {.cast(gcsafe).}:
+          seen.add msg.messageId
+      drainWhatsAppEvents(wa, "PN1", sm, newChannelRuntimeEnv(memory, completeBuilder, gateLoader()),
+                          msgSeq, onFallback, gateLog)
+      check seen == @["wamid.ours"]
+      check not wa.tryRecvEvent()[0]
+      check wa.resolver.lookup(ckWhatsApp, "5511999990077").isNone  ## not minted
+      check wa.resolver.lookup(ckWhatsApp, "5511999990079").isNone
+
     test "dingtalk gateway drainer denies unauthorized and advances the queue":
       var queue: seq[InboundMessage] = @[
         InboundMessage(userId: UserId("dt-intruder"), channel: ckDingTalk, text: "/status"),

@@ -15,7 +15,7 @@ HERMES_REF="${HERMES_REF:-b3746e35dd}"
 
 usage() {
   echo "usage: $0 <component> [--since <hash>]" >&2
-  echo "supported components: telegram, discord" >&2
+  echo "supported components: telegram, discord, whatsapp" >&2
 }
 
 component="${1:-}"
@@ -95,9 +95,26 @@ case "$component" in
       } | sort -u
     )"
     ;;
+  whatsapp)
+    ## Donkey speaks the Cloud API; hermes has it (plugins/platforms/
+    ## whatsapp_cloud) beside a bridge-based adapter. Both are extracted;
+    ## classification marks bridge-only cases as not applicable.
+    out_dir="docs/hermes-mining/whatsapp"
+    hashes="$(
+      {
+        git -C "$HERMES_DIR" log "$range" --no-merges -i -E \
+          --grep='^fix.*whatsapp' --format='%H'
+        git -C "$HERMES_DIR" log "$range" --no-merges -i -E \
+          --grep='^fix' --format='%H' -- \
+            plugins/platforms/whatsapp_cloud \
+            plugins/platforms/whatsapp \
+            gateway/platforms/whatsapp_common.py
+      } | sort -u
+    )"
+    ;;
   *)
     echo "unknown component: $component" >&2
-    echo "supported components: telegram, discord" >&2
+    echo "supported components: telegram, discord, whatsapp" >&2
     exit 2
     ;;
 esac

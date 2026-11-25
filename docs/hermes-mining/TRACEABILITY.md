@@ -45,3 +45,18 @@ Casos portados avulsos; o Slack ainda não tem extração nem triagem própria.
 | SL-003 | `708f84c477`, `34e8d088c2` | `tests/channel/t_slack.nim` | `src/donkey/adapters/channel/slack.nim` (`eventDedupeKey`) | portado |
 | SL-004 | `8e6d1a9a53` | `tests/domain/channels/t_slack_pure.nim` | `src/donkey/domain/channels/slack_pure.nim` (`slackUnescape`) | portado |
 | SL-005 | `608e8a6062` (o caso do Discord; o Slack segue a mesma regra) | `tests/domain/channels/t_slack_pure.nim` | `src/donkey/domain/channels/slack_pure.nim` (`stripUserMention`, `botUserIdOf`) | portado |
+
+## WhatsApp (Cloud API)
+
+Classificação completa em [`whatsapp/CASES.md`](whatsapp/CASES.md).
+
+| Caso | Commits hermes | Teste Donkey | Implementação Donkey | Status |
+|---|---|---|---|---|
+| WA-001 | `4152c69636`, `e5e2d5508f` | `tests/adapters/channel/t_dm_gate_runtimes.nim` | `src/donkey/adapters/channel/whatsapp_runtime.nim` | portado |
+| WA-002 | `e82d71db40` | `tests/adapters/webhook/t_http_request_reader.nim` | `src/donkey/adapters/webhook/http_request_reader.nim` (`MaxWebhookBodyBytes`) | portado |
+| WA-003 | `f90721e95a` | `tests/domain/channels/t_whatsapp_pure.nim` | `src/donkey/domain/channels/whatsapp_pure.nim` | coberto |
+| WA-004 | `f96b2e6ef7` | `tests/adapters/channel/t_dm_gate_runtimes.nim` | `src/donkey/adapters/channel/whatsapp_runtime.nim` | coberto |
+| WA-005 | `53f84cc716` | `tests/adapters/webhook/t_webhook_receiver.nim` | `src/donkey/adapters/webhook/webhook_receiver.nim` | coberto |
+| WA-006 | `bc7ff51ace` | `tests/core/security/t_webhook_auth.nim` | `src/donkey/adapters/webhook/webhook_receiver.nim` | coberto |
+| WA-008 | `619dc4a561`, `c8b56d43da` | — | — | adiado (contexto de resposta entre canais) |
+| WA-009 | `42e5e8b3d5` | — | — | em aberto (BSUID como destinatário) |

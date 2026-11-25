@@ -1,0 +1,226 @@
+hash	date	subject	files_changed	test_files
+96043a8f7e	2026-02-26	fix(whatsapp): skip agent's own replies in bridge message handler	1	-
+f02f647237	2026-02-26	fix(whatsapp): per-contact DM session isolation and user identity in context	2	-
+34badeb19c	2026-03-04	fix(whatsapp): initialize data variable and close log handle on error paths	2	tests/gateway/test_whatsapp_connect.py
+c45aeb45b1	2026-03-04	fix(whatsapp): wait for connected status and log bridge output	1	-
+e39de2e752	2026-03-04	fix(gateway): match _quick_key to _generate_session_key for WhatsApp DMs	2	tests/gateway/test_session.py
+82cb1752d9	2026-03-05	fix(whatsapp): replace Linux-only fuser with cross-platform port cleanup	2	tests/gateway/test_whatsapp_connect.py
+34f8ac2d85	2026-03-09	fix: replace blocking time.sleep with await asyncio.sleep in WhatsApp connect	1	-
+342a0ad372	2026-03-17	fix(whatsapp): support LID format in self-chat mode (#1556)	1	-
+dc15bc508f	2026-03-17	fix(tools): add outbound WhatsApp send_message routing	2	tests/tools/test_send_message_tool.py
+2f80bd9f87	2026-03-18	fix: whatsapp reply_prefix config.yaml bridging was dead code (#1923)	1	-
+a5beb6d8f0	2026-03-20	fix(whatsapp): image downloading, bridge reuse, LID allowlist, Baileys 7.x compat	2	-
+8304a7716d	2026-03-21	fix(gateway): restart on whatsapp bridge child exit (#2334)	4	tests/gateway/test_runner_fatal_adapter.py;tests/gateway/test_whatsapp_connect.py
+c6f4515f73	2026-03-25	fix(whatsapp): download documents, audio, and video media from messages (#2978)	2	-
+33c89e52ec	2026-03-28	fix(whatsapp): add **kwargs to media sending methods to accept metadata (#3571)	1	-
+0ef80c5f32	2026-03-29	fix(whatsapp): reuse persistent aiohttp session across requests (#3818)	2	tests/gateway/test_whatsapp_connect.py
+3e2c8c529b	2026-03-29	fix(whatsapp): resolve LID↔phone aliases in allowlist matching (#3830)	5	tests/gateway/test_unauthorized_dm_behavior.py
+d028a94b83	2026-03-30	fix(whatsapp): skip reply prefix in bot mode — only needed for self-chat (#3931)	1	-
+714e4941b8	2026-04-03	fix(whatsapp): enforce require_mention in group chats	4	tests/gateway/test_whatsapp_group_gating.py
+7165eff901	2026-04-03	fix(whatsapp): add free_response_chats, mention stripping, and interactive message unwrapping	4	tests/gateway/test_whatsapp_group_gating.py
+cc4b1f0007	2026-04-11	fix(whatsapp): pin Baileys to fix/abprops-abt-fetch for bad-request fix	2	-
+15b1a3aa69	2026-04-12	fix: improve WhatsApp UX — chunking, formatting, streaming (#8723)	4	tests/gateway/test_display_config.py;tests/gateway/test_whatsapp_formatting.py
+3636f64540	2026-04-12	fix: resolve npm audit vulnerabilities in browser tools and whatsapp bridge (#8745)	3	-
+3ade655999	2026-04-19	fix(whatsapp): log allowlist drops in bridge	1	-
+3821921ef7	2026-04-20	fix(whatsapp): kill bridge process tree on Windows disconnect	2	tests/gateway/test_whatsapp_connect.py
+b6b5acfc8e	2026-04-20	fix(whatsapp): remove 120s timeout on bridge npm install (#13339)	1	-
+be472138f3	2026-04-20	fix(send_message): accept E.164 phone numbers for signal/sms/whatsapp (#12936)	2	tests/tools/test_send_message_tool.py
+244ae6db15	2026-04-21	fix(web_server,whatsapp-bridge): validate Host header against bound interface (#13530)	3	tests/hermes_cli/test_web_server_host_header.py
+9c0fc0b4e8	2026-04-21	fix(whatsapp): remove shadowing shutil import in cmd_whatsapp (#13364)	1	-
+10deb1b87d	2026-04-24	fix(gateway): canonicalize WhatsApp identity in session keys	3	tests/gateway/test_session.py
+6993e566ba	2026-04-26	fix(whatsapp_identity): pin identifier regex to ASCII, clarify it's defense-in-depth	1	-
+91512b8210	2026-04-26	fix(whatsapp_identity): guard against path traversal and silent mapping errors	1	-
+762eb79f1e	2026-05-02	fix(gateway): tighten httpx keepalive and close whatsapp typing-response leak (#18451)	9	tests/gateway/test_platform_http_client_limits.py
+55647a5813	2026-05-03	fix(whatsapp): pin protobufjs >=7.5.5 via npm overrides to clear 3 critical vulns (#19204)	2	-
+dad62c4c47	2026-05-05	fix(whatsapp): auto-convert mp3/wav to ogg/opus in send-media for native voice bubbles	1	-
+0d3593e514	2026-05-07	fix: WhatsApp bridge process leak and disable config asymmetry	2	-
+6a4ecc0a9f	2026-05-07	fix(whatsapp): reject strangers by default, never respond in self-chat (#8389) (#21291)	3	-
+a9ebee5f02	2026-05-07	Fix WhatsApp long message splitting	3	tests/gateway/test_whatsapp_formatting.py
+1a4e8f7041	2026-05-12	fix(gateway): make WhatsApp npm install timeout configurable	1	-
+d8c4460fe3	2026-05-12	fix(cron): include whatsapp in _HOME_TARGET_ENV_VARS	1	-
+9ed751b967	2026-05-14	fix(whatsapp): drop status broadcasts and channel newsletters before agent dispatch (#25845)	2	tests/gateway/test_whatsapp_group_gating.py
+681778a0b7	2026-05-15	fix(whatsapp): fail fast when Baileys sendMessage hangs	1	-
+52a368fa72	2026-05-23	fix(gateway): preserve WhatsApp pairing approvals across JID/LID alias flips	2	tests/gateway/test_pairing.py
+cddb7283d9	2026-05-30	fix(gateway): config.yaml path for WhatsApp/Weixin text-batch delays	6	tests/gateway/test_weixin.py;tests/gateway/test_whatsapp_text_batching.py
+0cd5867bbb	2026-06-01	fix(whatsapp): honor dm_policy and group_policy open at the gateway	4	tests/gateway/test_config_driven_access_policy.py
+3edd09a46f	2026-06-11	fix(whatsapp): restart stale bridge processes instead of silently reusing them (#44205)	3	tests/gateway/test_whatsapp_stale_bridge.py
+52c7976f40	2026-06-11	fix(whatsapp-cloud): review follow-ups for #43921	8	tests/gateway/test_whatsapp_cloud.py;tests/gateway/test_whatsapp_formatting.py;tests/hermes_cli/test_nous_subscription.py
+5508f4bc54	2026-06-11	fix(cli): utf-8 decode for whatsapp-bridge npm install capture (sibling of #43790)	1	-
+0d82060c74	2026-06-15	fix: harden WhatsApp target alias salvage	6	tests/gateway/test_channel_directory.py;tests/hermes_cli/test_backup.py;tests/tools/test_send_message_target_parse.py
+ea49a79633	2026-06-15	fix(messaging): route WhatsApp group JIDs to the target, not the home DM	4	tests/gateway/test_channel_directory.py;tests/tools/test_send_message_tool.py
+e65d74bc6f	2026-06-16	fix(gateway): accept `metadata` kwarg in WhatsApp/email send_image	3	tests/gateway/test_media_metadata_contract.py
+170ef24c8f	2026-06-20	fix(doctor): audit WhatsApp bridge at its resolved (HERMES_HOME) dir (#49890)	1	-
+491579fa05	2026-06-20	fix(whatsapp): resolve bridge dir with HERMES_HOME mirror in Docker	3	-
+79f297834a	2026-06-20	fix(gateway): widen cron namespace-collision fix to all migrated adapters	3	-
+7a7b56d498	2026-06-20	fix(windows): prefer managed node for whatsapp and desktop	5	tests/test_hermes_constants.py
+069ab40c5f	2026-06-21	fix(whatsapp): only kill LISTENers when freeing the bridge port, never clients	2	tests/gateway/test_whatsapp_bridge_pidfile.py
+615a8e6516	2026-06-21	fix(whatsapp): add missing re import + fix test import path after adapter relocation	3	tests/gateway/test_whatsapp_bridge_pidfile.py;tests/gateway/test_whatsapp_connect.py
+77fdbbfe81	2026-06-21	fix(whatsapp): validate bridge PID identity before killing stale pidfile entry	2	tests/gateway/test_whatsapp_bridge_pidfile.py
+a4b1554c73	2026-06-21	fix(whatsapp): normalize bare phone targets to JIDs before bridge send	4	tests/gateway/test_whatsapp_connect.py;tests/gateway/test_whatsapp_to_jid.py
+e9cd8c5bf3	2026-06-22	fix(delivery): drop env-var knob, flag all chunking adapters	12	tests/gateway/test_delivery.py
+43b8ba4181	2026-06-25	fix(telegram): preserve Bot API update queue on watcher reconnect	65	tests/gateway/relay/test_relay_going_idle.py;tests/gateway/restart_test_helpers.py;tests/gateway/test_active_session_text_merge.py;tests/gateway/test_base_topic_sessions.py;tests/gateway/test_cancel_background_drain.py;tests/gateway/test_command_bypass_active_session.py;tests/gateway/test_duplicate_reply_suppression.py;tests/gateway/test_ephemeral_reply.py;tests/gateway/test_interrupt_key_match.py;tests/gateway/test_keep_typing_timeout.py;tests/gateway/test_pending_drain_no_recursion.py;tests/gateway/test_pending_drain_race.py;tests/gateway/test_platform_base.py;tests/gateway/test_platform_reconnect.py;tests/gateway/test_platform_reconnect_fd_leak.py;tests/gateway/test_post_delivery_callback_chaining.py;tests/gateway/test_queue_consumption.py;tests/gateway/test_relay_capability_surface.py;tests/gateway/test_run_cleanup_progress.py;tests/gateway/test_run_progress_interrupt.py;tests/gateway/test_run_progress_topics.py;tests/gateway/test_runner_fatal_adapter.py;tests/gateway/test_runner_startup_failures.py;tests/gateway/test_send_multiple_images.py;tests/gateway/test_send_retry.py;tests/gateway/test_session_hygiene.py;tests/gateway/test_session_split_brain_11016.py;tests/gateway/test_status_command.py;tests/gateway/test_telegram_clarify_buttons.py;tests/gateway/test_telegram_conflict.py;tests/gateway/test_telegram_thread_fallback.py;tests/gateway/test_tool_response_drop_recovery.py;tests/gateway/test_tts_media_routing.py;tests/tools/test_send_message_tool.py
+619dc4a561	2026-06-26	fix(whatsapp_cloud): resolve reply-to text so the agent sees reply context (#52957)	2	tests/gateway/test_whatsapp_cloud.py
+515192c4b9	2026-06-27	fix(tools): use start_new_session instead of preexec_fn to prevent SIGSEGV in multi-threaded processes	5	tests/tools/test_windows_compat.py
+5db1430af9	2026-06-27	fix(windows): stop terminal-window popups from background spawns (#53810)	33	tests/gateway/test_status.py;tests/hermes_cli/test_claw.py;tests/hermes_cli/test_gateway.py;tests/hermes_cli/test_gateway_windows.py;tests/hermes_cli/test_web_server.py;tests/test_hermes_bootstrap.py;tests/test_hermes_constants.py;tests/test_no_visible_console_spawns.py;tests/tools/test_browser_hardening.py;tests/tools/test_windows_native_support.py
+caf4dcc7ad	2026-06-27	fix(whatsapp): resolve phone↔LID aliases in adapter DM/group allowlist (#53588)	2	tests/gateway/test_whatsapp_allowlist_lid_resolution.py
+ec769e49d2	2026-06-27	fix(gateway): WhatsApp/Signal hints affirm markdown instead of forbidding it (#53564)	2	tests/agent/test_prompt_builder.py
+263ffec1b0	2026-06-28	fix(whatsapp): resolve LID aliases on modern platforms/ session layout	2	tests/gateway/test_whatsapp_identity.py
+c393a8e55f	2026-06-28	fix(whatsapp-bridge): serialize sendMessage to prevent cross-chat contamination (#33360)	3	-
+eeca59f489	2026-06-28	fix(windows): hide remaining backend console-flash legs missed on main	7	tests/test_windows_subprocess_no_window_flags.py
+9e490138a0	2026-06-29	fix(security): fail-closed feishu webhook rate limiter + whatsapp bridge path guard	2	-
+1f1d346ced	2026-06-30	fix(profile): resolve WhatsApp media-path cache roots per-call	2	tests/gateway/test_whatsapp_media_path_profile.py
+6d6702ef50	2026-06-30	fix(whatsapp-bridge): clarify FIFO outbound-id tracker semantics	2	-
+db52ad0f07	2026-06-30	fix(whatsapp): gate owner-typed forwards on customer chatId allowlist	3	-
+bb304b4914	2026-07-01	fix(gateway): fail-closed external-surface defaults + profile-aware multiplex authz	24	tests/gateway/test_config_driven_access_policy.py;tests/gateway/test_discord_component_auth.py;tests/gateway/test_discord_roles_dm_scope.py;tests/gateway/test_discord_slash_auth.py;tests/gateway/test_feishu_bot_admission.py;tests/gateway/test_multiplex_profile_authz.py;tests/gateway/test_own_policy_startup_gate.py;tests/gateway/test_qqbot.py;tests/gateway/test_voice_command.py;tests/gateway/test_wecom.py;tests/gateway/test_whatsapp_allowlist_lid_resolution.py;tests/gateway/test_whatsapp_group_gating.py;tests/test_yuanbao_pipeline.py
+c0d694a492	2026-07-02	fix(whatsapp): resolve LID sender IDs to phone numbers in bridge message payload	1	-
+6c7960cfa0	2026-07-05	fix(whatsapp_cloud): honor documented WHATSAPP_CLOUD_ALLOWED_USERS / ALLOW_ALL_USERS	1	-
+6fad6f1dd8	2026-07-05	fix(whatsapp): contain and surface inbound media download failures (port nanoclaw#2895) (#59261)	2	-
+b0f2bdbe8b	2026-07-05	fix(whatsapp): gate poll-vote events to Hermes-created polls + salvage follow-ups	3	tests/gateway/test_whatsapp_formatting.py
+e82d71db40	2026-07-05	fix(whatsapp): set client_max_size on the webhook Application	1	-
+c30c9753b6	2026-07-07	fix(whatsapp): unpin Baileys from git commit, use published 7.0.0-rc13 (#60643)	2	-
+e10c8eba00	2026-07-08	fix(whatsapp): use windows_detach_popen_kwargs to prevent console window flash on Windows	1	-
+f96b2e6ef7	2026-07-13	fix(whatsapp_cloud): gate interactive taps on DM allowlist	2	tests/gateway/test_whatsapp_cloud.py
+647520f83e	2026-07-15	fix(gateway): gate profile routing on multiplex_profiles + widen batch-key routing to all adapters	11	tests/gateway/test_profile_resolution.py
+241bc112e8	2026-07-23	fix(platforms): clear home channel when setup prompt left blank	14	tests/gateway/test_discord_plugin_setup.py;tests/gateway/test_matrix_plugin_setup.py;tests/gateway/test_mattermost_plugin_setup.py;tests/gateway/test_setup_feishu.py;tests/gateway/test_slack_plugin_setup.py;tests/gateway/test_wecom_plugin_setup.py;tests/gateway/test_whatsapp_plugin_setup.py
+5b76ce169b	2026-07-24	fix(gateway): pass encoding="utf-8" to read_text/write_text in update path (#37423)	9	tests/gateway/test_gateway_utf8_encoding.py
+c89481db5e	2026-07-24	fix: add explicit UTF-8 encoding to all subprocess text=True calls (#53428)	61	-
+cc6e8fa757	2026-07-24	fix(gateway): extend the utf-8 file-I/O guard to google_chat + whatsapp	3	tests/gateway/test_gateway_utf8_encoding.py
+1c30c57f11	2026-07-28	fix(whatsapp): preserve voice notes when STT fails	6	tests/gateway/test_stt_config.py;tests/gateway/test_whatsapp_formatting.py;tests/tools/test_transcription.py
+2c771be406	2026-07-28	fix(gateway): dual-stack webhook bind for wecom/msgraph/whatsapp_cloud/teams/telegram siblings	7	-
+652d858f2e	2026-07-28	fix(whatsapp): apply read receipts after intake policy	6	tests/gateway/test_whatsapp_reply_prefix.py;tests/gateway/test_whatsapp_stale_bridge.py
+bd1c782456	2026-07-28	fix: fire-and-forget read receipts, add docs (#70340 salvage)	3	tests/gateway/test_whatsapp_reply_prefix.py
+4f4ea9a6de	2026-08-02	fix(whatsapp): route WHATSAPP_* env reads through secret scope for multiplex profiles	4	tests/gateway/test_75349_whatsapp_multiplex_secret_scope.py
+5438e9c629	2026-08-02	fix(whatsapp): default-profile UnscopedSecretError fallback + full bridge env set	2	-
+810c8777e1	2026-08-02	fix(gateway): preserve WhatsApp allowlist config precedence on live checks	5	tests/gateway/test_pairing_allowlist_bypass.py;tests/gateway/test_whatsapp_cloud_allowed_users.py
+b35f219aed	2026-08-02	fix(gateway): apply WhatsApp identity aliases to cloud pairing revoke	5	tests/gateway/test_pairing_allowlist_bypass.py;tests/gateway/test_whatsapp_cloud_allowed_users.py
+ddfc6342ad	2026-08-02	fix(gateway): revoke WhatsApp sole allowlist entry without restart	6	tests/gateway/test_pairing_allowlist_bypass.py
+f5ca0e2f0b	2026-08-02	fix(gateway): honor empty WhatsApp allow_from over env grants	5	tests/gateway/test_pairing_allowlist_bypass.py;tests/gateway/test_whatsapp_cloud_allowed_users.py
+947fdeab3b	2026-08-03	fix(whatsapp): guard bridge reconnect against hangs and unhandled rejections	3	-
+136a911065	2026-08-13	fix(whatsapp): classify npm install failures as non-retryable fatal errors (#80095)	2	tests/gateway/test_whatsapp_connect.py
+21260c3281	2026-08-19	fix(gateway): carry the profile in adapter-derived session keys (#88404)	13	tests/gateway/test_multiplex_adapter_session_key_namespace.py;tests/gateway/test_multiplex_busy_input_mode.py
+6e294f543d	2026-08-29	fix: read source files with encoding=utf-8-sig	184	tests/agent/test_copilot_acp_client.py;tests/agent/test_nous_rate_guard.py;tests/scripts/test_footgun_encoding_direction.py;tests/tools/test_working_diff.py
+90e916efc9	2026-08-31	fix(windows): compose the taskkill identity guards into one fail-closed class fix	11	tests/gateway/test_whatsapp_connect.py;tests/hermes_cli/test_gateway.py;tests/hermes_cli/test_stale_pid_guard.py;tests/hermes_cli/test_taskkill_identity_windows_live.py;tests/tools/test_browser_orphan_reaper.py
+4d1880e0bf	2026-09-02	fix(integration): restore subprocess encoding/stdin guards dropped in simplification	14	tests/tools/test_subprocess_stdin_guard.py
+56d869d2d9	2026-09-02	fix(mattermost): scope url/reply_mode/require_mention/free_response_channels/allowed_channels to the active profile under multiplexing	2	tests/gateway/test_mattermost.py
+dca9a54427	2026-09-02	fix(gateway): match WhatsApp profile_routes across JID/LID/number forms	3	tests/gateway/test_profile_routing.py
+febd2af391	2026-09-02	fix(gateway): skip credential-less WhatsApp on secondary multiplex profiles	2	tests/gateway/test_multiplex_adapter_registry.py
+aec50eb597	2026-09-03	fix(live-qa): nous_subscription managed table indexes only selectable features (KeyError 'modal' crashed status/tools/dashboard toolsets); restore PluginManager public API (has_portable_mcp_servers, get_telegram_handler_factories, register_approval_transport), extract_json_candidate public name, canonical_whatsapp_identifier main semantics	5	tests/hermes_cli/test_nous_subscription.py
+b57f17bd4b	2026-09-03	fix(late-slices): restore subprocess footgun guards re-collapsed by r3-30/33/34/36 tails; telegram format_message stays self-free (staticmethod via class ref); _captured_exec explicit shell/env kwargs	7	-
+25ce047f98	2026-09-04	fix(footguns): utf-8-sig on all reads flagged by check-windows-footguns (164 sites)	96	-
+722acd66f6	2026-09-05	fix(docker): reconcile docker_network: false with a --network flag in docker_extra_args (#100248)	1	-
+8239ec4833	2026-09-05	fix(docker): egress-off reuse probe uses a label filter, not the Docker-only {{.Label}} template (#99213)	1	-
+92686159d1	2026-09-05	fix(pm): integrate audited runtime and lifecycle repairs	362	tests/acp/test_edit_approval.py;tests/acp_adapter/test_acp_images.py;tests/agent/test_aux_progress_streaming.py;tests/agent/test_aux_stream_host_deadline.py;tests/agent/test_codex_aux_timeout_fd_ownership.py;tests/agent/test_coding_context.py;tests/agent/test_credential_pool_profile_oauth_fork.py;tests/agent/test_custom_provider_ca_probes.py;tests/agent/test_estimator_parity_84371.py;tests/agent/test_model_metadata_ssl.py;tests/agent/test_provider_scope_keys.py;tests/agent/test_relay_runtime_plugins.py;tests/agent/test_subdirectory_hints.py;tests/ci/test_desktop_cli_entrypoints.py;tests/ci/test_list_os_marked_tests.py;tests/cli/test_cli_image_command.py;tests/cli/test_modify_other_keys_aliases.py;tests/cli/test_worktree_pushed_tier.py;tests/cron/test_cron_script.py;tests/cron/test_lifecycle_guard_budget.py;tests/cron/test_restart_safe_worker.py;tests/desktop/test_appinstaller_check_script.py;tests/gateway/test_buzz_adapter.py;tests/gateway/test_feishu.py;tests/gateway/test_hosted_room_links.py;tests/gateway/test_hosted_room_peer.py;tests/gateway/test_matrix_deps_rebind.py;tests/gateway/test_multiplex_mcp_discovery.py;tests/gateway/test_session_db_replaced_fallback.py;tests/gateway/test_shutdown_watchdog.py;tests/gateway/test_status_command.py;tests/gateway/test_telegram_media_read_timeout.py;tests/gateway/test_voice_command.py;tests/gateway/test_windows_service_frontend.py;tests/hermes_cli/test_apply_profile_override.py;tests/hermes_cli/test_backup.py;tests/hermes_cli/test_boot_bootstrap.py;tests/hermes_cli/test_boot_wiring.py;tests/hermes_cli/test_bundled_desktop_launch.py;tests/hermes_cli/test_cmd_update.py;tests/hermes_cli/test_dashboard_unified_launch.py;tests/hermes_cli/test_dep_ensure.py;tests/hermes_cli/test_doctor.py;tests/hermes_cli/test_doctor_channel_hygiene.py;tests/hermes_cli/test_doctor_legacy_checkout.py;tests/hermes_cli/test_doctor_pm_store_probe.py;tests/hermes_cli/test_dump_git_commit.py;tests/hermes_cli/test_ensure_windows_bin_launchers.py;tests/hermes_cli/test_external_process_auth_status.py;tests/hermes_cli/test_external_process_provider_seam.py;tests/hermes_cli/test_gateway_proc_fallback.py;tests/hermes_cli/test_gateway_scm_feature_removed.py;tests/hermes_cli/test_gateway_scm_service.py;tests/hermes_cli/test_gui_command.py;tests/hermes_cli/test_install_cua_driver.py;tests/hermes_cli/test_kanban_db.py;tests/hermes_cli/test_kanban_gateway_restart_handoff.py;tests/hermes_cli/test_kanban_transfer.py;tests/hermes_cli/test_launcher_runtime_selection.py;tests/hermes_cli/test_lazy_refresh_venv_repair.py;tests/hermes_cli/test_local_models_routes.py;tests/hermes_cli/test_local_quickstart.py;tests/hermes_cli/test_nous_subscription.py;tests/hermes_cli/test_plugin_admission_transaction.py;tests/hermes_cli/test_plugins_admission_setter.py;tests/hermes_cli/test_plugins_cadence.py;tests/hermes_cli/test_plugins_check_updates.py;tests/hermes_cli/test_plugins_cmd.py;tests/hermes_cli/test_plugins_cmd_deps_flow.py;tests/hermes_cli/test_plugins_cmd_enable_disable_nested.py;tests/hermes_cli/test_plugins_update_sync.py;tests/hermes_cli/test_profile_export_default_path.py;tests/hermes_cli/test_restore_own_holder_guard.py;tests/hermes_cli/test_uninstall_gateway_service.py;tests/hermes_cli/test_uninstall_install_kind.py;tests/hermes_cli/test_uninstall_node_symlinks.py;tests/hermes_cli/test_uninstall_shell_configs.py;tests/hermes_cli/test_update_autostash.py;tests/hermes_cli/test_update_channel.py;tests/hermes_cli/test_update_fleet_restart_pending.py;tests/hermes_cli/test_update_head_moved_gate.py;tests/hermes_cli/test_update_interrupted_recovery.py;tests/hermes_cli/test_update_parked_branch_guard.py;tests/hermes_cli/test_update_self_lock.py;tests/hermes_cli/test_update_serve_generation_recovery.py;tests/hermes_cli/test_update_shim_self_lock.py;tests/hermes_cli/test_update_venv_ownership_preflight.py;tests/hermes_cli/test_update_yes_flag.py;tests/hermes_cli/test_update_zip_symlink_reject.py;tests/hermes_cli/test_update_zip_sync_failure.py;tests/hermes_cli/test_update_zip_two_phase.py;tests/hermes_cli/test_web_memory_provider_setup_install.py;tests/hermes_cli/test_web_server.py;tests/hermes_cli/test_windows_native_docs.py;tests/hermes_cli/test_worktree_gc.py;tests/hermes_state/test_shared_session_db_registry.py;tests/hermes_state/test_state_db_corrupt_quarantine.py;tests/hermes_state/test_state_db_file_identity.py;tests/monitoring/test_gateway_health_export.py;tests/plugins/image_gen/test_meta_ai_provider.py;tests/plugins/memory/test_hindsight_embedded_runtime.py;tests/plugins/memory/test_hindsight_local_runtime_hint.py;tests/plugins/memory/test_hindsight_provider.py;tests/plugins/memory/test_hindsight_setup_deps.py;tests/plugins/platforms/photon/test_presence_watchdog.py;tests/plugins/test_hindsight_health_grace_timeout.py;tests/pm/test_activate_scripts.py;tests/pm/test_activation_runtime.py;tests/pm/test_ffmpeg_resolution.py;tests/pm/test_install_default_closure.py;tests/pm/test_member_selection.py;tests/pm/test_no_lazy_deps.py;tests/pm/test_node_release_candidates.py;tests/pm/test_node_sidecar.py;tests/pm/test_plugins_state.py;tests/pm/test_pm_authority.py;tests/pm/test_pm_core.py;tests/pm/test_receipt.py;tests/pm/test_runtime_selection.py;tests/pm/test_runtime_transaction.py;tests/pm/test_store_extensions.py;tests/pm/test_store_resume.py;tests/pm/test_uv_cache.py;tests/pm/test_workspace.py;tests/pm/test_workspace_build_inputs.py;tests/run_agent/test_in_place_persist_marker_98450.py;tests/scripts/test_compat_inventory.py;tests/scripts/test_contributor_map.py;tests/scripts/test_desktop_cli_wrapper.py;tests/scripts/test_release_canary.py;tests/security/test_gitspawn_config_injection.py;tests/state/test_state_db_holders.py;tests/test_compat_manifest_targets.py;tests/test_hermes_logging.py;tests/test_install_clone_throttle_fallback.py;tests/test_install_ps1_desktop_stage.py;tests/test_install_ps1_managed_python_provenance.py;tests/test_install_sh_desktop_stage.py;tests/test_install_sh_node_deps_workspaces.py;tests/test_install_sh_node_prerelease.py;tests/test_install_sh_node_probe_87460.py;tests/test_install_sh_termux_python_bounds.py;tests/test_iron_proxy.py;tests/test_live_system_guard.py;tests/test_managed_runtime_resolution.py;tests/test_model_tools_async_bridge.py;tests/test_run_tests_parallel.py;tests/test_run_tests_parallel_stdio.py;tests/test_state_db_repair_live_writer_guard.py;tests/test_wal_reset_repair_hint.py;tests/tools/test_browser_chromium_autoinstall.py;tests/tools/test_browser_chromium_check.py;tests/tools/test_browser_lightpanda.py;tests/tools/test_browser_lightpanda_serve.py;tests/tools/test_browser_npx_warmup.py;tests/tools/test_browser_open_timeout.py;tests/tools/test_browser_use_cli.py;tests/tools/test_code_execution.py;tests/tools/test_code_execution_modes.py;tests/tools/test_code_kernel.py;tests/tools/test_credential_files.py;tests/tools/test_file_operations_delete.py;tests/tools/test_file_ops_single_roundtrip.py;tests/tools/test_local_env_blocklist.py;tests/tools/test_local_temp_dir.py;tests/tools/test_macos_protected_search.py;tests/tools/test_mcp_npx_cached_bin.py;tests/tools/test_modal_snapshot_isolation.py;tests/tools/test_read_special_file_guard.py;tests/tools/test_search_files_cpu_windows.py;tests/tools/test_search_files_engine_selection.py;tests/tools/test_self_repo_guard.py;tests/tools/test_skill_bundle_provenance.py;tests/tools/test_skill_ledger.py;tests/tools/test_tts_lifecycle_leases.py;tests/tools/test_voice_cli_integration.py;tests/tools/test_voice_mode.py;tests/tools/test_voice_wsl_pipewire.py;tests/tools/test_wake_word.py;tests/tools/test_working_diff.py;tests/tui_gateway/test_compute_host.py;tests/tui_gateway/test_compute_host_phase1.py;tests/tui_gateway/test_serve_exit_flush.py
+aa0beef684	2026-09-05	fix(security): corrupt-token and docker_env warnings stop logging credential material (#102308)	2	-
+c5ff900761	2026-09-07	fix: resolve the 33 F821 undefined names outside tui_gateway / feishu / godmode	18	tests/agent/test_credential_pool_anthropic_refresh_race.py;tests/agent/test_cursor_optimizations_parity.py;tests/gateway/test_feishu.py;tests/gateway/test_telegram_audio_vs_voice.py;tests/gateway/test_video_context_note.py;tests/hermes_cli/test_config.py;tests/test_background_review_list_shapes.py;tests/tools/test_computer_use.py;tests/tools/test_mcp_tool.py
+5de769956f	2026-09-09	fix(whatsapp): unwrap quoted-message envelopes before extracting quote text	2	-
+7ecd4d14a5	2026-09-09	fix(whatsapp): peel nested envelopes and restore immediate payload return	2	-
+545e74d0ea	2026-09-11	fix(gateway): a secondary profile's config.yaml no longer poisons the process env under multiplex	12	tests/gateway/test_multiplex_process_global_sinks.py;tests/gateway/test_multiplex_yaml_env_bridge_isolation.py
+c8b56d43da	2026-09-11	fix(whatsapp): quoting the bot's own image/voice/document attaches the file	5	tests/gateway/test_whatsapp_cloud.py;tests/gateway/test_whatsapp_formatting.py
+cbd03e6e4c	2026-09-11	fix(gateway): secondary-profile adapters no longer inherit the default's allow-all / allowlists	10	tests/gateway/test_adapter_authz_secret_scope.py
+cd89e4b4a6	2026-09-11	fix(whatsapp): resolve original media for quoted-media replies	5	tests/gateway/test_whatsapp_formatting.py
+e948ea8347	2026-09-11	fix(whatsapp): don't drop bare quote-replies with resolved media	2	-
+70d0f556d7	2026-09-12	fix(branding): use the Caduceus ☤ (U+2624), not the Rod of Asclepius ⚕ (U+2625)	60	tests/hermes_cli/test_ensure_utf8_locale.py;tests/run_agent/test_unicode_ascii_codec.py
+719cb67bdb	2026-09-12	fix(platforms): carry the inbound message id into the session source everywhere	11	-
+a5228204b4	2026-09-12	fix(branding): Caduceus in the WhatsApp bridge, installers and favicon too	4	-
+6241787662	2026-09-13	fix(whatsapp): blank free_response_chats in YAML falls through to the env CSV	2	tests/gateway/test_whatsapp_group_gating.py
+73a9c34529	2026-09-13	fix(gateway): WHATSAPP_ENABLED=true no longer overrides an explicit platforms.whatsapp.enabled: false (#73289, salvage #73303)	3	tests/gateway/test_env_override_explicit_disable.py
+73eadd54f5	2026-09-13	fix(platforms): standalone senders return redacted error envelopes	21	tests/gateway/test_standalone_send_redaction.py
+a6383dfeb7	2026-09-13	fix(whatsapp): bridge.js runs the adapter's effective dm_policy / allow_from, not the launch env's	3	tests/gateway/test_whatsapp_connect.py;tests/gateway/test_whatsapp_stale_bridge.py
+aac36fd96f	2026-09-13	refactor(gateway): text-batch flush lives on BasePlatformAdapter; shield + cancel-race fixes reach all 8 adapters	12	tests/gateway/test_matrix_message_length.py;tests/gateway/test_text_batch_flush_invariants.py;tests/gateway/test_text_batching.py
+c0d7b05faa	2026-09-13	fix(whatsapp_cloud): allowlist "*" admits DM intake again	2	tests/gateway/test_access_policy_mixin.py
+395e4248d0	2026-09-15	fix(gateway): surface secondary WhatsApp/Relay skipped under multiplex instead of a silent continue	9	tests/gateway/test_multiplex_unserved_shared_ingress.py;tests/hermes_cli/test_relay_plugin_migrate.py
+6bf1032609	2026-09-15	fix(whatsapp): strip :<device> suffix in normalizeWhatsAppId	1	-
+8a3cded09c	2026-09-15	fix(whatsapp): normalize device-qualified ids in every id comparison, bridge and Python	5	tests/gateway/test_whatsapp_group_gating.py
+f90721e95a	2026-09-15	fix(whatsapp): contentless Cloud API envelopes no longer start blank agent turns	2	tests/gateway/test_whatsapp_cloud.py
+8ff91f6ac3	2026-09-16	fix(whatsapp-bridge): bump body-parser override pin to 1.20.8	1	-
+7f2b64f7a2	2026-09-18	fix(platforms): set media_text_inlined in the sibling document paths	10	tests/gateway/test_discord_document_handling.py;tests/gateway/test_slack.py;tests/gateway/test_telegram_documents.py;tests/gateway/test_whatsapp_cloud.py;tests/gateway/test_whatsapp_formatting.py
+35b38f1f4e	2026-09-19	fix(whatsapp): bridge gets the adapter's resolved group policy and group allowlist; one allowlist reader	7	tests/gateway/test_adapter_settings_scoped_precedence.py;tests/gateway/test_whatsapp_connect.py;tests/gateway/test_whatsapp_group_allowlist_env.py;tests/gateway/test_whatsapp_stale_bridge.py
+3926c4209c	2026-09-19	fix: WhatsApp group messages dropped when LID sender has no lid-mapping (#72529)	3	-
+477afd2420	2026-09-19	fix(whatsapp): adapter reads WHATSAPP_GROUP_ALLOWED_USERS for the group allowlist (#72529)	2	tests/gateway/test_whatsapp_group_allowlist_env.py
+81fd9dc773	2026-09-19	fix(whatsapp): honor group ingress policy in bridge	3	-
+8a55373dbf	2026-09-19	fix(whatsapp): authorize first-contact LID senders	3	-
+130b596f6f	2026-09-20	fix(whatsapp,weixin): text-batch delays default to Telegram cadence	5	tests/gateway/test_whatsapp_text_batching.py
+3cbd3cce0a	2026-09-20	fix(whatsapp): honor configured reply prefix in bridge replies	3	tests/gateway/test_adapter_settings_scoped_precedence.py;tests/gateway/test_whatsapp_reply_prefix.py
+587bb10575	2026-09-20	fix(platforms): Discord/WhatsApp/DingTalk gates honour allowlists stored as a JSON-list string	4	tests/plugins/platforms/test_bracket_list_allowlists.py
+7a23b00101	2026-09-20	fix(whatsapp): refuse legacy-pidfile kills without a start-time fingerprint	2	tests/gateway/test_whatsapp_bridge_pidfile.py
+b1c1aa9a28	2026-09-21	fix(platforms): raise, don't assert, when an ensured node/npm has no binary	3	-
+7dd6bee33b	2026-09-22	fix(gateway): rich_sent_store writes run off the event loop	5	tests/gateway/test_rich_sent_store_off_loop.py
+e4b886f71c	2026-09-24	fix: retain WhatsApp runtime binary guards under optimized Python	3	tests/hermes_cli/test_whatsapp_missing_runtime.py
+1e2498a23d	2026-09-28	fix(whatsapp): stamp every bridge console line in the local log shape	3	-
+ee2c8b52a6	2026-09-28	fix(whatsapp): timestamp bridge.js's lifecycle console.log/warn lines	3	-
+f5a3cd6bd8	2026-09-28	fix(whatsapp): don't read a signal-raced bridge exit as a fatal crash	2	tests/gateway/test_whatsapp_connect.py
+4152c69636	2026-10-02	fix(whatsapp): bind cloud webhooks to configured identity	6	tests/gateway/test_whatsapp_cloud.py;tests/gateway/test_whatsapp_cloud_account_binding.py
+e5e2d5508f	2026-10-02	fix(whatsapp): tighten cloud webhook identity binding and its diagnostics	2	-
+01071fdbbb	2026-10-03	fix(whatsapp): skip sibling-recorded bridge ports; name a corrupt port record	3	tests/gateway/test_whatsapp_multiplex.py
+029574fa01	2026-10-03	fix(whatsapp): fold the session check into main's multiplex connect path	6	tests/gateway/test_whatsapp_stale_bridge.py
+20bd00439c	2026-10-03	fix(whatsapp): body-read timeouts, Windows and failed /health keep ownership	4	tests/gateway/test_whatsapp_stale_bridge.py;tests/tools/test_whatsapp_send_message_media.py
+5827154a32	2026-10-03	fix(whatsapp): serve a paired WhatsApp session on every profile under the host multiplexer	11	tests/gateway/test_multiplex_adapter_registry.py;tests/gateway/test_multiplex_unserved_shared_ingress.py;tests/gateway/test_whatsapp_multiplex.py;tests/tools/test_whatsapp_send_message_media.py
+d385b01469	2026-10-03	fix(whatsapp): adopt only the recorded bridge's own port; one port resolution for launch and send	5	tests/gateway/test_whatsapp_multiplex.py
+e1cc967c29	2026-10-03	fix(whatsapp): unanswered /health and standalone sends respect session ownership	4	tests/gateway/test_whatsapp_stale_bridge.py;tests/tools/test_whatsapp_send_message_media.py
+ff32607c6f	2026-10-03	fix(whatsapp): adopt only the bridge that serves this profile's session	6	tests/gateway/test_whatsapp_stale_bridge.py
+2dda207409	2026-10-05	fix(whatsapp): install a missing aiohttp through PM and name every failed connect	3	tests/gateway/test_whatsapp_aiohttp_missing.py;tests/gateway/test_whatsapp_connect.py
+c93c632c93	2026-10-05	fix(whatsapp): keep transient and restart-needed aiohttp installs retryable	2	tests/gateway/test_whatsapp_connect.py
+f5e21913cc	2026-10-05	fix(whatsapp): name a missing aiohttp in the bridge preflight (salvage of #126557)	2	tests/gateway/test_whatsapp_aiohttp_missing.py
+1b8bd66b7f	2026-10-07	fix(lint): stdin guard catches calls whose arguments start on the next line (review)	20	tests/tools/test_subprocess_stdin_guard.py
+53f84cc716	2026-10-07	fix(whatsapp_cloud): keep a null app secret unset instead of keying HMAC with "None"	2	tests/gateway/test_whatsapp_cloud.py
+298a96d51c	2026-10-11	fix(gateway): native admission keeps WhatsApp metadata, path text and reply_expected	2	tests/gateway/test_native_admission_metadata.py
+231cb757a4	2026-10-13	fix(deps): bump the WhatsApp bridge lock past its npm-audit findings	1	-
+155588754a	2026-10-16	fix(whatsapp): reuse bridge ports after restart	2	tests/gateway/test_whatsapp_multiplex.py
+1848982075	2026-10-16	fix(whatsapp): POSIX-only reuse in the probe, real TIME-WAIT test	2	tests/gateway/test_whatsapp_multiplex.py
+b95c4861b2	2026-10-16	fix(platforms): bundled authorization env names hold when the live entry lacks them	41	tests/gateway/test_platform_bundled_authz_fallback.py
+48b1988853	2026-10-17	fix(plugin-catalog): re-pin hermes-whatsapp-voice to e472a47	1	-
+de526521ab	2026-10-18	fix(gateway): let a serial reader return once a busy burst input is held	14	tests/gateway/test_busy_burst_serial_reader.py
+13282fdac4	2026-10-21	fix(dashboard): allow safe WhatsApp re-pairing after logout (#142439)	13	tests/gateway/test_scoped_process_reservations.py;tests/hermes_cli/test_whatsapp_dashboard_repair.py
+183cd6cc35	2026-10-23	fix(gateway): keep plain audio MEDIA out of WhatsApp/BlueBubbles voice notes	4	tests/gateway/test_plain_audio_not_voice_note.py
+29b44be139	2026-10-28	fix(whatsapp): wait for the old bridge to release its port before respawning	3	tests/gateway/test_whatsapp_bridge_port_release.py
+7b90783f76	2026-10-28	fix(whatsapp): keep main's TIME-WAIT-aware port_is_free for the respawn wait	2	-
+a3349cf1d5	2026-10-28	fix(whatsapp): give delivery receipts their own bridge queue	1	-
+ac8d159b86	2026-10-28	fix(plugin-catalog): bump whatsapp-agent-platform to 0.2.1	1	-
+f3acd8ff33	2026-10-28	fix(whatsapp): run the bridge reaps off the gateway event loop	2	tests/gateway/test_whatsapp_bridge_port_release.py
+fb45657d55	2026-10-28	fix(whatsapp): don't treat the old bridge's TIME_WAIT as a busy port	3	tests/gateway/test_whatsapp_bridge_port_release.py
+57644ec000	2026-10-29	fix(process): a family's stop path releases its group only once the group is empty	9	tests/hermes_cli/test_owned_agent_subprocs.py;tests/tools/test_browser_use_cli_owned_daemon.py
+73804ca2f9	2026-10-29	fix(whatsapp): the Node bridge dies with the gateway that started it (orphans after kill -9: 1 -> 0)	4	tests/gateway/test_whatsapp_connect.py;tests/gateway/test_whatsapp_stale_bridge.py;tests/hermes_cli/test_owned_agent_subprocs.py
+bcf275a675	2026-10-29	fix(dashboard): the WhatsApp pairing bridge dies with the dashboard that started it	2	tests/hermes_cli/test_owned_agent_subprocs.py
+e97cdd16fe	2026-10-31	fix(telegram): match the WhatsApp rule on unknown reply authors and indented commands	4	tests/gateway/test_telegram_group_gating.py
+5ab58da1f6	2026-11-04	fix(gateway): a stale approval card no longer approves the next request	9	tests/gateway/test_approval_card_request_binding.py
+122b31f2b4	2026-11-08	fix(whatsapp): end pairing on Ctrl+C at the code prompt and keep the QR-era handoff key	2	-
+466591fe65	2026-11-08	fix(gateway): opt-in approvals.approvers binds shared-chat exec approvals to the requester on every platform	44	tests/gateway/relay/test_relay_approval_owner_admins.py;tests/gateway/test_approval_requester_binding.py;tests/gateway/test_approval_requester_binding_adapters.py;tests/gateway/test_approval_requester_binding_admins.py;tests/gateway/test_approval_requester_binding_policy.py;tests/gateway/test_telegram_approval_refusal_expired_query.py
+47f0c6bc0e	2026-11-08	fix(gateway): budget the WhatsApp Cloud approval card against its 1,024 cap	7	tests/gateway/test_exec_approval_deny_only_renderers.py
+48c7a09fd8	2026-11-08	fix(whatsapp): keep a paired gateway alive on a passkey request during login	3	-
+58ebcf3007	2026-11-08	fix(whatsapp): use official Baileys and isolate setup regression test	12	tests/hermes_cli/test_whatsapp_setup_ordering.py
+618b0d6bbe	2026-11-08	fix(whatsapp): stop passkey retry loops and tighten pairing setup	12	tests/gateway/test_whatsapp_connect.py;tests/hermes_cli/test_whatsapp_dependency_refresh.py
+6b4669a261	2026-11-08	fix(whatsapp): treat a superseded passkey attempt's failure as a cancellation	5	tests/hermes_cli/test_whatsapp_onboarding.py
+9929bc74e7	2026-11-08	fix(whatsapp): wire local passkey signer and validate pairing completion	9	tests/hermes_cli/test_whatsapp_passkey_pairing.py;tests/hermes_cli/test_whatsapp_setup_ordering.py
+c734375c9f	2026-11-08	fix(whatsapp): drop the fixed pair timeout and honour the npm timeout knob	3	tests/hermes_cli/test_whatsapp_dependency_refresh.py;tests/hermes_cli/test_whatsapp_passkey_pairing.py
+d04ebe15b9	2026-11-08	fix(whatsapp): keep the bridge's streamed pairing error in the dashboard	2	tests/hermes_cli/test_whatsapp_onboarding.py
+d37547bf73	2026-11-08	fix(whatsapp): package pinned passkey runtime and refresh stale dependencies	8	tests/hermes_cli/test_whatsapp_dependency_refresh.py
+e89b47ac8b	2026-11-08	fix(whatsapp): keep a connected gateway alive on a late passkey request	4	tests/gateway/test_whatsapp_connect.py
+f0ac114d2d	2026-11-08	fix(telegram): every native approval renderer honours a Deny-only prompt	7	tests/gateway/test_exec_approval_deny_only_renderers.py
+fc60ebb7e6	2026-11-08	fix(whatsapp): bind passkey code confirmation to its own attempt	7	-
+76ec660497	2026-11-09	fix(gateway): stop prepending the checkout root onto sys.path at import	13	tests/plugins/platforms/test_checkout_root_sys_path.py
+d1aed60ec1	2026-11-09	fix(gateway): slash confirms and clarify questions answer only to their requester	21	tests/gateway/test_prompt_requester_binding.py
+17dd06937e	2026-11-10	fix(gateway): a non-admin cannot answer a prompt where they could not type its command	18	tests/gateway/test_approval_answer_slash_gate.py
+0494ea5a8a	2026-11-12	fix(whatsapp): authenticate local bridge API	3	tests/gateway/test_whatsapp_bridge_auth.py
+0ef9c17630	2026-11-12	fix(whatsapp): keep the session store and bridge.log owner-only	9	tests/gateway/test_whatsapp_bridge_port_release.py;tests/gateway/test_whatsapp_connect.py;tests/gateway/test_whatsapp_session_permissions.py;tests/gateway/test_whatsapp_stale_bridge.py
+0f70283d6b	2026-11-12	fix(whatsapp): rebase bridge auth onto main; hermes send fixture serves token + proof	3	tests/gateway/test_whatsapp_stale_bridge.py;tests/hermes_cli/test_send_cmd.py
+30483519b8	2026-11-12	fix(whatsapp): never kill a bridge that fails the token proof; rotate the token per spawn	4	tests/gateway/test_whatsapp_bridge_port_release.py;tests/gateway/test_whatsapp_stale_bridge.py
+42e5e8b3d5	2026-11-12	fix(whatsapp): preserve BSUID allowlist identifiers	2	tests/gateway/test_whatsapp_cloud.py
+471cb67f1a	2026-11-12	fix(whatsapp): restart an adopted bridge when its spawn config changed (#126824)	2	tests/gateway/test_whatsapp_stale_bridge.py
+57893add23	2026-11-12	fix(whatsapp): challenge-first bridge auth on current main; cron senders read the token, bridge refuses without one	8	tests/gateway/test_whatsapp_bridge_auth.py;tests/gateway/test_whatsapp_connect.py;tests/gateway/test_whatsapp_stale_bridge.py;tests/tools/test_whatsapp_send_message_media.py
+65628b62e0	2026-11-12	fix(whatsapp): tell an unset reply prefix from an empty one in the bridge fingerprint	2	tests/gateway/test_whatsapp_stale_bridge.py
+7448e4f60b	2026-11-12	fix(whatsapp): tighten an existing bridge.log before adopting a running bridge	2	tests/gateway/test_whatsapp_session_permissions.py
+75cef9cde2	2026-11-12	fix(whatsapp): treat package.json drift as a stale adopted bridge	2	tests/gateway/test_whatsapp_stale_bridge.py
+9e8f1b4f79	2026-11-12	fix(gateway): a text file captioned with a slash command still runs the command	9	tests/gateway/test_command_caption_document_text.py
+9edf4b185c	2026-11-12	fix(whatsapp): standalone sends prove the bridge before sending the bearer; refresh the bridge mirror	5	tests/gateway/test_whatsapp_bridge_auth_listeners.py;tests/gateway/test_whatsapp_bridge_dir_resolution.py;tests/hermes_cli/test_send_cmd.py
+a065fe7e3c	2026-11-12	fix(whatsapp_cloud): keep suffixed '*' allowlist entries inert on every carrier	2	tests/gateway/test_whatsapp_cloud_allowed_users.py
+a08cc4acf2	2026-11-12	fix(whatsapp): keep the session lock through cancelled token rotation	2	tests/gateway/test_whatsapp_connect.py
+aab7f56371	2026-11-12	fix(whatsapp): mint the bridge token off the event loop	2	tests/gateway/test_whatsapp_connect.py
+decdbd15f9	2026-11-12	fix(whatsapp): normalize live BSUID allowlist entries	2	tests/gateway/test_whatsapp_cloud_allowed_users.py
+f2cadb13ae	2026-11-12	fix(whatsapp): launch bridge.js from the scrubbed child env	6	tests/gateway/test_whatsapp_bridge_env_scrub.py;tests/hermes_cli/test_whatsapp_pairing_env_scrub.py
+0d32db6a72	2026-11-13	fix(gateway): a spoken wake word can wake the bot from a group voice note	12	tests/gateway/test_spoken_wake_word_gate.py
+1ef99ae8d8	2026-11-13	fix(gateway): the spoken wake-word gate transcribes in the routed profile, honours stt.enabled, keeps bridge files and never holds the inbound reader	6	tests/gateway/test_spoken_wake_word_gate.py
+3f348f4dce	2026-11-13	fix(gateway): a group control command never waits on an earlier voice note's gate STT	4	tests/gateway/test_spoken_wake_word_gate.py
+cb11f287b5	2026-11-13	fix(whatsapp): warn on a bot opened through config.yaml allow_from	2	tests/hermes_cli/test_whatsapp_customer_facing_warning.py
+e37bc3485c	2026-11-13	fix(whatsapp): trim allowlist entries in the setup warning; document group admins	4	tests/hermes_cli/test_whatsapp_customer_facing_warning.py
+8a00155e54	2026-11-14	fix(whatsapp): keep contact ids and Signal session keys out of bridge.log (#155542)	8	tests/gateway/test_whatsapp_bridge_log_rotation.py;tests/hermes_cli/test_backup_whatsapp_bridge_log.py
+bc7ff51ace	2026-11-14	fix(gateway): one timing-safe secret compare for every inbound adapter, replay window for WeCom and Feishu	20	tests/gateway/test_feishu.py;tests/gateway/test_inbound_auth_hardening.py;tests/gateway/test_wecom_callback.py
