@@ -198,6 +198,8 @@ proc streamToOutbox*(factory:   StreamFactory;
         let finalResponse = ev.response
         if finalResponse.toolCalls.len == 0 and
            not isSessionStopRequested(stopGeneration):
+          if shown != nil:
+            shown[] = true
           let visible = cleanResponse(finalResponse.text)
           await outbox.put(OutboundMessage(
             userId:    userId,
@@ -618,10 +620,13 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
     req.providerOverride = providerOverride
     req.modelOverride = modelOverride
 
-    ## The stream goes through the route routing selects for this request
-    ## when one is known; a route streams only if its stream carries tool
-    ## calls (descriptors.streamsToolCalls). Otherwise the session's factory,
-    ## which streams tool calls only through OpenRouter.
+    ## With a route known, the stream goes through the provider routing
+    ## selects, and only if its stream carries tool calls
+    ## (descriptors.streamsToolCalls); otherwise the round is not streamed.
+    ## It never falls back to the session's factory then: that would stream
+    ## from a provider and model routing did not pick. Without a route (no
+    ## provider runtime), the session's factory as before, which streams
+    ## tool calls only through OpenRouter.
     var roundFactory = streamFactory
     var factoryStreamsTools = providerLabel.toLowerAscii().startsWith("openrouter")
     var routeKnown = false
