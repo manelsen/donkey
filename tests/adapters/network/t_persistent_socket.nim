@@ -259,6 +259,20 @@ proc runTests*() =
       check inMilliseconds(getMonoTime() - started) < 2000
       client.close()
 
+    test "a gateway URL becomes a target, with its port when it has one":
+      let plain = socketTargetOf("wss://api.sgroup.qq.com/websocket").get
+      check plain.host == "api.sgroup.qq.com"
+      check plain.port == Port(443)
+      check plain.path == "/websocket"
+      check plain.useTls
+      let ported = socketTargetOf("wss://gw.example:8443/ws?v=1").get
+      check ported.host == "gw.example"
+      check ported.port == Port(8443)
+      check ported.path == "/ws?v=1"
+      check socketTargetOf("gw.example/ws").get.host == "gw.example"   ## no scheme: wss
+      check socketTargetOf("wss://").isErr
+      check socketTargetOf("ws://insecure.example/").isErr
+
     test "a config holding a ref is refused at compile time":
       type RefConfig = object
         holder: ref int

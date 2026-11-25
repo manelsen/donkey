@@ -448,14 +448,7 @@ proc qqLocate(cfg: QQOfficialGatewayConfig; state: var QQOfficialGatewayState;
     state.built = true
   let gateway = gatewayInfoOf(state.adapter).valueOr:
     return err("gateway lookup failed: " & error)
-  var url = gateway.url
-  if not url.startsWith("wss://"):
-    url = "wss://" & url
-  let rest = url[6 .. ^1]
-  let slash = rest.find('/')
-  ok(SocketTarget(host: if slash >= 0: rest[0 ..< slash] else: rest,
-                  path: if slash >= 0: rest[slash .. ^1] else: "/",
-                  port: Port(443), useTls: true))
+  socketTargetOf(gateway.url)
 
 proc qqOpened(cfg: QQOfficialGatewayConfig; state: var QQOfficialGatewayState;
               ws: WsClient; log: Logger): SessionStep

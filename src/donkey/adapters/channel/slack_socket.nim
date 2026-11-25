@@ -119,18 +119,7 @@ proc slackLocate(cfg: SlackSocketConfig; state: var SlackSocketState;
     ## Built once: a factory without postNoRedirect is a wiring error, logged
     ## on every attempt and retried at most every 30 s, never rebuilt.
     return err("slack socket: the HTTP port has no postNoRedirect (wiring error)")
-  let url = ? openSocketUrl(state.http, cfg.appToken)
-  let socketUrl = parseUri(url)
-  let port =
-    if socketUrl.port.len > 0:
-      try: Port(parseInt(socketUrl.port))
-      except ValueError: Port(443)
-    else:
-      Port(443)
-  let path = if socketUrl.path.len > 0: socketUrl.path else: "/"
-  ok(SocketTarget(host: socketUrl.hostname, port: port, useTls: true,
-                  path: if socketUrl.query.len > 0: path & "?" & socketUrl.query
-                        else: path))
+  socketTargetOf(? openSocketUrl(state.http, cfg.appToken))
 
 proc slackOpened(cfg: SlackSocketConfig; state: var SlackSocketState; ws: WsClient;
                  log: Logger): SessionStep {.nimcall, gcsafe, raises: [CatchableError].} =
