@@ -270,6 +270,30 @@ proc runMcpLoginArgTests*() =
       check preregisteredFrom(parseMcpLoginArgs(@["--client-id", "a",
         "--client-secret-env", "UNSET_VAR"]).get, env).isErr
 
+proc runTraceExportTests*() =
+  suite "ctl traces":
+    test "lines since a time, for one user or everyone, oldest first":
+      let home = getTempDir() / "donkey_t_ctl_traces"
+      removeDir(home)
+      createDir(home / "state" / "traces")
+      defer: removeDir(home)
+      writeFile(home / "state" / "traces" / "2027-01-14.jsonl",
+        "{\"ts\":1799900000000,\"user\":\"u-1\"}\n")
+      writeFile(home / "state" / "traces" / "2027-01-15.jsonl",
+        "{\"ts\":1800000000000,\"user\":\"u-2\"}\n{\"ts\":1800000001000,\"user\":\"u-1\"}\n")
+      let all = exportTraces(home / "state" / "traces", sinceMs = 0, user = "")
+      check all.len == 3
+      check "1799900000000" in all[0]
+      check exportTraces(home / "state" / "traces", sinceMs = 1_800_000_000_000, user = "").len == 2
+      check exportTraces(home / "state" / "traces", sinceMs = 0, user = "u-1").len == 2
+
+    test "options":
+      check parseTraceArgs(@[], 1_000_000).get.user == ""
+      check parseTraceArgs(@["--user", "u-1"], 1_000_000).get.user == "u-1"
+      check parseTraceArgs(@["--since", "1h"], 10_000_000).get.sinceMs == 10_000_000 - 3_600_000
+      check parseTraceArgs(@["--bogus"], 0).isErr
+
 when isMainModule:
   runTests()
   runMcpLoginArgTests()
+  runTraceExportTests()

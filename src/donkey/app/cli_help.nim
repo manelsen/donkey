@@ -43,6 +43,7 @@ Commands:
   ctl tool install <command>            Register an MCP server (stdio)
   ctl tool add-http <url> [--token-env NAME | --oauth]
                                         Register an MCP server over HTTP
+  ctl traces [--since 7d] [--user UUID]  per-turn traces (DONKEY_TRACES=on), as JSON lines
   ctl mcp login <url> [--client-id ID [--client-secret-env NAME]]
                                         OAuth login for an HTTP MCP server
   ctl skill search <query>              Search remote skills on ClawHub
