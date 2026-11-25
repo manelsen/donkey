@@ -5,6 +5,8 @@
 import std/[os, strutils, unittest]
 import donkey/adapters/channel/telegram
 import donkey/adapters/channel/telegram_bots
+import donkey/adapters/channel/outbound_builder
+import donkey/core/pipeops
 import donkey/adapters/identity/identity_resolver
 import donkey/config/environment
 import donkey/core/types
@@ -72,6 +74,40 @@ proc runTests*() =
       var bots = TelegramBots()
       bots.affinity.record("u-3", "removido")
       check adapterFor(addr bots, addr primary, UserId("u-3"))[].token == "primary-token"
+
+  suite "telegram bots — the outbound port":
+
+    test "each operation for a person goes through that person's adapter":
+      let ids = tempIds("port")
+      var a = newTelegramAdapter("a-token", ids, apiBase = "http://127.0.0.1:9")
+      var b = newTelegramAdapter("b-token", ids, apiBase = "http://127.0.0.1:9")
+      a.configError = "adapter A"
+      b.configError = "adapter B"
+      let pa = addr a
+      let pb = addr b
+      var asked: seq[string]
+      let pick: TelegramPick = proc(userId: UserId): ptr TelegramAdapter {.gcsafe.} =
+        {.cast(gcsafe).}:
+          asked.add $userId
+        if $userId == "u-b": pb else: pa
+      let port = telegramOutboundPort(pa, pick)
+      let sent = port.send(OutboundMessage(userId: UserId("u-b"), channel: ckTelegram, text: "x"))
+      check sent.isErr and "adapter B" in sent.error
+      let id = port.sendReturnId(OutboundMessage(userId: UserId("u-a"), channel: ckTelegram, text: "x"))
+      check id.isErr and "adapter A" in id.error
+      discard port.editMessage(UserId("u-b"), "1", "x", false)
+      discard port.sendKeyboard(UserId("u-b"), "x", @[@[("ok", "ok")]])
+      discard port.editKeyboard(UserId("u-b"), "1", "x", @[@[("ok", "ok")]])
+      discard port.setMessageReaction(UserId("u-b"), "", "1", "👍")
+      check asked == @["u-b", "u-a", "u-b", "u-b", "u-b", "u-b"]
+
+    test "without a picker the port is the one adapter":
+      let ids = tempIds("fixed")
+      var a = newTelegramAdapter("a-token", ids, apiBase = "http://127.0.0.1:9")
+      a.configError = "adapter A"
+      let port = telegramOutboundPort(addr a)
+      let sent = port.send(OutboundMessage(userId: UserId("u-b"), channel: ckTelegram, text: "x"))
+      check sent.isErr and "adapter A" in sent.error
 
 when isMainModule:
   runTests()

@@ -322,6 +322,33 @@ nothing is queued.
 
 ---
 
+## Several bots per channel
+
+One instance can run several bots on a channel, each with its own token and
+persona, over the same users, memory and sessions (a person is one user on
+every bot). Declared in `donkey.toml`:
+
+```toml
+[[bots]]
+name      = "suporte"
+channel   = "telegram"
+token_env = "TELEGRAM_TOKEN_SUPORTE"
+agent     = "suporte"      # {home}/agents/suporte.toml
+```
+
+- The bot answers with its agent's persona and model (an agent file in the
+  instance's `agents/`, the same format as a person's named agents); a
+  message that starts with `@agent` still picks that agent.
+- The bot a person wrote to last is the one that answers them, on every path
+  of that channel (replies, streaming edits, keyboards, typing); reminders
+  go through it too, and through the default bot after a restart until the
+  person writes again.
+- An entry that is malformed or whose token variable is not set is left out
+  and logged at startup; the others run.
+- Available on Telegram today; Discord, WhatsApp and Teams follow (E3).
+
+---
+
 ## CLI
 
 The CLI is not part of the outbound capability matrix. It is an operational
