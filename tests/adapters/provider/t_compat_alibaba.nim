@@ -179,6 +179,24 @@ proc runTests*() =
       check not body.hasKey("preserve_thinking")
       check body["messages"][1]["reasoning_content"].getStr == "pensei assim"
 
+    test "a listed name or its dated snapshot, not any longer name":
+      check alibabaPreservesThinking("qwen3.6-plus")
+      check alibabaPreservesThinking("qwen3.6-plus-2026-04-02")
+      check alibabaPreservesThinking("qwen3.8-max-0902")
+      check alibabaPreservesThinking("kimi/kimi-k2.7-code-highspeed")
+      check alibabaPreservesThinking("kimi/kimi-k3.1-pro-highspeed")
+      check not alibabaPreservesThinking("qwen3.6-plus-preview")
+      check not alibabaPreservesThinking("qwen3.6-plus-35b")
+      check not alibabaPreservesThinking("qwen3.8-max-latest-experimental")
+
+    test "Kimi K3.1 Pro: kept by default on Model Studio, a parameter when direct":
+      let studio = alibabaCompatProfileFor(AlibabaEndpoint, "kimi-k3.1-pro")
+      check studio.quirks.replayReasoning
+      check studio.payloadExtras.isNil or not studio.payloadExtras.hasKey("preserve_thinking")
+      let direct = alibabaCompatProfileFor(AlibabaEndpoint, "kimi/kimi-k3.1-pro")
+      check direct.quirks.replayReasoning
+      check direct.payloadExtras{"preserve_thinking"}.getBool(false)
+
     test "other models are unchanged":
       for model in ["qwen3.6-35b-a3b", "qwen-plus", "qwen3-max", "qwq-plus"]:
         let body = buildCompatRequestBody(alibabaCompatProfileFor(AlibabaEndpoint, model),

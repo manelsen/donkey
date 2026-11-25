@@ -50,19 +50,29 @@ const
     "qwen4-max", "qwen3.8-max", "qwen3.8-flash", "qwen3.8-omni-flash",
     "qwen3.7-max", "qwen3.7-plus", "qwen3.7-flash",
     "qwen3.6-plus", "qwen3.6-flash",
-    "kimi-k2.6", "kimi-k2.7-code", "kimi/kimi-k2.7-code", "kimi/kimi-k3.1-pro"]
-    ## prefixes: a dated snapshot (qwen3.6-plus-2026-04-02) is the same model
-  KeepsClientReasoning = ["kimi-k3"]
-    ## Model Studio's Kimi K3 / K3.1 Pro keep it without the parameter
+    "kimi-k2.6", "kimi-k2.7-code",
+    "kimi/kimi-k2.7-code", "kimi/kimi-k2.7-code-highspeed",
+    "kimi/kimi-k3.1-pro", "kimi/kimi-k3.1-pro-highspeed"]
+    ## The reference's list: these take `preserve_thinking`.
+  KeepsClientReasoning = ["kimi-k3", "kimi-k3.1-pro"]
+    ## Model Studio's Kimi K3 and K3.1 Pro keep client reasoning by default:
+    ## echoed, no parameter (Moonshot-direct `kimi/kimi-k3.1-pro` takes it).
 
-func startsWithAny(model: string; prefixes: openArray[string]): bool =
+func isListedModel(model: string; names: openArray[string]): bool =
+  ## A listed name, or that name with a dated snapshot after it
+  ## (`qwen3.6-plus-2026-04-02`, `qwen3.8-max-0902`); not any longer name
+  ## (`qwen3.6-plus-preview` is another model).
   let m = model.toLowerAscii.strip
-  for prefix in prefixes:
-    if m.startsWith(prefix): return true
+  for name in names:
+    if m == name: return true
+    if m.startsWith(name & "-"):
+      let suffix = m[name.len + 1 .. ^1]
+      if suffix.len >= 4 and suffix.allCharsInSet({'0' .. '9', '-'}):
+        return true
   false
 
 func alibabaPreservesThinking*(model: string): bool =
-  model.startsWithAny(PreserveThinkingModels)
+  model.isListedModel(PreserveThinkingModels)
 
 proc alibabaCompatProfileFor*(endpoint, model: string): CompatProfile =
   ## The profile for one model: preserve_thinking and reasoning replay where
@@ -71,7 +81,7 @@ proc alibabaCompatProfileFor*(endpoint, model: string): CompatProfile =
   if alibabaPreservesThinking(model):
     result.payloadExtras = %* {"preserve_thinking": true}
     result.quirks.replayReasoning = true
-  elif model.startsWithAny(KeepsClientReasoning):
+  elif model.isListedModel(KeepsClientReasoning):
     result.quirks.replayReasoning = true
 
 func alibabaCompatProfile*(): CompatProfile =
