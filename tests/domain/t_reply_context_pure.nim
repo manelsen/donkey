@@ -23,5 +23,19 @@ proc runTests*() =
       check quoted.endsWith("…\"]")
       check res.validateUtf8 == -1
 
+proc runClipTests*() =
+  suite "the clip keeps every whole character":
+    test "a cut inside a character drops only that character":
+      ## 299 ASCII bytes then "é" (2 bytes): byte 300 is the second half of
+      ## "é", so the clip keeps the 299 and drops the split "é", nothing more.
+      let quote = "a".repeat(299) & "é" & "b"
+      let first = withReplyContext("x", quote).split("\n")[0]
+      check first == "[Replying to: \"" & "a".repeat(299) & "…\"]"
+    test "a cut on a boundary keeps the character before it":
+      let quote = "a".repeat(298) & "é" & "b"   ## "é" ends at byte 300
+      let first = withReplyContext("x", quote).split("\n")[0]
+      check first == "[Replying to: \"" & "a".repeat(298) & "é…\"]"
+
 when isMainModule:
   runTests()
+  runClipTests()

@@ -205,9 +205,9 @@ func parseUpdate*(upd: JsonNode): TgParseResult =
     ## the whole message. In a forum topic every message "replies" to the
     ## topic's creation, which is no quote.
     let replied = tgMsg.getOrDefault("reply_to_message")
+    let selected = tgMsg.getOrDefault("quote").getOrDefault("text").getStr("")
     let quotedText =
-      if tgMsg.getOrDefault("quote").getOrDefault("text").getStr("").len > 0:
-        tgMsg["quote"]["text"].getStr
+      if selected.len > 0: selected
       elif replied.isNil or replied.hasKey("forum_topic_created"): ""
       else: replied |> extractTextFrom
     ## Skip updates that carry neither text nor a recognisable attachment.
