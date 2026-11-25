@@ -71,3 +71,14 @@ neither, nor `manage_agents`.
 - An agent with its own provider runs without streaming: streaming is wired to
   the user's default provider only.
 - An agent asked through `ask_agent` or a room answers without tools.
+
+## The task board
+
+`manage_tasks` keeps a small board the person and their agents share
+(PRD-roadmap E4): tasks `t1`, `t2`, … with a title, a state (`todo`,
+`doing`, `blocked`, `done`), an assignee (the person, or `@agent`), an
+optional due date (`YYYY-MM-DD`) and notes. It lives in the paddock as
+`tasks.json`, with a readable `TASKS.md` written beside it at each change;
+editing `TASKS.md` changes nothing. `/tasks` shows the board on any channel.
+At most 200 tasks; subagents and consulted agents cannot use the tool.
+

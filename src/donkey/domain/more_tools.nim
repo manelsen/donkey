@@ -564,6 +564,28 @@ const
     "\"text\":{\"type\":\"string\",\"description\":\"Note to append for action=note\"}" &
     "},\"required\":[\"action\"]}"
 
+# ── manage_tasks ──────────────────────────────────────────────────────────────
+const
+  ManageTasksToolName* = "manage_tasks"
+  ManageTasksToolDescription* =
+    "The user's task board, shared with their named agents: add a task, move " &
+    "it (todo, doing, blocked, done), assign it to the user (empty) or to an " &
+    "agent (@name), add a note, set a due date (YYYY-MM-DD), delete it, or " &
+    "list the board (optionally by state or assignee). Use it for work that " &
+    "spans conversations ('remind me what is pending', 'put this on my " &
+    "list'); for the steps of the current answer use todo_write instead. " &
+    "Tasks are t1, t2, …; at most 200."
+  ManageTasksToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"action\":{\"type\":\"string\",\"enum\":[\"list\",\"add\",\"move\",\"assign\",\"note\",\"due\",\"delete\"]}," &
+    "\"id\":{\"type\":\"string\",\"description\":\"Task id, e.g. t3\"}," &
+    "\"title\":{\"type\":\"string\",\"description\":\"What is to be done (add)\"}," &
+    "\"state\":{\"type\":\"string\",\"enum\":[\"todo\",\"doing\",\"blocked\",\"done\"],\"description\":\"move: the new state; list: only this state\"}," &
+    "\"assignee\":{\"type\":\"string\",\"description\":\"Empty for the user, @name for an agent; list: only theirs\"}," &
+    "\"due\":{\"type\":\"string\",\"description\":\"YYYY-MM-DD, or empty to clear\"}," &
+    "\"text\":{\"type\":\"string\",\"description\":\"The note (note)\"}" &
+    "},\"required\":[\"action\"]}"
+
 # ── manage_schedules ──────────────────────────────────────────────────────────
 const
   ManageSchedulesToolName* = "manage_schedules"

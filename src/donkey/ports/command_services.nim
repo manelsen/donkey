@@ -29,6 +29,7 @@ type
     models*:      CommandArgFn    ## /models text form
     think*:       CommandArgFn    ## /think text form
     budget*:      CommandArgFn    ## /budget text form
+    taskBoard*:   CommandTextFn   ## the person's task board (/tasks, E4.3)
     channelPrefs*: proc(userId: UserId): Result[ChannelPrefs, string] {.gcsafe.}
     savePreference*: proc(userId: UserId; key, value: string): Result[void, string] {.gcsafe.}
     toolCounts*: proc(): ToolCounts {.gcsafe.}

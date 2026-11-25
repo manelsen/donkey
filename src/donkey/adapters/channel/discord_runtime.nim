@@ -16,6 +16,7 @@ import ../../app/command_dispatch
 import ../../ports/channel_capability
 import ../identity/identity_resolver
 import ./common_runtime
+import ./command_services
 import ./discord
 
 proc sendDiscordReply(event: DiscordRawEvent;
@@ -125,7 +126,7 @@ proc handleDiscordUiCommand(event: DiscordRawEvent;
     true
   of cmdTasks:
     sendDiscordEmbed(event, dcAdapter, userId,
-      "🕒 Tarefas", buildTasksText(), 0x95A5A6, logger)
+      "🕒 Tarefas", taskBoardText(memory, userId).get(buildTasksText()), 0x95A5A6, logger)
     true
   of cmdAgents:
     sendDiscordEmbed(event, dcAdapter, userId,

@@ -26,6 +26,7 @@ import ./tools/utility_tools
 import ./tools/audio_tools
 import ./tools/task_tools
 import ./named_agents
+import ./task_board
 import ../domain/agents/named_agent_pure
 import ./credential_runtime
 import ./tools/code_tools
@@ -858,6 +859,13 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
       return handledError(error)
     let reply = performManageSchedules(ctx.schedules, $ctx.uid, $ctx.channel,
                                        schedCtx, int64(epochTime() * 1000)).valueOr:
+      return handledError(error)
+    return handledText(reply)
+  of ManageTasksToolName:
+    let tasksCtx = parseManageTasksContext(j).valueOr:
+      return handledError(error)
+    let reply = performManageTasks(ctx.fs, ctx.paddockDir, tasksCtx,
+                                   int64(epochTime() * 1000)).valueOr:
       return handledError(error)
     return handledText(reply)
   of ManageAgentsToolName:

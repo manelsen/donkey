@@ -46,6 +46,8 @@ proc fakeServices(p: Probe; memoryFails = false): CommandServicesPort =
       ok("think"),
     budget: proc(u: UserId; v: string): Result[string, string] {.gcsafe.} =
       ok("budget"),
+    taskBoard: proc(u: UserId): Result[string, string] {.gcsafe.} =
+      ok("# Tarefas\n\n## A fazer\n\n- t1 · revisar contrato\n"),
     channelPrefs: proc(u: UserId): Result[ChannelPrefs, string] {.gcsafe.} =
       ok(defaultChannelPrefs()),
     savePreference: proc(u: UserId; k, v: string): Result[void, string] {.gcsafe.} =
@@ -96,6 +98,19 @@ proc runTests*() =
       check o.reply.topic == rtUi
       check "3 carregadas" in o.reply.text
       check "1 conectados" in o.reply.text
+
+    test "/tasks shows the person's board":
+      let o = dispatchCommand(env, sm, msgSeq, request(p, cmdTasks))
+      check o.reply.topic == rtUi
+      check "t1 · revisar contrato" in o.reply.text
+
+    test "/tasks without a board service says so, without inventing tasks":
+      var bare = fakeServices(p)
+      bare.taskBoard = nil
+      let o = dispatchCommand(CommandEnv(services: bare), sm, msgSeq, request(p, cmdTasks))
+      check o.reply.topic == rtUi
+      check "deliverDueReminders" notin o.reply.text
+      check "não está disponível" in o.reply.text
 
     test "/mycode mints through the link port and is requester-only":
       let o = dispatchCommand(env, sm, msgSeq, request(p, cmdMyCode))

@@ -128,6 +128,15 @@ type
     model*:       string
     text*:        string
 
+  ManageTasksContext* = object
+    action*:   string   ## list, add, move, assign, note, due, delete
+    id*:       string
+    title*:    string
+    state*:    string   ## move: the new state; list: a filter
+    assignee*: string   ## add/assign: who; list: a filter
+    due*:      string   ## YYYY-MM-DD, or "" for none
+    text*:     string   ## note
+
   ManageSchedulesContext* = object
     action*:   string   ## list, create, delete, pause, resume
     name*:     string
@@ -495,6 +504,32 @@ func parseManageAgentsContext*(j: JsonNode): Result[ManageAgentsContext, string]
       text: ?j.requireStringField("text")))
   else:
     err("Error: unknown action '" & action & "' (list, create, update, delete, note)")
+
+func parseManageTasksContext*(j: JsonNode): Result[ManageTasksContext, string] =
+  let action = j.getOrDefault("action").getStr("list").strip.toLowerAscii()
+  case action
+  of "", "list":
+    ok(ManageTasksContext(action: "list",
+      state: ?j.optionalStringField("state"), assignee: ?j.optionalStringField("assignee")))
+  of "add":
+    ok(ManageTasksContext(action: action, title: ?j.requireStringField("title"),
+      assignee: ?j.optionalStringField("assignee"), due: ?j.optionalStringField("due")))
+  of "move":
+    ok(ManageTasksContext(action: action, id: ?j.requireStringField("id"),
+      state: ?j.requireStringField("state")))
+  of "assign":
+    ok(ManageTasksContext(action: action, id: ?j.requireStringField("id"),
+      assignee: ?j.optionalStringField("assignee")))
+  of "note":
+    ok(ManageTasksContext(action: action, id: ?j.requireStringField("id"),
+      text: ?j.requireStringField("text")))
+  of "due":
+    ok(ManageTasksContext(action: action, id: ?j.requireStringField("id"),
+      due: ?j.optionalStringField("due")))
+  of "delete":
+    ok(ManageTasksContext(action: action, id: ?j.requireStringField("id")))
+  else:
+    err("Error: unknown action '" & action & "' (list, add, move, assign, note, due, delete)")
 
 func parseManageSchedulesContext*(j: JsonNode): Result[ManageSchedulesContext, string] =
   let action = j.getOrDefault("action").getStr("list").strip.toLowerAscii()
