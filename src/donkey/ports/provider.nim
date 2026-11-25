@@ -5,6 +5,7 @@
 ##
 ## Each adapter absorbs its own quirks (auth headers, tool format, turn ordering).
 
+import std/options
 import ../domain/message
 import ../core/pipeops
 
@@ -85,6 +86,23 @@ type
     build*:      StreamBuilder
     credential*: string
     provider*:   string   ## the provider it streams from, for metrics
+    runtime*:    ProviderRuntimeBuilder
+      ## A route's stream: the runtime builder makes the provider for `spec`
+      ## on the stream thread (`build` is then unused). This is how a turn
+      ## streams through the provider its routing selected.
+    spec*:       ProviderSpec
+
+  StreamRouteFn* = proc(req: CompletionRequest): Option[ProviderSpec]
+                       {.gcsafe, raises: [].}
+    ## The route a request would take first (routing's first selection), for
+    ## the turn to stream through it. None: no route is configured.
+
+  StreamRouting* = object
+    ## What a session needs to stream through the provider its routing
+    ## selects: the route for a request, and the builder that makes that
+    ## provider on the stream thread. Empty: stream as before.
+    route*:   StreamRouteFn
+    runtime*: ProviderRuntimeBuilder
 
   ProviderBundle* = object
     completeFn*: CompleteFn
@@ -107,7 +125,12 @@ type
 
 func available*(factory: StreamFactory): bool =
   ## Whether streaming can run with this factory.
-  factory.build != nil
+  factory.build != nil or factory.runtime != nil
+
+func routeStreamFactory*(runtime: ProviderRuntimeBuilder;
+                         spec: ProviderSpec): StreamFactory =
+  ## A stream through the provider a route selected.
+  StreamFactory(runtime: runtime, spec: spec, provider: spec.providerName)
 
 func catalogSourceLabel*(source: ModelCatalogSource): string =
   case source

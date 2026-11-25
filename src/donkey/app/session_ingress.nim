@@ -287,6 +287,7 @@ proc startSessionOrchestrator*(plan: EnsureSessionPlan;
                              subagentWorkspace = bootstrap.subagentWorkspace,
                              fs = fs, env = cfg.env, reminders = reminders,
                              schedules = schedules, backtrail = backtrail,
+                             streamRouting = bootstrap.streamRouting,
                              process = process, attachments = attachments)
 
 func sessionTaskMsg(msg: InboundMessage; msgId: string;

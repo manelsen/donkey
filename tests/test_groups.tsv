@@ -109,6 +109,8 @@ g1	tests/app/t_session_search_tool.nim
 g1	tests/app/t_setup_provider_list.nim
 g1	tests/app/t_setup_wizard.nim
 g1	tests/app/t_stream_tool_calls.nim
+g1	tests/app/t_stream_route.nim
+g1	tests/adapters/provider/t_stream_capability.nim
 g1	tests/app/t_structured_archive_tools.nim
 g1	tests/app/t_structured_search_text_tools.nim
 g1	tests/app/t_structured_web_tools.nim

@@ -18,6 +18,7 @@ import ../domain/agent_message
 import ../domain/message
 import ../domain/more_tools
 import ../domain/providers/media_pure
+import ../domain/providers/descriptors
 import ../domain/subagent_pure
 import ../ports/memory
 import ../ports/provider
@@ -112,7 +113,9 @@ proc runStreamJob(job: StreamJob) {.thread, nimcall, raises: [].} =
   let events = job.events
   var final = StreamEvent(done: true)
   try:
-    let fn = job.factory.build(job.factory.credential)
+    let fn =
+      if job.factory.runtime != nil: job.factory.runtime(job.factory.spec).streamFn
+      else: job.factory.build(job.factory.credential)
     if fn == nil:
       final.error = "streaming unavailable"
     else:
@@ -150,10 +153,14 @@ proc streamToOutbox*(factory:   StreamFactory;
                     replyTo:   string;
                     streamId:  string;
                     stopGeneration: uint64 = 0;
-                    bridgeToken: uint64 = 0):
+                    bridgeToken: uint64 = 0;
+                    shown: ref bool = nil):
                     Future[Result[CompletionResponse, string]] {.async.} =
   ## Streams one completion into `outbox` as partial edits and a final
   ## message. A stop returns at once; the thread is reaped in the background.
+  ## `shown`, when given, turns true once a partial reached the outbox: a
+  ## stream that failed before that can be retried without the user seeing
+  ## two answers.
   if not streamSlotAvailable():
     return err("streaming saturated: " & $gLiveStreams &
                " stream(s) still running")
@@ -215,6 +222,8 @@ proc streamToOutbox*(factory:   StreamFactory;
           if isSessionStopRequested(stopGeneration):
             return ok(CompletionResponse())
           lastSent = visible
+          if shown != nil:
+            shown[] = true
           await outbox.put(OutboundMessage(
             userId:    userId,
             channel:   ch,
@@ -585,9 +594,15 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
                  asyncCompleteFn: AsyncCompleteFn = nil;
                  bridgeToken: uint64 = 0;
                  providerOverride = "";
-                 modelOverride = ""): Future[ToolLoopRunResult] {.async.} =
+                 modelOverride = "";
+                 streamRoute: StreamRouteFn = nil;
+                 providerRuntime: ProviderRuntimeBuilder = nil): Future[ToolLoopRunResult] {.async.} =
   ## `providerOverride`/`modelOverride`: a named agent's model, carried on
   ## every request of the turn so routing tries it first.
+  ## `streamRoute` and `providerRuntime`: the turn streams through the
+  ## provider its routing selects (a named agent's own included) when that
+  ## provider's stream carries tool calls; without them, through
+  ## `streamFactory` as before.
   var loopState = history |> newToolLoopState
   var round = 0
   var recentCalls: seq[(string, string)] = @[]
@@ -603,22 +618,37 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
     req.providerOverride = providerOverride
     req.modelOverride = modelOverride
 
+    ## The stream goes through the route routing selects for this request
+    ## when one is known; a route streams only if its stream carries tool
+    ## calls (descriptors.streamsToolCalls). Otherwise the session's factory,
+    ## which streams tool calls only through OpenRouter.
+    var roundFactory = streamFactory
+    var factoryStreamsTools = providerLabel.toLowerAscii().startsWith("openrouter")
+    var routeKnown = false
+    if streamRoute != nil and providerRuntime != nil:
+      let route = streamRoute(req)
+      if route.isSome:
+        routeKnown = true
+        factoryStreamsTools = streamsToolCalls(route.get.providerName)
+        roundFactory =
+          if factoryStreamsTools: routeStreamFactory(providerRuntime, route.get)
+          else: StreamFactory()
     let canStreamToolCalls =
-      streamFactory.available and streamSlotAvailable() and
-      providerLabel.toLowerAscii().startsWith("openrouter")
+      roundFactory.available and streamSlotAvailable() and factoryStreamsTools
     ## Suppressing tool progress must not disable plain streaming on the
     ## first round; only the tool-call stream channel stays hidden.
     if decideToolLoopStreaming(
       round = round,
       toolsCount = tools.len,
-      streamingAvailable = streamFactory.available and streamSlotAvailable(),
+      streamingAvailable = roundFactory.available and streamSlotAvailable(),
       streamingToolCalls = canStreamToolCalls and not suppressProgress,
     ).useStreaming:
       let streamStartedMs = nowMs()
+      let shown = new bool
       var streamedRes = await streamToOutbox(
-        streamFactory, req, globalOutbox, uid, channel, replyTo, streamId,
-        nativeCtx.stopGeneration, bridgeToken = bridgeToken)
-      recordStreamRound(streamFactory, streamedRes, nowMs() - streamStartedMs)
+        roundFactory, req, globalOutbox, uid, channel, replyTo, streamId,
+        nativeCtx.stopGeneration, bridgeToken = bridgeToken, shown = shown)
+      recordStreamRound(roundFactory, streamedRes, nowMs() - streamStartedMs)
       ## The streaming branch goes through the same one-shot demotion: a
       ## vision-less model can refuse the inline image before the first token.
       if streamedRes.isErr and not loopState.imageRetryUsed and
@@ -628,9 +658,16 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
         loopState.history = demoteInlineImagesForTurn(loopState.history)
         req = withoutInlineImages(req)
         streamedRes = await streamToOutbox(
-          streamFactory, req, globalOutbox, uid, channel, replyTo, streamId,
-          nativeCtx.stopGeneration, bridgeToken = bridgeToken)
-      if streamedRes.isErr:
+          roundFactory, req, globalOutbox, uid, channel, replyTo, streamId,
+          nativeCtx.stopGeneration, bridgeToken = bridgeToken, shown = shown)
+      let fallBackToRouting =
+        streamedRes.isErr and routeKnown and not shown[] and
+        not sessionStopRequested(nativeCtx)
+      if fallBackToRouting:
+        ## Nothing reached the user: routing can try the next provider.
+        nativeCtx.log.warn("stream failed before any text; routing instead: " &
+                           clipProviderError(streamedRes.error))
+      if streamedRes.isErr and not fallBackToRouting:
         nativeCtx.log.warn("provider error: " & clipProviderError(streamedRes.error))
         pushAgentEvent(AgentEvent(
           kind:    aekError,
@@ -649,32 +686,33 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
         loopState.done = true
         loopState.providerFailed = true
         continue
-      let streamed = streamedRes.value
-      loopState.usage = loopState.usage.addUsage(
-        streamed.inputTokens, streamed.outputTokens)
-      if sessionStopRequested(nativeCtx):
-        loopState.done = true
-        break
+      if not fallBackToRouting:
+        let streamed = streamedRes.value
+        loopState.usage = loopState.usage.addUsage(
+          streamed.inputTokens, streamed.outputTokens)
+        if sessionStopRequested(nativeCtx):
+          loopState.done = true
+          break
 
-      log.info($uid & " (" & $channel & ") <- [" & providerLabel &
-               "] |" & $streamed.text.len & "| stream")
-      if streamed.toolCalls.len > 0:
-        loopState.history.addAssistantWithToolCalls(streamed.text, streamed.toolCalls,
-                                                    reasoning = streamed.reasoning)
-        let batchResult = await processToolCalls(
-          globalOutbox, toolInbox, toolOut, nativeCtx, state, loopState.history,
-          uid, channel, replyTo, msgId, round, toolStatusId, streamed.toolCalls,
-          providerLabel, suppressProgress, debugMode, loopState.toolCallCount,
-          recentCalls, log, bridgeToken = bridgeToken)
-        loopState =
-          loopState |>->
-          withToolBatchState(batchResult)
-        recentCalls = batchResult.recentCalls
-      else:
-        loopState =
-          loopState |>->
-          withStreamFinalText(streamed.text, streamed.reasoning)
-      continue
+        log.info($uid & " (" & $channel & ") <- [" & providerLabel &
+                 "] |" & $streamed.text.len & "| stream")
+        if streamed.toolCalls.len > 0:
+          loopState.history.addAssistantWithToolCalls(streamed.text, streamed.toolCalls,
+                                                      reasoning = streamed.reasoning)
+          let batchResult = await processToolCalls(
+            globalOutbox, toolInbox, toolOut, nativeCtx, state, loopState.history,
+            uid, channel, replyTo, msgId, round, toolStatusId, streamed.toolCalls,
+            providerLabel, suppressProgress, debugMode, loopState.toolCallCount,
+            recentCalls, log, bridgeToken = bridgeToken)
+          loopState =
+            loopState |>->
+            withToolBatchState(batchResult)
+          recentCalls = batchResult.recentCalls
+        else:
+          loopState =
+            loopState |>->
+            withStreamFinalText(streamed.text, streamed.reasoning)
+        continue
     var resp = await completeOnce(req, completeFn, asyncCompleteFn)
     ## One retry per turn: the flag lives in `loopState`, which survives every
     ## tool round, instead of in the completion closure.
