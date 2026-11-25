@@ -25,7 +25,7 @@ documentado nos commits do hermes, não o código. Atribuição MIT em
 
 | Caso | Comportamento da API | Commits hermes | Donkey | Status |
 |---|---|---|---|---|
-| WA-001 | Um app da Meta com vários números entrega a mudança de cada número a todos os webhooks; a de outro número (outro `metadata.phone_number_id`) não é nossa: responder a ela, do nosso número, entra numa conversa alheia. | `4152c69636`, `e5e2d5508f` | `whatsapp_runtime.drainWhatsAppEvents` ignora antes de identificar, sem ack; teste em `t_dm_gate_runtimes` | **portado** |
+| WA-001 | Um app da Meta com vários números entrega a mudança de cada número a todos os webhooks; a de outro número (outro `metadata.phone_number_id`) não é nossa: responder a ela, do nosso número, entra numa conversa alheia. | `4152c69636`, `e5e2d5508f` | `whatsapp_runtime.drainWhatsAppEvents` ignora antes de identificar, sem ack, também quando o número falta (envelope malformado); teste em `t_dm_gate_runtimes` | **portado** |
 | WA-002 | A Meta envia webhooks de até 3 MB; um limite menor responde 413 e a Meta descarta o lote depois de tentar de novo. | `e82d71db40` | `http_request_reader.MaxWebhookBodyBytes` = 3 MiB; teste em `t_http_request_reader` | **portado** |
 | WA-003 | Envelopes sem conteúdo no campo `messages` (`type` = `system`: troca de número ou de BSUID; `reaction`; `unsupported`/`unknown`) não são mensagens: não iniciam turno. | `f90721e95a` | `whatsapp_pure.parseMessage` só aceita `text`, `interactive` e mídia com id; o resto é `wmkUnknown` e é descartado | coberto |
 | WA-004 | Toques em botões (`interactive`) passam pela mesma autorização de DM que o texto. | `f96b2e6ef7` | `drainWhatsAppEvents` autoriza todo evento, `wrkInteractive` incluído | coberto |

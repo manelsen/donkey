@@ -352,6 +352,8 @@ proc runTests*() =
           "messages": [{"from": sender, "id": id, "type": "text",
                         "text": {"body": "oi"}}]}}]}]}
       whatsapp.pushEvent(message("PN2", "5511999990077", "wamid.other"))
+      ## no metadata.phone_number_id: malformed, not shown to be ours
+      whatsapp.pushEvent(message("", "5511999990079", "wamid.unaddressed"))
       whatsapp.pushEvent(message("PN1", "5511999990078", "wamid.ours"))
       let onFallback = proc(msg: InboundMessage) {.gcsafe.} =
         {.cast(gcsafe).}:
@@ -361,6 +363,7 @@ proc runTests*() =
       check seen == @["wamid.ours"]
       check not wa.tryRecvEvent()[0]
       check wa.resolver.lookup(ckWhatsApp, "5511999990077").isNone  ## not minted
+      check wa.resolver.lookup(ckWhatsApp, "5511999990079").isNone
 
     test "dingtalk gateway drainer denies unauthorized and advances the queue":
       var queue: seq[InboundMessage] = @[
