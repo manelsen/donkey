@@ -522,9 +522,13 @@ proc handleTeamsAt*(cfg: WebhookConfig; req: WebhookRequest; nowSec: int64;
     return badRequest()
   let activity = parseActivity(payload).valueOr:
     return badRequest()
+  let auth = req.header("authorization")
+  ## Without a well-formed token there is nothing to check a key against, and
+  ## no reason to reach the connector for keys.
+  if splitJwt(bearerToken(auth)).isErr:
+    return plainResp(401, "unauthorized")
   let nowMs = nowSec * 1000
   discard refreshBotKeys(fetch, nowMs)
-  let auth = req.header("authorization")
   var verdict = verifyBotRequest(auth, activity.serviceUrl, activity.channelId,
                                  cfg.teamsAppId, currentBotKeys(), nowSec)
   if verdict.isErr and verdict.error.unknownKey:

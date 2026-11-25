@@ -94,6 +94,18 @@ proc runTests*() =
       check handleTeamsAt(cfg, request(vecUnknownKid), late, fetch).status == 401
       check calls == 1
 
+    test "a request without a well-formed token never makes the daemon fetch keys":
+      resetBotKeys()
+      var calls = 0
+      let fetch: KeyFetch = proc(): Result[string, string] {.gcsafe.} =
+        inc calls
+        ok(Jwks)
+      check handleTeamsAt(cfg, request(""), VecNowSec, fetch).status == 401
+      check handleTeamsAt(cfg, request("not.a-jwt"), VecNowSec, fetch).status == 401
+      check calls == 0
+      check handleTeamsAt(cfg, request(vecGood), VecNowSec, fetch).status == 200
+      check calls == 1
+
     test "the route counts as configured":
       check anyRouteConfigured(cfg)
       check not anyRouteConfigured(WebhookConfig())
