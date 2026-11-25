@@ -95,8 +95,9 @@ proc sleepOrStop(control: ptr SocketControl; ms: int): bool =
   ## Sleeps in short slices; false when a stop arrived meanwhile.
   var waited = 0
   while waited < ms and not control.stop.load():
-    sleep(min(50, ms - waited))
-    waited += 50
+    let slice = min(50, ms - waited)
+    sleep(slice)
+    waited += slice
   not control.stop.load()
 
 proc runSession[C, S](args: SocketArgs[C, S]; state: var S; log: Logger;
@@ -215,7 +216,9 @@ proc running*[C, S](ps: PersistentSocket[C, S]): bool =
 proc stop*[C, S](ps: var PersistentSocket[C, S]) =
   ## Stops the connection and joins its thread. A blocked read is woken by
   ## shutting the socket down, so this does not wait for frame timing. Safe
-  ## to call twice.
+  ## to call twice. One owner: the handle is started and stopped by the same
+  ## thread (the daemon loop); the connection thread is joined before the
+  ## shared block is freed.
   if ps.control == nil:
     return
   let control = ps.control

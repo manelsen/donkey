@@ -33,7 +33,8 @@ type
 
   SlackSocketState = object
     ## Lives on the connection thread.
-    http: HttpRuntimePort
+    http:      HttpRuntimePort
+    httpBuilt: bool
 
 var gSlackSocket: PersistentSocket[SlackSocketConfig, SlackSocketState]
   ## Pointers only: gcsafe to touch from the daemon.
@@ -108,11 +109,16 @@ proc openSocketUrl(http: HttpRuntimePort; appToken: string): Result[string, stri
 
 proc slackLocate(cfg: SlackSocketConfig; state: var SlackSocketState;
                  log: Logger): Result[SocketTarget, string] {.nimcall, gcsafe, raises: [CatchableError].} =
-  if state.http.postNoRedirect == nil:
+  if not state.httpBuilt:
     try:
       state.http = cfg.httpFactory()
     except Exception as e:  ## effect boundary: callee raises are unannotated
       return err("slack socket: cannot build its HTTP port: " & e.msg)
+    state.httpBuilt = true
+  if state.http.postNoRedirect == nil:
+    ## Built once: a factory without postNoRedirect is a wiring error, logged
+    ## on every attempt and retried at most every 30 s, never rebuilt.
+    return err("slack socket: the HTTP port has no postNoRedirect (wiring error)")
   let url = ? openSocketUrl(state.http, cfg.appToken)
   let socketUrl = parseUri(url)
   let port =
