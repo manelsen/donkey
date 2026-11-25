@@ -65,7 +65,11 @@ proc pending(s: TurnJournalStore): Result[seq[TurnRecord], string] {.raises: [].
       let id = turnIdOfFile(name)
       if id.len == 0 or id in s.open:
         continue
-      let parsed = parseTurnRecord(readFile(path))
+      ## One unreadable file is set aside; it does not hide the others.
+      let text =
+        try: readFile(path)
+        except CatchableError: ""
+      let parsed = parseTurnRecord(text)
       if parsed.isOk and parsed.get.id == id:
         found.add parsed.get
       else:

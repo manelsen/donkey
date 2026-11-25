@@ -581,10 +581,12 @@ proc resumeInterruptedTurns*(sm: var SessionManager;
         tkUserMsg, r.payload, resumeOf = r.id, resumeReplyTo = r.replyTo)
       inc result.replayed
     of rcNotify:
-      if services.globalOutbox != nil:
-        services.globalOutbox.addLastNoWait(OutboundMessage(
-          userId: uid, channel: r.channel, replyTo: r.replyTo,
-          text: interruptedNotice(r)))
+      if services.globalOutbox == nil:
+        ## Nowhere to send it: kept for a start that can.
+        continue
+      services.globalOutbox.addLastNoWait(OutboundMessage(
+        userId: uid, channel: r.channel, replyTo: r.replyTo,
+        text: interruptedNotice(r)))
       inc result.notified
       journal.finish(r.id).isOkOr:
         services.log.warn("turn journal: " & error)

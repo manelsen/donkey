@@ -92,6 +92,20 @@ proc runTests*() =
       check not fileExists(dir / "2-b.json")
       check fileExists(dir / "notes.txt")
 
+    test "an unreadable file is set aside without hiding the others":
+      when defined(posix):
+        if getuid() != 0:   ## root reads a 000 file anyway
+          let dir = freshDir("unreadable")
+          defer: removeDir(dir)
+          let journal = turnJournalPort(newTurnJournalStore(dir))
+          check journal.begin(rec("1-a")).isOk
+          check journal.begin(rec("2-b")).isOk
+          check chmod((dir / "2-b.json").cstring, 0) == 0
+          let found = turnJournalPort(newTurnJournalStore(dir)).pending()
+          check found.isOk
+          check found.get.len == 1 and found.get[0].id == "1-a"
+          check fileExists(dir / "2-b.json.bad")
+
     test "this process's own turns in flight are not interrupted ones":
       let dir = freshDir("own")
       defer: removeDir(dir)
