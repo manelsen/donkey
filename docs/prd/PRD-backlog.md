@@ -18,7 +18,7 @@ tested on Donkey's real paths, and update the coverage report at the end.
 | 2 | Tools for agents that are consulted | multiagent's main gap | M |
 | 3 | MCP OAuth with a pre-registered client | a refused case today | S |
 | 4 | Alibaba `preserve_thinking` | quality between turns, small | S |
-| 5 | Channel depth: WhatsApp and Matrix | the Discord and Slack method, still unapplied there | M each |
+| 5 | Channel depth: WhatsApp | the Discord and Slack method, still unapplied there | M |
 | 6 | Azure OpenAI as a provider | breadth without OAuth | M |
 | 7 | Coverage report §12 | records the measured changes | S |
 
@@ -97,14 +97,14 @@ where the API requires it (as DeepSeek's quirk does).
 **Acceptance:** the request shape for those models matches DashScope's
 documentation, checked first, and other models are unchanged.
 
-### 5. Channel depth: WhatsApp and Matrix
+### 5. Channel depth: WhatsApp
 
 Discord and Slack were hardened by mining Hermes's fixes
-(`docs/hermes-mining`). WhatsApp and Matrix were never compared that way.
+(`docs/hermes-mining`). WhatsApp was never compared that way; Matrix may
+follow later.
 
 **Scope:**
-- Mine Hermes's history for each channel into the traceability file
-  (cases WA-…, MX-…).
+- Mine Hermes's WhatsApp history into the traceability file (cases WA-…).
 - Classify each case: fixed in Donkey, applicable, or not applicable.
 - Fix the applicable ones, test-first, one PR per group.
 
@@ -176,7 +176,7 @@ starve Backtrail and recall. The change: give the executor streaming jobs.
   their deadlines.
 - Cancelling a turn stops its stream.
 
-### One way to keep a permanent connection
+### One way to keep a permanent connection (done: #170–#172)
 
 Discord, QQ official and Slack socket mode each keep their own WebSocket
 lifecycle, with different fixes:
@@ -215,16 +215,16 @@ The change:
 - **`donkey-magma-index`:** nothing unique in it (an old checkout of #69);
   removed.
 
-## Questions before starting
+## Decisions (24/11)
 
-1. **Item 2:** is the read-only tool set right, and may a consulted agent
-   use the web when the user's policy allows it?
-2. **Item 6:** Azure only, or is Vertex AI worth adding RS256 signing (a
-   new crypto dependency, or a hand-written implementation like SigV4)?
-3. **Item 5:** WhatsApp and Matrix first, or other channels?
+1. **Item 2:** the read-only set is right (`session_search`, `current_time`,
+   `calc`), and a consulted agent may use `web_search` and `fetch` where the
+   user's web policy allows them.
+2. **Item 6:** Azure OpenAI only; Vertex AI stays out.
+3. **Item 5:** WhatsApp first.
 
 ## Deliverables
 
-- one PR per item (item 5: one per channel group);
+- one PR per item (item 5: one per group of WhatsApp cases);
 - §12 of the coverage report;
 - a short report: what closed, what stayed partial and why.
