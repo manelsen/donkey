@@ -32,20 +32,24 @@ type
     defaultModel*: string
     aliases*:      seq[string]
     aggregator*:   bool
+    streamsToolCalls*: bool      ## its stream assembles tool calls, so the
+                                 ## tool loop may stream through it with
+                                 ## tools on (checked against the runtime
+                                 ## builder by t_stream_capability)
 
 const ProviderDescriptors*: seq[ProviderDescriptor] = @[
   ProviderDescriptor(
-    id: "openrouter", transport: ptOpenAiChat, authType: atApiKey,
+    id: "openrouter", streamsToolCalls: true, transport: ptOpenAiChat, authType: atApiKey,
     envNames: @["OPENROUTER_API_KEY"],
     baseUrl: "https://openrouter.ai/api/v1/chat/completions",
     defaultModel: DefaultModelOpenRouter, aggregator: true),
   ProviderDescriptor(
-    id: "openai", transport: ptOpenAiChat, authType: atApiKey,
+    id: "openai", streamsToolCalls: true, transport: ptOpenAiChat, authType: atApiKey,
     envNames: @["OPENAI_API_KEY"],
     baseUrl: "https://api.openai.com/v1/chat/completions",
     defaultModel: DefaultModelOpenAI),
   ProviderDescriptor(
-    id: "deepseek", transport: ptOpenAiChat, authType: atApiKey,
+    id: "deepseek", streamsToolCalls: true, transport: ptOpenAiChat, authType: atApiKey,
     envNames: @["DEEPSEEK_API_KEY"],
     baseUrl: "https://api.deepseek.com/v1/chat/completions",
     defaultModel: DefaultModelDeepSeek),
@@ -55,27 +59,27 @@ const ProviderDescriptors*: seq[ProviderDescriptor] = @[
     baseUrl: "http://localhost:11434",
     defaultModel: DefaultModelOllama),
   ProviderDescriptor(
-    id: "groq", transport: ptOpenAiChat, authType: atApiKey,
+    id: "groq", streamsToolCalls: true, transport: ptOpenAiChat, authType: atApiKey,
     envNames: @["GROQ_API_KEY"],
     baseUrl: "https://api.groq.com/openai/v1/chat/completions",
     defaultModel: DefaultModelGroq),
   ProviderDescriptor(
-    id: "opencode-go", transport: ptOpenAiChat, authType: atApiKey,
+    id: "opencode-go", streamsToolCalls: true, transport: ptOpenAiChat, authType: atApiKey,
     envNames: @["OPENCODE_API_KEY", "OPENCODE_GO_API_KEY"],
     baseUrl: "https://opencode.ai/zen/go/v1/chat/completions",
     defaultModel: DefaultModelOpenCodeGo, aliases: @["opencode"], aggregator: true),
   ProviderDescriptor(
-    id: "zen", transport: ptMulti, authType: atApiKey,
+    id: "zen", streamsToolCalls: true, transport: ptMulti, authType: atApiKey,
     envNames: @["OPENCODE_API_KEY", "ZEN_API_KEY"],
     baseUrl: "https://opencode.ai/zen/v1/chat/completions",
     defaultModel: DefaultModelZen, aliases: @["opencode-zen"], aggregator: true),
   ProviderDescriptor(
-    id: "anthropic", transport: ptAnthropicMessages, authType: atApiKey,
+    id: "anthropic", streamsToolCalls: true, transport: ptAnthropicMessages, authType: atApiKey,
     envNames: @["ANTHROPIC_API_KEY"],
     baseUrl: "https://api.anthropic.com/v1/messages",
     defaultModel: DefaultModelAnthropic),
   ProviderDescriptor(
-    id: "zai-anthropic", transport: ptAnthropicMessages, authType: atApiKey,
+    id: "zai-anthropic", streamsToolCalls: true, transport: ptAnthropicMessages, authType: atApiKey,
     envNames: @["ZAI_ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
                 "ZAI_CODING_API_KEY", "ZAI_API_KEY", "ZHIPU_API_KEY"],
     baseUrl: "https://api.z.ai/api/anthropic",
@@ -101,28 +105,28 @@ const ProviderDescriptors*: seq[ProviderDescriptor] = @[
     baseUrl: "https://api.z.ai/api/coding/paas/v4/chat/completions",
     defaultModel: DefaultModelZai),
   ProviderDescriptor(
-    id: "nvidia", transport: ptOpenAiChat, authType: atApiKey,
+    id: "nvidia", streamsToolCalls: true, transport: ptOpenAiChat, authType: atApiKey,
     envNames: @["NVIDIA_API_KEY"],
     baseUrl: "https://integrate.api.nvidia.com/v1/chat/completions",
     baseUrlEnv: "NVIDIA_BASE_URL",
     defaultModel: DefaultModelNvidia,
     aliases: @["nvidia-nim", "nim", "build-nvidia"]),
   ProviderDescriptor(
-    id: "alibaba", transport: ptOpenAiChat, authType: atApiKey,
+    id: "alibaba", streamsToolCalls: true, transport: ptOpenAiChat, authType: atApiKey,
     envNames: @["DASHSCOPE_API_KEY"],
     baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
     baseUrlEnv: "DASHSCOPE_BASE_URL",
     defaultModel: DefaultModelAlibaba,
     aliases: @["dashscope", "alibaba-cloud", "aliyun"]),
   ProviderDescriptor(
-    id: "fireworks", transport: ptOpenAiChat, authType: atApiKey,
+    id: "fireworks", streamsToolCalls: true, transport: ptOpenAiChat, authType: atApiKey,
     envNames: @["FIREWORKS_API_KEY"],
     baseUrl: "https://api.fireworks.ai/inference/v1/chat/completions",
     baseUrlEnv: "",
     defaultModel: DefaultModelFireworks,
     aliases: @["fireworks-ai", "fw"]),
   ProviderDescriptor(
-    id: "mistral", transport: ptOpenAiChat, authType: atApiKey,
+    id: "mistral", streamsToolCalls: true, transport: ptOpenAiChat, authType: atApiKey,
     envNames: @["MISTRAL_API_KEY"],
     baseUrl: "https://api.mistral.ai/v1/chat/completions",
     baseUrlEnv: "MISTRAL_BASE_URL",
@@ -166,3 +170,9 @@ func defaultProviderDescriptor*(): ProviderDescriptor =
 
 func descriptorOr*(id: string): ProviderDescriptor =
   providerDescriptor(id).get(defaultProviderDescriptor())
+
+func streamsToolCalls*(id: string): bool =
+  ## Whether the tool loop may stream through this provider with tools on.
+  ## An unknown name does not.
+  let descriptor = providerDescriptor(id)
+  descriptor.isSome and descriptor.get.streamsToolCalls

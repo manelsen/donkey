@@ -137,6 +137,7 @@ type OrchestratorState = object
   reminders*:     ReminderPort ## where the reminder tool schedules
   schedules*:     SchedulePort ## where manage_schedules keeps recurring jobs
   backtrail*:    BacktrailPort ## pre-search for messages about the past
+  streamRouting*: StreamRouting ## stream through the turn's route
   process*:       ProcessRuntimePort ## where the bash and archive tools run
   attachments*:   AttachmentStorePort ## where generated files are kept
   history*:       ConversationHistory
@@ -490,9 +491,10 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
       systemBase = namedAgentSystem(agent, loaded.get.notes, toolsSuffix)
       routeProvider = agent.provider
       routeModel = agent.model
-      if agent.provider.len > 0:
-        ## Streaming is wired to the user's default provider only; the
-        ## agent's own model is reached through routing, without streaming.
+      if agent.provider.len > 0 and result.streamRouting.route == nil:
+        ## Without a stream route the session's stream is the user's default
+        ## provider: the agent's own model is reached through routing,
+        ## without streaming. With one, the stream follows the agent's route.
         turnStreamFactory = StreamFactory()
       log.info($turnSetup.uid & " -> named agent " & agent.name &
                (if agent.provider.len > 0: " (" & agent.provider & ")" else: ""))
@@ -580,7 +582,9 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
     systemBase, context, tools, providerLabel,
     suppressProgress, result.debugMode, result.showReasoning, log,
     asyncCompleteFn, bridgeToken = msg.bridgeToken,
-    providerOverride = routeProvider, modelOverride = routeModel)
+    providerOverride = routeProvider, modelOverride = routeModel,
+    streamRoute = result.streamRouting.route,
+    providerRuntime = result.streamRouting.runtime)
   recordTurn(channelLabel(msg.channel), turnKindLabel(msg.taskKind),
              float(epochMs() - turnStartedMs), ok = not loopResult.providerFailed)
   result =
@@ -882,6 +886,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
                       reminders:      ReminderPort = ReminderPort();
                       schedules:      SchedulePort = SchedulePort();
                       backtrail:     BacktrailPort = BacktrailPort();
+                      streamRouting: StreamRouting = StreamRouting();
                       process:        ProcessRuntimePort = unavailableProcess();
                       attachments:    AttachmentStorePort = unavailableAttachments()): Future[void] {.async.} =
   ## Persistent actor. Loops: debounce → memory → LLM → reply → repeat.
@@ -906,6 +911,7 @@ proc runOrchestrator*(inbox:          AsyncQueue[AgentMessage];
   stateRuntime.reminders = reminders
   stateRuntime.schedules = schedules
   stateRuntime.backtrail = backtrail
+  stateRuntime.streamRouting = streamRouting
   stateRuntime.process = process
   stateRuntime.attachments = attachments
   stateRuntime.subagents = newSubagentManager(subagentWorkspace)

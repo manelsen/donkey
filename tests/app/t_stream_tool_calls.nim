@@ -1,6 +1,6 @@
 ## Streaming tool-call contract tests.
 
-import std/[atomics, os, strutils, times, unittest]
+import std/[atomics, options, os, strutils, times, unittest]
 import chronos
 import chronos/asyncsync
 import donkey/app/native_tools
@@ -62,6 +62,53 @@ proc slowFactory(credential: string): StreamFn {.nimcall, gcsafe.} =
     gSlowFinished.store(true)
     ok(CompletionResponse(text: "tarde demais"))
 
+proc echoSpecRuntime(spec: ProviderSpec): ProviderBundle {.nimcall, gcsafe.} =
+  ## Streams back which route it was built for, on the stream thread.
+  let label = spec.providerName & "/" & spec.modelName
+  ProviderBundle(streamFn: proc(req: CompletionRequest;
+                                onToken: proc(tok: string) {.gcsafe.}
+                               ): Result[CompletionResponse, string] {.gcsafe.} =
+    onToken(label)
+    ok(CompletionResponse(text: label)))
+
+proc noStreamRuntime(spec: ProviderSpec): ProviderBundle {.nimcall, gcsafe.} =
+  ProviderBundle()
+
+proc failingRuntime(spec: ProviderSpec): ProviderBundle {.nimcall, gcsafe.} =
+  ProviderBundle(streamFn: proc(req: CompletionRequest;
+                                onToken: proc(tok: string) {.gcsafe.}
+                               ): Result[CompletionResponse, string] {.gcsafe.} =
+    err("HTTP 529 overloaded"))
+
+proc routedTurn(route: ProviderSpec; runtime: ProviderRuntimeBuilder):
+    Future[(ToolLoopRunResult, seq[OutboundMessage])] {.async.} =
+  ## One turn with a tool available, a label that is not OpenRouter, and a
+  ## stream route: the stream follows the route, not the label.
+  let outbox = newAsyncQueue[OutboundMessage]()
+  let logger = newLogger("test.stream.route", lvlError)
+  var ctx = NativeCtx(uid: UserId("u-route"), channel: ckTelegram,
+                      outbox: outbox, log: logger)
+  var history = newHistory()
+  history.addUser("oi")
+  let routed: CompleteFn = proc(req: CompletionRequest): Result[CompletionResponse, string]
+                               {.gcsafe, raises: [].} =
+    ok(CompletionResponse(text: "from routing"))
+  let streamRoute: StreamRouteFn = proc(req: CompletionRequest): Option[ProviderSpec]
+                                       {.gcsafe, raises: [].} =
+    some(route)
+  let loop = await runToolLoop(
+    outbox, newAsyncQueue[AgentMessage](), newAsyncQueue[AgentMessage](),
+    MemoryRuntimePort(), routed, nil, StreamFactory(), ctx, newSessionState(),
+    history, UserId("u-route"), ckTelegram, "", "msg-route", "sid-route",
+    "system", "", @[ToolDescription(name: "calc", description: "d",
+                                    schemaJson: """{"type":"object"}""")],
+    "zai", false, false, false, logger, nil,
+    streamRoute = streamRoute, providerRuntime = runtime)
+  var sent: seq[OutboundMessage]
+  while outbox.len > 0:
+    sent.add(await outbox.get())
+  return (loop, sent)
+
 proc runStreamingImageTurn():
     Future[ToolLoopRunResult] {.async.} =
   let outbox = newAsyncQueue[OutboundMessage]()
@@ -84,6 +131,30 @@ proc runStreamingImageTurn():
 
 
 proc runTests*() =
+  suite "streaming follows the turn's route":
+
+    test "a route whose stream carries tool calls streams, whatever the label":
+      let (loop, sent) = waitFor routedTurn(
+        ProviderSpec(providerName: "anthropic", modelName: "m"), echoSpecRuntime)
+      check loop.wasStreamed
+      check sent.len > 0
+      check sent[^1].text == "anthropic/m"
+
+    test "a route whose stream drops tool calls is not streamed with tools":
+      let (loop, _) = waitFor routedTurn(
+        ProviderSpec(providerName: "gemini", modelName: "g"), echoSpecRuntime)
+      check not loop.wasStreamed
+      check loop.finalText == "from routing"
+
+    test "a stream that fails before showing anything falls back to routing":
+      ## Routing can try the next provider; the turn must not end in an error.
+      let (loop, sent) = waitFor routedTurn(
+        ProviderSpec(providerName: "anthropic", modelName: "m"), failingRuntime)
+      check not loop.providerFailed
+      check loop.finalText == "from routing"
+      for msg in sent:
+        check msg.replyKind != rkTurnError
+
   suite "streamToOutbox — tool calls":
 
     test "returns tool calls and does not emit a fake final text":
@@ -104,6 +175,24 @@ proc runTests*() =
       check res.value.toolCalls.len == 1
       check res.value.toolCalls[0].name == "read_file"
       check outbox.len == 0
+
+    test "a route's stream is built from its spec on the stream thread":
+      let factory = routeStreamFactory(echoSpecRuntime,
+        ProviderSpec(providerName: "anthropic", modelName: "claude-x", apiKey: "k"))
+      check factory.available
+      check factory.provider == "anthropic"
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let res = waitFor streamToOutbox(factory, CompletionRequest(), outbox,
+                                       UserId("u1"), ckTelegram, "", "sid")
+      check res.get.text == "anthropic/claude-x"
+
+    test "a route whose provider has no stream fails instead of hanging":
+      let factory = routeStreamFactory(noStreamRuntime,
+        ProviderSpec(providerName: "gemini", modelName: "g"))
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let res = waitFor streamToOutbox(factory, CompletionRequest(), outbox,
+                                       UserId("u1"), ckTelegram, "", "sid")
+      check res.isErr
 
     test "provider error is returned instead of a fake final message":
       let build: StreamBuilder = proc(credential: string): StreamFn {.nimcall, gcsafe.} =

@@ -3,7 +3,7 @@
 ## Concentrates provider selection, fallback composition, per-user skill merge
 ## and native tool exposure so the daemon entrypoint only coordinates lifecycle.
 
-import std/[algorithm, json, os, strutils]
+import std/[algorithm, json, options, os, strutils]
 import chronos
 import ../config/skills_registry
 import ../config/clawhub_registry
@@ -52,6 +52,7 @@ type
   SessionBootstrap* = object
     completeFn*:    CompleteFn
     asyncCompleteFn*: AsyncCompleteFn
+    streamRouting*:   StreamRouting
     errorExplainFn*: CompleteFn
     paddockDir*:    string
     clients*:       seq[ToolRuntimePort]
@@ -65,6 +66,7 @@ type
     paddockDir*:    string
     completeFn*:    CompleteFn
     asyncCompleteFn*: AsyncCompleteFn
+    streamRouting*:   StreamRouting
     errorExplainFn*: CompleteFn
     clients*:       seq[ToolRuntimePort]
     tools*:         seq[ToolDescription]
@@ -252,6 +254,72 @@ proc buildCompleteFn*(preferencesMd: string;
 func asyncCompleteErr(msg: string): Result[CompletionResponse, string] {.gcsafe.} =
   err(msg)
 
+proc orderedRouteSelections(prefs: SmartRoutingPrefs;
+                            availability: ProviderAvailability;
+                            req: CompletionRequest;
+                            routingFeedbackHook: RoutingFeedbackHook;
+                            routingCostHook: RoutingCostHook;
+                            routingProviderCooldownHook: RoutingProviderCooldownHook
+                           ): seq[ProviderSelection] {.gcsafe.} =
+  ## The routes a request tries, in order: the user's routing (a named
+  ## agent's provider first), reordered by feedback, with tripped breakers
+  ## and cooling providers left out, then by cost. The routed completion
+  ## tries them in turn; a turn streams through the first.
+  let baseSelections = smartRouteSelections(prefs, req, availability)
+  var feedback: seq[RouteFeedback] = @[]
+  if routingFeedbackHook != nil:
+    feedback = routingFeedbackHook()
+  let rankedSelections =
+    if routingFeedbackHook != nil:
+      reorderSelectionsWithFeedback(baseSelections, feedback)
+    else:
+      baseSelections
+  let selections =
+    if routingFeedbackHook != nil:
+      applyCircuitBreaker(rankedSelections, feedback)
+    else:
+      rankedSelections
+  let providerHealthySelections =
+    if routingFeedbackHook != nil:
+      applyProviderCircuitBreaker(selections, feedback)
+    else:
+      selections
+  var cooldowns: seq[ProviderCooldown] = @[]
+  if routingProviderCooldownHook != nil:
+    cooldowns = routingProviderCooldownHook()
+  let cooldownFilteredSelections =
+    if routingProviderCooldownHook != nil:
+      applyProviderCooldowns(providerHealthySelections, cooldowns, nowMs() div 1000)
+    else:
+      providerHealthySelections
+  var costs: seq[RouteCostHint] = @[]
+  if routingCostHook != nil:
+    costs = routingCostHook()
+  if routingCostHook != nil:
+    reorderSelectionsWithCost(cooldownFilteredSelections, costs, prefs.budgetPolicy)
+  else:
+    cooldownFilteredSelections
+
+proc buildStreamRouteFn*(preferencesMd: string;
+                         routingFeedbackHook: RoutingFeedbackHook = nil;
+                         routingCostHook: RoutingCostHook = nil;
+                         routingProviderCooldownHook: RoutingProviderCooldownHook = nil
+                        ): StreamRouteFn {.gcsafe.} =
+  ## The route a turn streams through: the first one the routed completion
+  ## would try, with its key. None when no provider is configured.
+  let prefs = parseSmartRoutingPrefs(preferencesMd)
+  let availability = detectProviderAvailability()
+  result = proc(req: CompletionRequest): Option[ProviderSpec] {.gcsafe, raises: [].} =
+    try:
+      let selections = orderedRouteSelections(
+        prefs, availability, req, routingFeedbackHook, routingCostHook,
+        routingProviderCooldownHook)
+      if selections.len == 0:
+        return none(ProviderSpec)
+      some(selections[0].toProviderSpec)
+    except Exception:  ## effect boundary: callee raises are unannotated
+      none(ProviderSpec)
+
 proc buildAsyncCompleteFn*(preferencesMd: string;
                              providerRuntimeBuilder: ProviderRuntimeBuilder;
                              routingHook: RoutingTelemetryHook = nil;
@@ -268,41 +336,9 @@ proc buildAsyncCompleteFn*(preferencesMd: string;
   let prefs = parseSmartRoutingPrefs(preferencesMd)
   let availability = detectProviderAvailability()
   result = proc(req: CompletionRequest): Future[Result[CompletionResponse, string]] {.async.} =
-    let baseSelections = smartRouteSelections(prefs, req, availability)
-    var feedback: seq[RouteFeedback] = @[]
-    if routingFeedbackHook != nil:
-      feedback = routingFeedbackHook()
-    let rankedSelections =
-      if routingFeedbackHook != nil:
-        reorderSelectionsWithFeedback(baseSelections, feedback)
-      else:
-        baseSelections
-    let selections =
-      if routingFeedbackHook != nil:
-        applyCircuitBreaker(rankedSelections, feedback)
-      else:
-        rankedSelections
-    let providerHealthySelections =
-      if routingFeedbackHook != nil:
-        applyProviderCircuitBreaker(selections, feedback)
-      else:
-        selections
-    var cooldowns: seq[ProviderCooldown] = @[]
-    if routingProviderCooldownHook != nil:
-      cooldowns = routingProviderCooldownHook()
-    let cooldownFilteredSelections =
-      if routingProviderCooldownHook != nil:
-        applyProviderCooldowns(providerHealthySelections, cooldowns, nowMs() div 1000)
-      else:
-        providerHealthySelections
-    var costs: seq[RouteCostHint] = @[]
-    if routingCostHook != nil:
-      costs = routingCostHook()
-    let costAwareSelections =
-      if routingCostHook != nil:
-        reorderSelectionsWithCost(cooldownFilteredSelections, costs, prefs.budgetPolicy)
-      else:
-        cooldownFilteredSelections
+    let costAwareSelections = orderedRouteSelections(
+      prefs, availability, req, routingFeedbackHook, routingCostHook,
+      routingProviderCooldownHook)
     var attemptReq = req
     # The single image retry lives in runToolLoop; do not enable it again here.
     var retriedWithoutImages = true
@@ -650,6 +686,11 @@ proc withSessionCompleteFn*(fallbackCompleteFn: CompleteFn;
       credentialNextHook = proc(providerName, currentKey: string): string {.gcsafe.} =
         nextCredentialKey(providerName, currentKey),
       fallbackCompleteFn = fallbackCompleteFn)
+    result.streamRouting = StreamRouting(
+      route: buildStreamRouteFn(
+        applyProviderDefaults(memory.loadContext(userId).preferencesMd, providerDefaults),
+        routingFeedbackHook, routingCostHook, routingProviderCooldownHook),
+      runtime: providerRuntimeBuilder)
   result.errorExplainFn = fallbackCompleteFn
 
 func withSessionToolBundle*(toolBundle: SessionToolBundle;
@@ -662,6 +703,7 @@ func finalizeSessionBootstrap*(plan: SessionBootstrapPlan): SessionBootstrap =
   SessionBootstrap(
     completeFn: plan.completeFn,
     asyncCompleteFn: plan.asyncCompleteFn,
+    streamRouting: plan.streamRouting,
     errorExplainFn: plan.errorExplainFn,
     paddockDir: plan.paddockDir,
     clients: plan.clients,
