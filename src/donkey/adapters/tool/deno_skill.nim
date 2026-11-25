@@ -8,8 +8,8 @@
 ## Threat model: Deno sandbox enforces OS-level boundaries. See CLAUDE.md
 ## "Threat model — Skills de terceiros" for the full analysis.
 
-import ./mcp_client
-export mcp_client
+import ./mcp_sync_client
+export mcp_sync_client
 
 type
   DenoSkillAdapter* = McpClientAdapter

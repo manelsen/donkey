@@ -180,6 +180,7 @@ type DaemonToolBundle = object
   clients: seq[ToolRuntimePort]
   tools:   seq[ToolDescription]
   browserRuntime: BrowserExecutor
+  mcpStdio: seq[McpClient]   ## listed asynchronously at startup (E5.0)
 
 type GlobalProviderBundle = object
   completeFn:    CompleteFn
@@ -300,6 +301,7 @@ type DaemonServices = object
   toolClients:      seq[ToolRuntimePort]
   tools:            seq[ToolDescription]
   browserRuntime:   BrowserExecutor
+  mcpStdio:         seq[McpClient]
   globalCompleteFn: CompleteFn
   globalStreamFactory: StreamFactory
   tgTypingFn:       TypingFn
@@ -377,9 +379,11 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
     var schemasRes: Result[seq[ToolSchema], string]
     case entry.kind
     of tkMcp:
-      var client = buildMcpClient(entry)
-      schemasRes = client.listTools()
-      port = client.toRuntimePort()
+      ## Asynchronous: its tools are listed by startDaemon, which can await.
+      let client = buildMcpClient(entry)
+      result.mcpStdio.add client
+      result.clients.add client.toRuntimePort()
+      continue
     of tkMcpHttp:
       ## The bearer comes from the variable the entry names, read from the
       ## environment snapshot; the registry holds only the name.
@@ -526,6 +530,7 @@ proc initDaemonServices(cfg: DonkeyConfig;
   result.toolClients = toolBundle.clients
   result.tools = toolBundle.tools
   result.browserRuntime = toolBundle.browserRuntime
+  result.mcpStdio = toolBundle.mcpStdio
 
   let providerBundle = buildGlobalProviderBundle(cfg.env)
   result.globalCompleteFn = providerBundle.completeFn
@@ -1769,6 +1774,22 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   let bootstrap = loadDaemonBootstrap(cfg, log)
   let memory = bootstrap.memory
   let ctx = bootstrap.ctx
+  ## MCP servers over stdio run on the loop (E5.0): their tools are listed
+  ## here, before any session is built from the catalog.
+  ## All at once: a slow server delays only itself.
+  var listings: seq[Future[Result[seq[ToolSchema], string]]]
+  for client in ctx.services.mcpStdio:
+    listings.add client.listToolsAsync()
+  await allFutures(listings)
+  for i, client in ctx.services.mcpStdio:
+    let listed = listings[i].read()
+    if listed.isErr:
+      log.warn("mcp: " & client.command & ": " & listed.error)
+      continue
+    for s in listed.get:
+      ctx.services.tools.add(ToolDescription(
+        name: s.name, description: s.description,
+        schemaJson: if s.inputSchema != nil: $s.inputSchema else: ""))
   ## The API bridge must exist before the gateway accepts a turn and before
   ## the outbox drainer can route `api:` replies.
   ctx.runtime.apiChatBridge = newChatBridge(apiChatNowMs, apiChatNap)

@@ -99,6 +99,7 @@ proc loadToolRegistry*(path: string): seq[ToolEntry] {.gcsafe.} =
     if cmd.len > 0:
       result.add(ToolEntry(kind: tkMcp, command: cmd, args: args))
 
-proc buildMcpClient*(entry: ToolEntry): McpClientAdapter =
-  ## Constructs an McpClientAdapter from a stdio registry entry.
+proc buildMcpClient*(entry: ToolEntry): McpClient =
+  ## The client of a stdio registry entry; the process starts at its first
+  ## call (the daemon lists the tools at startup).
   newMcpClient(entry.command, entry.args)
