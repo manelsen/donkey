@@ -158,7 +158,7 @@ These are left as they were decided, or still wait for a decision:
 
 ## Design changes requested (24/11)
 
-### Streaming on the blocking executor
+### Streaming on the blocking executor (done: #183)
 
 Today every streamed reply starts its own thread (`app/tool_loop_runtime`,
 `spawnThread(runStreamJob, …)`). Moving it onto the shared executor as is
@@ -203,14 +203,22 @@ The change:
 2. The Discord-family protocol, with Discord moved onto it.
 3. QQ official moved onto the same protocol.
 
-## Found during the recall work (not in this PRD)
+## Found during the recall work (done)
 
-- **"N days ago":** recall could turn relative dates into a time window
-  (MAGMA's approach) and sort "when" answers by date.
-- **Neighbour scores:** on time questions, recall sums them over all 64
-  meaning matches, so filler can still win. That needs a design fix.
-- **Failed replies:** a turn whose reply failed is never captured into
-  memory.
+- **"N days ago":** a relative date is a time window for recall (#185).
+- **Neighbour scores:** a memory takes its best neighbour score, from the
+  five strongest hits only (#186).
+- **Failed replies:** what the person said is kept even when the reply
+  failed (#184).
+
+## Also done after the PRD
+
+- Per-turn traces, exportable with `ctl traces` (#187).
+- Reply context: Telegram and Discord (#188), WhatsApp (#189).
+
+Still worth a run with the provider keys: the LongMemEval recall bench
+after #185 and #186 (its seeded graphs were cleaned up), and Bedrock
+streaming against AWS.
 - **Telegram polling:** done in #166, on the blocking executor.
 - **`donkey-magma-index`:** nothing unique in it (an old checkout of #69);
   removed.
