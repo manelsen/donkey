@@ -26,6 +26,8 @@ import ./tools/utility_tools
 import ./tools/audio_tools
 import ./tools/task_tools
 import ./named_agents
+import ../domain/agents/named_agent_pure
+import ./credential_runtime
 import ./tools/code_tools
 import ./tools/memory_ingest_io
 
@@ -873,6 +875,35 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
   else:
     return NativeToolResult(handled: false)
 
+func consultedAgentCtx*(ctx: NativeCtx; agentName: string): NativeCtx =
+  ## The context a consulted agent's tools run in: only the read-only tools
+  ## of `ConsultedAgentToolNames`, on top of the subagent hard denials, so it
+  ## can never call another agent, write or run code. The web tools keep the
+  ## user's web policy (`toolWebPolicy`, the allowlist), checked as they run.
+  result = ctx
+  result.restrictTools = true
+  result.allowedTools = @ConsultedAgentToolNames
+  result.subagentId = "@" & agentName
+
+proc executeNativeTool*(tc:      ToolCallRequest;
+                        ctx:     NativeCtx;
+                        state:   SessionState;
+                        history: ConversationHistory;
+                       ): Future[NativeToolResult] {.async.}
+  ## Forward: a consulted agent's tools run through it, and it dispatches the
+  ## agent tools.
+
+proc consultTools(ctx: NativeCtx; state: SessionState; agentName: string): ConsultTools =
+  let consulted = consultedAgentCtx(ctx, agentName)
+  ConsultTools(
+    tools: consultedAgentToolDescriptions(webSearch = webSearchKey().len > 0),
+    run: proc(call: ToolCallRequest): Future[ConsultToolResult] {.async.} =
+      let done = await executeNativeTool(call, consulted, state, newHistory())
+      if not done.handled:
+        return ConsultToolResult(text: "Error: tool '" & call.name & "' is not available.",
+                                 kind: trkOperationalError)
+      return ConsultToolResult(text: done.text, kind: done.resultKind))
+
 proc agentCompleteFn(ctx: NativeCtx): AsyncCompleteFn =
   ## The async completion (the provider call runs on a worker, not on the
   ## loop); the sync one wrapped when a context has no async one.
@@ -895,7 +926,8 @@ proc executeAgentNativeTool(tc: ToolCallRequest;
     let askCtx = parseAskAgentContext(j).valueOr:
       return handledError(error)
     let answer = await askNamedAgent(ctx.fs, ctx.paddockDir, agentCompleteFn(ctx),
-                                     askCtx.name, askCtx.question, askCtx.context)
+                                     askCtx.name, askCtx.question, askCtx.context,
+                                     consult = consultTools(ctx, state, askCtx.name))
     if answer.isErr:
       return handledError(answer.error)
     return handledText(answer.get)
@@ -903,7 +935,8 @@ proc executeAgentNativeTool(tc: ToolCallRequest;
     let roomCtx = parseConveneAgentsContext(j).valueOr:
       return handledError(error)
     let transcript = await conveneNamedAgents(ctx.fs, ctx.paddockDir, agentCompleteFn(ctx),
-      roomCtx.agents, roomCtx.question, roomCtx.context, roomCtx.rounds)
+      roomCtx.agents, roomCtx.question, roomCtx.context, roomCtx.rounds,
+      consult = consultTools(ctx, state, "room"))
     if transcript.isErr:
       return handledError(transcript.error)
     return handledText(transcript.get)

@@ -105,7 +105,7 @@ proc runTests*() =
       check seen.len == 1
       check "Revisa com rigor." in seen[0].system and "prefere testes" in seen[0].system
       check seen[0].providerOverride == "anthropic"
-      check seen[0].tools.len == 0
+      check seen[0].tools.len == 0   ## no tools wired in this call
       check "PR #9" in seen[0].messages[0].text and "o diff está bom?" in seen[0].messages[0].text
 
     test "ask_agent: an unknown agent is an error and no call":
@@ -145,6 +145,78 @@ proc runTests*() =
         inputJson: """{"agents":["revisor","otimista"],"question":"q","rounds":1}"""),
         ctxFor(), state, @[])
       check room.handled and "@otimista" in room.text
+
+    proc lookupModel(): AsyncCompleteFn =
+      ## Looks something up first, then answers with what it found.
+      result = proc(req: CompletionRequest): Future[Result[CompletionResponse, string]] {.async.} =
+        {.cast(gcsafe).}: seen.add(req)
+        for m in req.messages:
+          if m.role == roleTool:
+            return ok(CompletionResponse(text: "segundo o histórico: " & m.text))
+        return ok(CompletionResponse(toolCalls: @[ToolCallRequest(
+          id: "c1", name: "session_search", inputJson: """{"phrase":"senha"}""")]))
+
+    proc fakeTools(): ConsultTools =
+      ConsultTools(
+        tools: consultedAgentToolDescriptions(webSearch = false),
+        run: proc(call: ToolCallRequest): Future[ConsultToolResult] {.async.} =
+          return ConsultToolResult(text: "achei '" & call.name & "'"))
+
+    test "a consulted agent may look things up, then answers from it":
+      seen = @[]
+      let r = waitFor askNamedAgent(newFsAdapter(), Paddock, lookupModel(), "revisor",
+                                    "qual era a senha?", "", consult = fakeTools())
+      check r.isOk
+      check r.get.startsWith("segundo o histórico:")
+      check "achei 'session_search'" in r.get   ## the tool's output reached it
+      check seen.len == 2
+      check seen[0].tools.anyIt(it.name == "session_search")
+
+    test "consulted agents get read-only tools, and web search only with a key":
+      let names = consultedAgentToolDescriptions(webSearch = false).mapIt(it.name)
+      check names == @["session_search", "current_time", "calc", "fetch", "web_fetch"]
+      check "web_search" in consultedAgentToolDescriptions(webSearch = true).mapIt(it.name)
+      for denied in ["ask_agent", "convene_agents", "manage_agents", "bash", "fs_write"]:
+        check denied notin names
+        check denied notin ConsultedAgentToolNames
+
+    test "the last round offers no tools, so the agent has to answer":
+      seen = @[]
+      let stubborn: AsyncCompleteFn = proc(req: CompletionRequest): Future[Result[CompletionResponse, string]] {.async.} =
+        {.cast(gcsafe).}: seen.add(req)
+        if req.tools.len > 0:
+          return ok(CompletionResponse(toolCalls: @[ToolCallRequest(
+            id: "c" & $req.messages.len, name: "calc", inputJson: """{"expression":"1+1"}""")]))
+        return ok(CompletionResponse(text: "respondo sem mais buscas"))
+      let r = waitFor askNamedAgent(newFsAdapter(), Paddock, stubborn, "revisor", "q", "",
+                                    consult = fakeTools())
+      check r.get == "respondo sem mais buscas"
+      check seen.len == MaxConsultedToolRounds + 1
+      check seen[^1].tools.len == 0
+
+    test "an agent that takes too long is an error, and a room still finishes":
+      let slow: AsyncCompleteFn = proc(req: CompletionRequest): Future[Result[CompletionResponse, string]] {.async.} =
+        if "revisor" in req.system:
+          await sleepAsync(chronos.milliseconds(2000))
+        return ok(CompletionResponse(text: "pronto"))
+      let one = waitFor askNamedAgent(newFsAdapter(), Paddock, slow, "revisor", "q", "",
+                                      deadlineMs = 200)
+      check one.isErr and "too long" in one.error
+      let room = waitFor conveneNamedAgents(newFsAdapter(), Paddock, slow,
+        @["revisor", "otimista"], "q", "", 1, deadlineMs = 200)
+      check room.isOk
+      check "too long" in room.get and "pronto" in room.get
+
+    test "through the real tools, a consulted agent cannot call agents or write":
+      let ctx = consultedAgentCtx(ctxFor(), "revisor")
+      let state = newSessionState()
+      for denied in ["ask_agent", "convene_agents", "manage_agents", "fs_write", "bash"]:
+        let r = waitFor executeNativeTool(ToolCallRequest(id: "x", name: denied,
+          inputJson: "{}"), ctx, state, @[])
+        check r.handled and "not allowed" in r.text
+      let time = waitFor executeNativeTool(ToolCallRequest(id: "t", name: "current_time",
+        inputJson: "{}"), ctx, state, @[])
+      check time.handled and "not allowed" notin time.text
 
     test "subagents cannot call or convene the user's agents":
       check "ask_agent" in SubagentHardDeniedTools
