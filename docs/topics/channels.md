@@ -349,7 +349,11 @@ agent     = "suporte"      # {home}/agents/suporte.toml
   sent while the daemon was down are recovered only for the default bot:
   the recovery cursor is one per person and each bot has its own DM
   channels.
-- Available on Telegram and Discord; WhatsApp and Teams follow (E3).
+- On WhatsApp a bot is another number of the same Meta account
+  (`phone_number_id = "…"` instead of `token_env`): the numbers share the
+  account's token and webhook, and the number a message was sent to picks
+  the bot. A number this instance does not serve is still ignored.
+- Available on Telegram, Discord and WhatsApp; Teams follows (E3).
 
 ---
 
