@@ -136,7 +136,7 @@ const ProviderDescriptors*: seq[ProviderDescriptor] = @[
     ## Converse API. The bearer is a Bedrock API key; IAM credentials
     ## (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN) are read
     ## separately into the spec, and the region from AWS_REGION.
-    id: "bedrock", transport: ptBedrockConverse, authType: atApiKey,
+    id: "bedrock", streamsToolCalls: true, transport: ptBedrockConverse, authType: atApiKey,
     envNames: @["AWS_BEARER_TOKEN_BEDROCK"],
     baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
     baseUrlEnv: "BEDROCK_BASE_URL",

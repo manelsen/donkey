@@ -8,14 +8,15 @@
 ## No SDK. The request body and the response are `domain/providers/bedrock_pure`.
 ## The transport is `provider_http`'s (deadline, no redirect, no repeated POST).
 ##
-## Not implemented: ConverseStream (AWS binary event-stream framing), so the
-## bundle has no `streamFn` and the turn runs without streaming.
+## Streaming is ConverseStream: AWS's binary event-stream framing, decoded
+## and checksummed by `domain/providers/bedrock_stream_pure`.
 
 import std/[json, strutils, times, uri]
 import ../../core/pipeops
 import ../../core/security/aws_sigv4
 import ../../domain/message
 import ../../domain/providers/bedrock_pure
+import ../../domain/providers/bedrock_stream_pure
 import ../../ports/http
 import ../../ports/provider
 import ./provider_http
@@ -54,7 +55,7 @@ func hasCredential*(a: BedrockAdapter): bool =
   a.bearer.len > 0 or (a.accessKeyId.len > 0 and a.secretAccessKey.len > 0)
 
 proc caps*(a: BedrockAdapter): ProviderCaps =
-  ProviderCaps(name: "bedrock/" & a.model, streaming: false, toolCalling: true)
+  ProviderCaps(name: "bedrock/" & a.model, streaming: true, toolCalling: true)
 
 func hostOf(url: string): string =
   let parsed = parseUri(url)
@@ -63,11 +64,12 @@ func hostOf(url: string): string =
   else:
     parsed.hostname
 
-proc requestHeaders*(a: BedrockAdapter; url, body: string): seq[HttpHeader] =
+proc requestHeaders*(a: BedrockAdapter; url, body: string;
+                     accept = "application/json"): seq[HttpHeader] =
   ## The headers sent with one request. With IAM credentials the `host` header
   ## is signed but not sent: the transport sets it from the URL, same value.
   result = @[(name: "Content-Type", value: "application/json"),
-             (name: "Accept", value: "application/json")]
+             (name: "Accept", value: accept)]
   if a.bearer.len > 0:
     result.add((name: "Authorization", value: "Bearer " & a.bearer))
     return
@@ -100,3 +102,20 @@ proc complete*(a: BedrockAdapter;
     let text = ? postProvider(a.http, "Bedrock", url, body,
                               a.requestHeaders(url, body))
     parseConverseResponse(parseJson(text))
+
+proc makeStreamFn*(a: BedrockAdapter): StreamFn =
+  ## ConverseStream. The transport returns the whole body, which is decoded
+  ## frame by frame (checksums verified) and read into the response.
+  let adapter = a
+  result = proc(req: CompletionRequest;
+                onToken: proc(tok: string) {.gcsafe.}
+               ): Result[CompletionResponse, string] {.gcsafe.} =
+    if not adapter.hasCredential:
+      return err("Bedrock: no credential (AWS_BEARER_TOKEN_BEDROCK or " &
+                 "AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY)")
+    providerGuard:
+      let url = converseStreamUrl(adapter.baseUrl, adapter.model)
+      let body = $converseBody(req)
+      let text = ? postProvider(adapter.http, "Bedrock", url, body,
+        adapter.requestHeaders(url, body, accept = "application/vnd.amazon.eventstream"))
+      converseStreamResponse(text, onToken)

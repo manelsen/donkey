@@ -13,6 +13,7 @@ import donkey/core/providers/provider_defaults
 import donkey/core/security/aws_sigv4
 import donkey/domain/message
 import donkey/domain/providers/bedrock_pure
+import donkey/domain/providers/bedrock_stream_pure
 import donkey/domain/providers/descriptors
 import donkey/domain/providers/media_pure
 import donkey/ports/http
@@ -125,11 +126,48 @@ proc runTests*() =
       check descriptorOr("aws-bedrock").id == "bedrock"
       check descriptorOr("amazon-bedrock").id == "bedrock"
 
-    test "the runtime builder wires the Bedrock adapter (no streaming yet)":
+    test "the runtime builder wires the Bedrock adapter, streaming included":
       let bundle = buildProviderBundle(ProviderSpec(providerName: "bedrock",
         apiKey: "bdk", modelName: "amazon.nova-pro-v1:0"))
       check bundle.completeFn != nil
-      check bundle.streamFn == nil
+      check bundle.streamFn != nil
+      check streamsToolCalls("bedrock")
+
+    test "the stream calls converse-stream, asks for an event stream and reads it":
+      let cap = Capture()
+      let streamBody =
+        encodeEventMessage(@[(":event-type", "contentBlockDelta"), (":message-type", "event")],
+          $ %* {"contentBlockIndex": 0, "delta": {"text": "oi"}}) &
+        encodeEventMessage(@[(":event-type", "contentBlockStart"), (":message-type", "event")],
+          $ %* {"contentBlockIndex": 1, "start": {"toolUse": {"toolUseId": "t1", "name": "calc"}}}) &
+        encodeEventMessage(@[(":event-type", "contentBlockDelta"), (":message-type", "event")],
+          $ %* {"contentBlockIndex": 1, "delta": {"toolUse": {"input": "{}"}}}) &
+        encodeEventMessage(@[(":event-type", "messageStop"), (":message-type", "event")],
+          $ %* {"stopReason": "tool_use"})
+      let port = HttpRuntimePort(
+        postNoRedirect: proc (url, body: string; headers: seq[HttpHeader] = @[]):
+                         Result[HttpResponse, string] {.gcsafe.} =
+          cap.url = url
+          cap.headers = headers
+          ok(HttpResponse(status: 200, body: streamBody)))
+      let a = newBedrockAdapter(model = "amazon.nova-pro-v1:0", bearer = "b",
+                                http = port, clock = fixedClock)
+      let r = a.makeStreamFn()(hello(), proc(tok: string) {.gcsafe.} = discard)
+      check r.isOk
+      check r.get.text == "oi"
+      check r.get.toolCalls.len == 1 and r.get.toolCalls[0].name == "calc"
+      check cap.url.endsWith("/model/amazon.nova-pro-v1%3A0/converse-stream")
+      check headerValue(cap.headers, "Accept") == "application/vnd.amazon.eventstream"
+
+    test "the streamed request is signed for its own URL":
+      ## SigV4 covers the path: a signature made for /converse would fail.
+      let cap = Capture()
+      let a = adapterFor(cap, access = "AKIDEXAMPLE", secret = "s")
+      let url = converseStreamUrl(a.baseUrl, a.model)
+      check url.endsWith("/converse-stream")
+      let signed = a.requestHeaders(url, "{}", accept = "application/vnd.amazon.eventstream")
+      let plain = a.requestHeaders(converseUrl(a.baseUrl, a.model), "{}")
+      check headerValue(signed, "Authorization") != headerValue(plain, "Authorization")
 
     test "vision by model":
       check visionSupport("bedrock", "us.anthropic.claude-sonnet-5-v1:0") == vsYes

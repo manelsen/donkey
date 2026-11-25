@@ -13,11 +13,11 @@ proc runTests*() =
     test "the streams that assemble tool calls are marked":
       for id in ["openrouter", "anthropic", "zai-anthropic", "openai", "deepseek",
                  "groq", "opencode-go", "zen", "nvidia", "alibaba", "mistral",
-                 "fireworks"]:
+                 "fireworks", "bedrock"]:
         check streamsToolCalls(id)
 
     test "providers without such a stream are not":
-      for id in ["gemini", "minimax", "zai", "zai-coding", "bedrock", "ollama",
+      for id in ["gemini", "minimax", "zai", "zai-coding", "ollama",
                  "nonexistent"]:
         check not streamsToolCalls(id)
 
