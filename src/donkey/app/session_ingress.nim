@@ -584,12 +584,15 @@ proc resumeInterruptedTurns*(sm: var SessionManager;
       if services.globalOutbox == nil:
         ## Nowhere to send it: kept for a start that can.
         continue
+      ## The record goes first: if it cannot be removed, the notice waits
+      ## for a later start instead of going out twice.
+      journal.finish(r.id).isOkOr:
+        services.log.warn("turn journal: " & error & "; notice for " & r.id & " deferred")
+        continue
       services.globalOutbox.addLastNoWait(OutboundMessage(
         userId: uid, channel: r.channel, replyTo: r.replyTo,
         text: interruptedNotice(r)))
       inc result.notified
-      journal.finish(r.id).isOkOr:
-        services.log.warn("turn journal: " & error)
 
 proc handleSessionFallback*(sm:           var SessionManager;
                            msgSeq:       var int;
