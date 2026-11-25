@@ -35,6 +35,7 @@ import ../network/persistent_socket
 import ../network/gateway_family
 import ../../infra/event_queue
 import ../../infra/thread_handle
+import ../../infra/fixed
 import ../../core/channels/recent_ids
 
 const DiscordMaxChars* = 2000
@@ -305,8 +306,9 @@ const MaxDiscordGateways* = 16
 
 var gDiscordGateways: array[MaxDiscordGateways, PersistentSocket[DiscordGatewayConfig, DiscordGatewayState]]
 var gDiscordGatewayCount: int
-  ## Pointers only: gcsafe to touch from the daemon, which alone starts and
-  ## stops them.
+var gDiscordGatewayBots: array[MaxDiscordGateways, FixedText[64]]
+  ## Pointers and fixed-size values only: gcsafe to touch from the daemon,
+  ## which alone starts and stops them.
 
 # ── DiscordAdapter ─────────────────────────────────────────────────────────────
 
@@ -765,7 +767,13 @@ proc ack*(a: DiscordAdapter; channelId: string) =
 # ── Gateway management ─────────────────────────────────────────────────────────
 
 proc startGateway*(a: DiscordAdapter; logger: Logger; bot = "") {.gcsafe.} =
-  ## Starts one bot's gateway connection. Call once per bot at daemon startup.
+  ## Starts one bot's gateway connection. Call once per bot at daemon startup;
+  ## a second start for the same bot is refused, it would double its events.
+  for i in 0 ..< gDiscordGatewayCount:
+    if gDiscordGatewayBots[i] == bot:
+      logger.warn("discord: gateway for " & (if bot.len > 0: bot else: "the default bot") &
+                  " already started")
+      return
   if gDiscordGatewayCount >= MaxDiscordGateways:
     logger.error("discord: more than " & $MaxDiscordGateways & " bots; " &
                  (if bot.len > 0: bot else: "default") & " not started")
@@ -776,12 +784,14 @@ proc startGateway*(a: DiscordAdapter; logger: Logger; bot = "") {.gcsafe.} =
     logger.error("discord: " & started.error)
     return
   gDiscordGateways[gDiscordGatewayCount] = started.get
+  gDiscordGatewayBots[gDiscordGatewayCount] = toFixed[64](bot)
   inc gDiscordGatewayCount
 
 proc stopGateway*() =
   ## Closes every gateway connection at shutdown. Safe when none started.
   for i in 0 ..< gDiscordGatewayCount:
     gDiscordGateways[i].stop()
+  gDiscordGatewayCount = 0
 
 proc tryRecvEvent*(a: DiscordAdapter): (bool, DiscordRawEvent) =
   ## Non-blocking poll for gateway events. Returns (false, default) when empty.

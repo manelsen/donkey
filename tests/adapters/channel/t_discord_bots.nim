@@ -62,6 +62,19 @@ proc runTests*() =
       check slotAdapter(addr bots, addr primary, "time")[].token == "t"
       check slotAdapter(addr bots, addr primary, "gone").isNil
 
+    test "more bots than gateways are reported, not left silent":
+      let primary = newDiscordAdapter("primary", tempIds("max"))
+      var many: seq[BotSpec]
+      var vars: seq[(string, string)]
+      for i in 0 ..< MaxDiscordGateways + 2:
+        many.add BotSpec(name: "b" & $i, channel: "discord", tokenEnv: "DC_B" & $i)
+        vars.add ("DC_B" & $i, "tok" & $i)
+      let (bots, problems) = buildDiscordBots(validateBots(many)[0],
+                                              environmentOf(vars), primary)
+      check bots.slots.len == MaxDiscordGateways - 1
+      check problems.len == 3
+      check "at most" in problems[0]
+
   suite "discord bots — the outbound port":
 
     test "each operation for a person goes through that person's adapter":

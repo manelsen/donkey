@@ -33,6 +33,10 @@ proc buildDiscordBots*(specs: openArray[BotSpec]; env: Environment;
   var bots = DiscordBots()
   var problems: seq[string]
   for spec in botsOf(specs, ckDiscord):
+    if bots.slots.len >= MaxDiscordGateways - 1:   ## the default bot takes one
+      problems.add "bot " & spec.name & ": at most " & $(MaxDiscordGateways - 1) &
+                   " Discord bots besides the default one"
+      continue
     let token = env.get(spec.tokenEnv).strip
     if token.len == 0:
       problems.add "bot " & spec.name & ": " & spec.tokenEnv & " is not set"
