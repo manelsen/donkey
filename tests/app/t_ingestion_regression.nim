@@ -79,3 +79,17 @@ suite "telegram document ingestion regression":
 
     # The old daemon default wrote to {appDir}/downloads; it must stay unused.
     check not dirExists(getAppDir() / "downloads")
+
+suite "reply context in the session payload":
+  test "a reply reaches the agent with what it replies to":
+    let msg = InboundMessage(userId: UserId("u"), channel: ckTelegram,
+                             text: "e isso?", quotedText: "A senha é girassol42.")
+    check decodeUserPayload(encodeSessionPayload(msg)).text ==
+          "[Replying to: \"A senha é girassol42.\"]\ne isso?"
+    let withMedia = InboundMessage(userId: UserId("u"), channel: ckTelegram,
+      text: "veja", quotedText: "antes", mediaUrl: "file-id")
+    check decodeUserPayload(encodeSessionPayload(withMedia)).text.startsWith("[Replying to: \"antes\"]")
+
+  test "a message that replies to nothing is unchanged":
+    let msg = InboundMessage(userId: UserId("u"), channel: ckTelegram, text: "oi")
+    check encodeSessionPayload(msg) == "oi"

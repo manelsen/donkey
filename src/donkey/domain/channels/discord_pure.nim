@@ -49,6 +49,7 @@ type
     guildId*:          string   ## server id; empty for a DM
     originChannelId*:  string   ## channel the event came from (allowlist only)
     referencedAuthorId*: string ## author of the message this one replies to
+    referencedContent*:  string ## its text, when Discord included it
 
 # ── Internal pure helpers ─────────────────────────────────────────────────────
 
@@ -152,6 +153,8 @@ func parseMessageCreate(d: JsonNode): DsParseResult =
     referencedAuthorId:
       d.getOrDefault("referenced_message").getOrDefault("author")
         .getOrDefault("id").getStr(""),
+    referencedContent:
+      d.getOrDefault("referenced_message").getOrDefault("content").getStr(""),
   )
 
 func buildSlashContent(cmdName: string; iData: JsonNode): string =

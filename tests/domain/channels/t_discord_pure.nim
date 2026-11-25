@@ -756,5 +756,17 @@ proc runTests*() =
       check msg.channel == ckDiscord
       check msg.text == "/help"
 
+proc runReplyTests*() =
+  suite "discord replies":
+    test "the referenced message's content comes along":
+      let d = %* {"id": "m2", "channel_id": "c1", "content": "e isso?",
+        "author": {"id": "u1"},
+        "referenced_message": {"id": "m1", "content": "A senha é girassol42.",
+                               "author": {"id": "bot"}}}
+      let r = parseDispatch("MESSAGE_CREATE", d)
+      check r.referencedContent == "A senha é girassol42."
+      check r.referencedAuthorId == "bot"
+
 when isMainModule:
   runTests()
+  runReplyTests()

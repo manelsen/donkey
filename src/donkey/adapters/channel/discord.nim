@@ -65,6 +65,7 @@ type
     attachmentMime*:   string
     extraAttachments*: seq[string]  ## names of the attachments after the first
     referencedAuthorId*: string ## author of the message this one replies to
+    referencedContent*:  string ## its text, when Discord included it
 
 # ── Gateway thread ─────────────────────────────────────────────────────────────
 
@@ -115,6 +116,7 @@ func messageEventOf*(r: DsParseResult): DiscordRawEvent =
     guildId:       r.guildId,
     originChannelId: r.originChannelId,
     referencedAuthorId: r.referencedAuthorId,
+    referencedContent: r.referencedContent,
     attachmentUrl:  (if r.attachmentUrls.len > 0: r.attachmentUrls[0] else: ""),
     attachmentName: (if r.attachmentNames.len > 0: r.attachmentNames[0] else: ""),
     attachmentMime: (if r.attachmentMimes.len > 0: r.attachmentMimes[0] else: ""),

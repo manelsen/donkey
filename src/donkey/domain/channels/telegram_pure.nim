@@ -40,6 +40,7 @@ type
     threadId*:    string   ## message_thread_id for forum topics
     isGroup*:     bool     ## true for group/supergroup chats
     chatId*:      string   ## source chat id (group id in groups)
+    quotedText*:  string   ## the message replied to (or the selected quote)
 
 # ── Internal pure helpers ─────────────────────────────────────────────────────
 
@@ -200,6 +201,15 @@ func parseUpdate*(upd: JsonNode): TgParseResult =
     let chatType  = tgMsg["chat"].getOrDefault("type").getStr("private")
     let threadId  = tgMsg.idAsString("message_thread_id")
     let groupId   = tgMsg.idAsString("media_group_id")
+    ## What this replies to: the part the person selected (`quote`), else
+    ## the whole message. In a forum topic every message "replies" to the
+    ## topic's creation, which is no quote.
+    let replied = tgMsg.getOrDefault("reply_to_message")
+    let selected = tgMsg.getOrDefault("quote").getOrDefault("text").getStr("")
+    let quotedText =
+      if selected.len > 0: selected
+      elif replied.isNil or replied.hasKey("forum_topic_created"): ""
+      else: replied |> extractTextFrom
     ## Skip updates that carry neither text nor a recognisable attachment.
     if text.len == 0 and mediaId.len == 0:
       return TgParseResult(kind: tukUnknown)
@@ -217,6 +227,7 @@ func parseUpdate*(upd: JsonNode): TgParseResult =
       threadId:      threadId,
       isGroup:       chatType in ["group", "supergroup"],
       chatId:        $tgMsg["chat"]["id"].getBiggestInt(),
+      quotedText:    quotedText,
     )
 
   TgParseResult(kind: tukUnknown)
@@ -249,6 +260,7 @@ func toInbound*(r: TgParseResult; userId: UserId;
     mediaGroupId:  r.mediaGroupId,
     threadId:      r.threadId,
     chatId:        r.chatId,
+    quotedText:    r.quotedText,
   )
 
 func maxNextOffset*(currentOffset: int64; updates: JsonNode): int64 =

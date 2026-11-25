@@ -16,6 +16,7 @@ import ./credential_runtime
 export credential_runtime.detectProviderAvailability
 import ../domain/agent_message
 import ../domain/message
+import ../domain/reply_context_pure
 import ../domain/channels/telegram_pure
 import ../domain/builtin_tools
 import ../domain/more_tools
@@ -439,9 +440,11 @@ func encodeSessionPayload*(msg: InboundMessage;
   var mediaPaths: seq[string] = @[]
   if msg.mediaUrl.len > 0 and msg.mediaFileName.startsWith(AttachmentDirName & "/"):
     mediaPaths.add(msg.mediaFileName)
+  ## A reply carries what it replies to (domain/reply_context_pure).
+  let text = withReplyContext(msg.text, msg.quotedText)
   if msg.mediaUrl.len == 0 and recentContext.len == 0:
-    return msg.text
-  $(%* {"text": msg.text, "mediaUrl": msg.mediaUrl,
+    return text
+  $(%* {"text": text, "mediaUrl": msg.mediaUrl,
         "mediaPaths": mediaPaths,
         "mediaGroupId": msg.mediaGroupId, "recentContext": recentContext})
 

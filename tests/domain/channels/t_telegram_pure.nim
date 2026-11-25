@@ -373,5 +373,26 @@ proc runTests*() =
       check r.chatId == "-100"
       check r.channelId == "3"
 
+proc runReplyTests*() =
+  suite "telegram replies":
+    test "a reply's quoted text comes along; a selected quote wins":
+      let upd = %* {"update_id": 1, "message": {"message_id": 9, "from": {"id": 42},
+        "chat": {"id": 42, "type": "private"}, "text": "e isso?",
+        "reply_to_message": {"message_id": 7, "text": "A senha é girassol42."}}}
+      check parseUpdate(upd).quotedText == "A senha é girassol42."
+      let quoted = %* {"update_id": 2, "message": {"message_id": 9, "from": {"id": 42},
+        "chat": {"id": 42, "type": "private"}, "text": "e isso?",
+        "reply_to_message": {"message_id": 7, "text": "uma frase longa com girassol42 no meio"},
+        "quote": {"text": "girassol42"}}}
+      check parseUpdate(quoted).quotedText == "girassol42"
+      check parseUpdate(upd).toInbound(UserId("u")).quotedText == "A senha é girassol42."
+
+    test "a forum topic's root is not a quote":
+      let upd = %* {"update_id": 3, "message": {"message_id": 9, "from": {"id": 42},
+        "chat": {"id": -100, "type": "supergroup"}, "text": "oi", "message_thread_id": 5,
+        "reply_to_message": {"message_id": 5, "forum_topic_created": {"name": "Geral"}}}}
+      check parseUpdate(upd).quotedText == ""
+
 when isMainModule:
   runTests()
+  runReplyTests()
