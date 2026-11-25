@@ -60,6 +60,16 @@ proc runTests*() =
       check azureChatEndpoint("").isErr
       check azureChatEndpoint("http://acme.openai.azure.com").isErr
 
+    test "a path that is none of the documented forms is refused, not glued onto":
+      check azureChatEndpoint("https://acme.openai.azure.com/openai").isErr
+      check azureChatEndpoint("https://acme.openai.azure.com/openai/deployments/x").isErr
+
+    test "plain http is allowed to this machine, IPv6 loopback with a port included":
+      check azureChatEndpoint("http://[::1]:8080").get ==
+            "http://[::1]:8080/openai/v1/chat/completions"
+      check azureChatEndpoint("http://localhost:8080/openai/v1").isOk
+      check azureChatEndpoint("http://[::2]:8080").isErr
+
   suite "azure openai — the request":
 
     test "the key goes in api-key, never as a bearer; model is the deployment":

@@ -25,7 +25,11 @@ func endpointSafe(url: string): bool =
     let at = authority.find(stop)
     if at >= 0: authority = authority[0 ..< at]
   if '@' in authority or authority.len == 0: return false
-  let host = authority.split(':')[0]
+  ## An IPv6 literal keeps its brackets: `[::1]:8080` is host `[::1]`.
+  let host =
+    if authority.startsWith("["):
+      (let close = authority.find(']'); if close > 0: authority[0 .. close] else: authority)
+    else: authority.split(':')[0]
   lower.startsWith("https://") or
     (lower.startsWith("http://") and host in ["localhost", "127.0.0.1", "[::1]"])
 
@@ -41,12 +45,19 @@ func azureChatEndpoint*(resourceUrl: string): Result[string, string] =
                "(https://<name>.openai.azure.com)")
   if not endpointSafe(value):
     return err("Azure OpenAI: AZURE_OPENAI_ENDPOINT must be https (" & value & ")")
-  if value.endsWith("/chat/completions"):
-    ok(value)
-  elif value.endsWith("/openai/v1"):
-    ok(value & "/chat/completions")
+  ## The path after the authority decides: none (the resource root), the
+  ## v1 base, or the full endpoint. Anything else is refused rather than
+  ## glued onto (`.../openai` would become `.../openai/openai/v1/...`).
+  let afterScheme = value.find("://") + 3
+  let slash = value.find('/', afterScheme)
+  let path = if slash < 0: "" else: value[slash .. ^1]
+  case path
+  of "": ok(value & "/openai/v1/chat/completions")
+  of "/openai/v1": ok(value & "/chat/completions")
+  of "/openai/v1/chat/completions": ok(value)
   else:
-    ok(value & "/openai/v1/chat/completions")
+    err("Azure OpenAI: AZURE_OPENAI_ENDPOINT should be the resource URL " &
+        "(https://<name>.openai.azure.com), not " & value)
 
 func azureCompatProfileAt*(endpoint: string): CompatProfile =
   result = CompatProfile(
