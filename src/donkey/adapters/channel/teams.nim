@@ -168,19 +168,22 @@ proc loadConversations(path: string): Table[string, string] =
     discard   ## an unreadable file only costs the proactive sends until the next message
 
 proc rememberConversation*(a: TeamsAdapter; senderKey, serviceUrl,
-                           conversationId: string) =
-  ## Where a person last wrote from, for sends without a reply target.
+                           conversationId: string): Result[void, string] {.discardable.} =
+  ## Where a person last wrote from, for sends without a reply target. The
+  ## file is written only when that changes; an error is returned for the
+  ## caller to log (the mapping still holds in memory).
   if senderKey.len == 0 or conversationId.len == 0:
-    return
+    return ok()
   let target = replyTarget(serviceUrl, conversationId, "")
   if a.state.conversations.getOrDefault(senderKey) == target:
-    return
+    return ok()
   a.state.conversations[senderKey] = target
-  if a.conversationsPath.len > 0:
-    var j = newJObject()
-    for key, value in a.state.conversations:
-      j[key] = %value
-    discard atomicWriteText(a.conversationsPath, $j, "w")
+  if a.conversationsPath.len == 0:
+    return ok()
+  var j = newJObject()
+  for key, value in a.state.conversations:
+    j[key] = %value
+  atomicWriteText(a.conversationsPath, $j, "w")
 
 proc appToken(a: TeamsAdapter): Result[string, string] =
   let now = a.clock()

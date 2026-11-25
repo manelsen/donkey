@@ -165,11 +165,22 @@ proc runTests*() =
       var a = adapterFor(r, dir)
       let uid = a.resolver.resolve(ckTeams, "aad-belle")
       check a.send(OutboundMessage(userId: uid, channel: ckTeams, text: "x")).isErr
-      a.rememberConversation("aad-belle", ServiceUrl, "a:1xyz")
+      check a.rememberConversation("aad-belle", ServiceUrl, "a:1xyz").isOk
       let again = adapterFor(r, dir)   ## a new process
       check again.send(OutboundMessage(userId: uid, channel: ckTeams, text: "lembrete")).isOk
       check r.posts[^1][0] ==
         "https://smba.trafficmanager.net/amer/v3/conversations/a%3A1xyz/activities"
+
+    test "a conversation that cannot be saved is reported, and still used":
+      let dir = tempDir("unsaved")
+      defer: removeDir(dir)
+      let r = Recorder()
+      let a = newTeamsAdapter("app-123", "pw", "t", dir / "ids.tsv",
+        "/proc/donkey-no-such/teams_conversations.json", http = fakeHttp(r),
+        clock = proc(): int64 {.gcsafe.} = 1_000)
+      let uid = a.resolver.resolve(ckTeams, "aad-belle")
+      check a.rememberConversation("aad-belle", ServiceUrl, "a:1xyz").isErr
+      check a.send(OutboundMessage(userId: uid, channel: ckTeams, text: "x")).isOk
 
     test "empty text sends nothing":
       let dir = tempDir("empty")

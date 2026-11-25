@@ -50,7 +50,8 @@ proc drainTeamsEvents*(a: var TeamsAdapter;
                  (if auth.identified: $auth.userId else: "unidentified sender"))
         break next
       let target = replyTarget(act.serviceUrl, act.conversationId, act.id)
-      a.rememberConversation(sender, act.serviceUrl, act.conversationId)
+      a.rememberConversation(sender, act.serviceUrl, act.conversationId).isOkOr:
+        log.warn("teams: conversation not saved: " & error)
       sm.recordChannel(auth.userId, ckTeams, target, persist = false)
       let msg = InboundMessage(
         userId: auth.userId, channel: ckTeams, channelId: target,
