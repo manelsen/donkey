@@ -230,6 +230,20 @@ proc runTests*() =
       require res.isOk
       check res.get().text == ""
 
+    test "a streamed tool call comes back with the response":
+      ## Without it the tool loop could not stream through a compat provider.
+      let sse =
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\"," &
+        "\"function\":{\"name\":\"calc\",\"arguments\":\"{\\\"x\\\":\"}}]}}]}\n" &
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0," &
+        "\"function\":{\"arguments\":\"1}\"}}]}}]}\n" &
+        "data: [DONE]\n"
+      let res = consumeCompatSse(newStringStream(sse), nil)
+      require res.isOk
+      check res.get().toolCalls.len == 1
+      check res.get().toolCalls[0].name == "calc"
+      check res.get().toolCalls[0].inputJson == "{\"x\":1}"
+
     test "keepalive comments and blank lines are ignored":
       let sse = ": keep-alive\n\n" &
                 "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n" &

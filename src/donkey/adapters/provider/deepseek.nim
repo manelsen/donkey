@@ -18,6 +18,7 @@ import ../../core/pipeops
 import ../../core/json_helpers
 import ../../ports/http
 import ./provider_http
+import ./sse
 
 const
   DeepSeekEndpoint*    = "https://api.deepseek.com/v1/chat/completions"
@@ -140,30 +141,7 @@ proc makeStreamFn*(a: DeepSeekAdapter): StreamFn =
       let body = buildCompatRequestBody(deepseekCompatProfileAt(url), adapter.model, req, stream = true)
       let resp = ? postProviderStream(adapter.http, "DeepSeek", url, $body, headers)
       
-      var accumulated = ""
-      var reasoning = ""
-      var inputTokens = 0
-      var outputTokens = 0
-      
-      for line in resp.lines:
-        let res = parseDeepSeekSseLine(line)
-        if res.isErr: continue
-        let chunk = res.value
-        if chunk.done: break
-        if chunk.token.len > 0:
-          accumulated &= chunk.token
-          onToken(chunk.token)
-        if chunk.reasoning.len > 0:
-          reasoning &= chunk.reasoning
-        if chunk.inputTokens > 0: inputTokens = chunk.inputTokens
-        if chunk.outputTokens > 0: outputTokens = chunk.outputTokens
-
-      ok(CompletionResponse(
-        text:         accumulated,
-        reasoning:    reasoning,
-        inputTokens:  inputTokens,
-        outputTokens: outputTokens,
-      ))
+      consumeOpenAiStream(resp, "DeepSeek", onToken)
 
 # ── Constructor ───────────────────────────────────────────────────────────────
 
