@@ -353,7 +353,13 @@ agent     = "suporte"      # {home}/agents/suporte.toml
   (`phone_number_id = "…"` instead of `token_env`): the numbers share the
   account's token and webhook, and the number a message was sent to picks
   the bot. A number this instance does not serve is still ignored.
-- Available on Telegram, Discord and WhatsApp; Teams follows (E3).
+- On Teams a bot is another Azure Bot (`app_id = "…"` and
+  `secret_env = "…"`, the variable with its password) on the same
+  `/webhook/teams` route: the audience of the connector's token says which
+  bot an activity is for. The bots use the tenant of the default one
+  (`MICROSOFT_APP_TENANT_ID`), and each keeps its conversations in
+  `state/teams_conversations_<bot>.json`.
+- Available on Telegram, Discord, WhatsApp and Teams.
 
 ---
 

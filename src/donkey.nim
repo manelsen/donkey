@@ -49,6 +49,7 @@ import donkey/adapters/channel/telegram_runtime
 import donkey/adapters/channel/telegram_bots
 import donkey/adapters/channel/discord_bots
 import donkey/adapters/channel/whatsapp_bots
+import donkey/adapters/channel/teams_bots
 import donkey/adapters/channel/discord
 import donkey/adapters/channel/discord_runtime
 import donkey/adapters/channel/wecom
@@ -237,6 +238,8 @@ type DaemonAdapters = object
   dcBotProblems: seq[string]
   waBots: WhatsAppBots       ## the `[[bots]]` on WhatsApp: other numbers (E3.5)
   waBotProblems: seq[string]
+  teamsBots: TeamsBots       ## the `[[bots]]` on Teams: other apps (E3.6)
+  teamsBotProblems: seq[string]
   dc: DiscordAdapter
   wc: WeComAdapter
   wch: WeChatAdapter
@@ -274,6 +277,13 @@ proc whatsappPick(adapters: var DaemonAdapters): WhatsAppPick =
   result = proc(userId: UserId): ptr WhatsAppAdapter {.gcsafe.} =
     adapterFor(bots, primary, userId)
 
+proc teamsPick(adapters: var DaemonAdapters): TeamsPick =
+  ## The Teams app each person last wrote to.
+  let bots = addr adapters.teamsBots
+  let primary = addr adapters.teams
+  result = proc(userId: UserId): ptr TeamsAdapter {.gcsafe.} =
+    adapterFor(bots, primary, userId)
+
 proc buildRuntimeOutboundPorts(adapters: var DaemonAdapters): OutboundChannelPorts =
   let signalPtr =
     if adapters.signal.account.len > 0: addr adapters.signal
@@ -284,7 +294,7 @@ proc buildRuntimeOutboundPorts(adapters: var DaemonAdapters): OutboundChannelPor
     addr adapters.em, addr adapters.sl, addr adapters.dt, addr adapters.wa,
     addr adapters.cli, signalPtr, addr adapters.ln, addr adapters.teams,
     tgPick = telegramPick(adapters), dcPick = discordPick(adapters),
-    waPick = whatsappPick(adapters))
+    waPick = whatsappPick(adapters), teamsPick = teamsPick(adapters))
 
 type DaemonServices = object
   toolClients:      seq[ToolRuntimePort]
@@ -662,6 +672,8 @@ proc initDaemonAdapters(cfg: DonkeyConfig; env: DaemonEnv): DaemonAdapters =
     env.teamsTenantId, env.identityPath,
     cfg.home / "state" / "teams_conversations.json",
     serviceHosts = env.teamsServiceHosts)
+  (result.teamsBots, result.teamsBotProblems) =
+    buildTeamsBots(cfg.bots, cfg.env, result.teams, cfg.home / "state")
   result.mx = newMatrixAdapter(cfg.env.get("MATRIX_HOMESERVER"), cfg.env.get("MATRIX_BOT_USER_ID"),
                                cfg.env.get("MATRIX_ACCESS_TOKEN"), env.identityPath)
   result.em = newEmailAdapter(cfg.env.get("EMAIL_IMAP_HOST"), cfg.env.get("EMAIL_SMTP_HOST"),
@@ -852,7 +864,8 @@ proc startOptionalWhatsAppGateway(waAdapter: var WhatsAppAdapter;
   waAdapter.openQueue()
   log.info("WhatsApp webhook queue started")
 
-proc startOptionalWebhookReceiver(env: DaemonEnv; qqOneBot: bool; log: Logger) =
+proc startOptionalWebhookReceiver(env: DaemonEnv; qqOneBot: bool; log: Logger;
+                                  teamsApps: seq[TeamsApp] = @[]) =
   ## Mounts only the routes whose channel is configured AND has a secret.
   ## WeCom, WeChat and QQ OneBot have no listener of their own: their
   ## callbacks come here too.
@@ -910,6 +923,7 @@ proc startOptionalWebhookReceiver(env: DaemonEnv; qqOneBot: bool; log: Logger) =
     qqOneBotSecret: env.qqOneBotSecret,
     teamsAppId:
       if env.teamsAppPassword.len > 0: env.teamsAppId else: "",
+    teamsApps: teamsApps,
     tlsCertFile: env.webhookTlsCert,
     tlsKeyFile: env.webhookTlsKey,
   )
@@ -1374,7 +1388,8 @@ proc startDaemonIngress(ctx: DaemonContext;
     ctx.adapters.ln.openQueue()
     log.info("LINE webhook queue started")
   startOptionalWebhookReceiver(ctx.env,
-    ctx.adapters.qq.enabled() and ctx.adapters.qq.kind == qbkOneBot, log)
+    ctx.adapters.qq.enabled() and ctx.adapters.qq.kind == qbkOneBot, log,
+    teamsApps = ctx.adapters.teamsBots.routeApps())
   startOptionalQQGateway(ctx.adapters.qq, ctx.env, log)
   if ctx.env.telegramToken.len > 0:
     log.info("Telegram bot starting (token len=" & $ctx.env.telegramToken.len & ")")
@@ -1559,7 +1574,8 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
         ctx.adapters.ln, ctx.runtime.sm, ctx.runtime.lineReplay,
         linePolicy, getTime().toUnix(), fallback, enqueueLineReply, log) > 0,
     drainTeams = proc(): bool =
-      if ctx.env.teamsAppId.len == 0 or ctx.env.teamsAppPassword.len == 0:
+      if (ctx.env.teamsAppId.len == 0 or ctx.env.teamsAppPassword.len == 0) and
+          ctx.adapters.teamsBots.slots.len == 0:
         return false
       let enqueueTeamsReply = proc(msg: OutboundMessage): Result[void, string] {.gcsafe, raises: [].} =
         try:
@@ -1568,7 +1584,11 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
         except AsyncQueueFullError:
           err("Teams: outbox full, /continue reply dropped")
       drainTeamsEvents(ctx.adapters.teams, ctx.runtime.sm, ctx.runtime.teamsSeen,
-                       fallback, enqueueTeamsReply, log) > 0,
+                       fallback, enqueueTeamsReply, log,
+        pickBot = proc(bot: string): ptr TeamsAdapter {.gcsafe.} =
+          slotAdapter(addr ctx.adapters.teamsBots, addr ctx.adapters.teams, bot),
+        noteInbound = proc(userId: UserId; bot: string) {.gcsafe.} =
+          noteInbound(ctx.adapters.teamsBots, userId, bot)) > 0,
     drainMatrix = proc(): bool =
       let count = drainMatrixGateway(
         ctx.env.matrixConfigured,
@@ -1794,7 +1814,8 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   let sessionServices = buildDaemonSessionServices(ctx, cfg, memory, log)
   ## `[[bots]]` entries left out, and why (domain/bots_pure).
   for problem in cfg.botProblems & ctx.adapters.tgBotProblems &
-                 ctx.adapters.dcBotProblems & ctx.adapters.waBotProblems:
+                 ctx.adapters.dcBotProblems & ctx.adapters.waBotProblems &
+                 ctx.adapters.teamsBotProblems:
     log.warn("[[bots]] " & problem)
   ## Turns the previous process died in: replayed when nothing they did
   ## could be repeated, otherwise the user is told. The replays and notices

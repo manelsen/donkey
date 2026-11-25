@@ -38,6 +38,7 @@ type
     recipientName*:    string
     text*:             string   ## the bot's mention taken out
     replyToId*:        string
+    bot*:              string   ## the `[[bots]]` app it was sent to; "" = default
 
   ReplyTarget* = object
     serviceUrl*:     string

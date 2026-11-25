@@ -106,6 +106,31 @@ proc runTests*() =
       check handleTeamsAt(cfg, request(vecGood), VecNowSec, fetch).status == 200
       check calls == 1
 
+    test "a token for another configured app is that bot's activity":
+      ## E3.6: several App IDs share the route; the token's audience says
+      ## which bot the activity is for.
+      let multi = WebhookConfig(teamsAppId: "app-123",
+                                teamsApps: @[TeamsApp(appId: "app-999", bot: "vendas")])
+      check handleTeamsAt(multi, request(vecOtherAud), VecNowSec, noFetch).status == 200
+      let (has, a) = tryRecvActivity()
+      check has and a.bot == "vendas"
+      check handleTeamsAt(multi, request(vecGood), VecNowSec, noFetch).status == 200
+      let (has2, b) = tryRecvActivity()
+      check has2 and b.bot == ""
+
+    test "a token for an app nobody configured is still a 401":
+      let multi = WebhookConfig(teamsAppId: "app-123",
+                                teamsApps: @[TeamsApp(appId: "app-555", bot: "x")])
+      check handleTeamsAt(multi, request(vecOtherAud), VecNowSec, noFetch).status == 401
+      check drain() == 0
+
+    test "bots alone, without a default app, mount the route":
+      let onlyBots = WebhookConfig(teamsApps: @[TeamsApp(appId: "app-999", bot: "vendas")])
+      check anyRouteConfigured(onlyBots)
+      check handleTeamsAt(onlyBots, request(vecOtherAud), VecNowSec, noFetch).status == 200
+      check tryRecvActivity()[1].bot == "vendas"
+      check handleTeamsAt(onlyBots, request(vecGood), VecNowSec, noFetch).status == 401
+
     test "the route counts as configured":
       check anyRouteConfigured(cfg)
       check not anyRouteConfigured(WebhookConfig())
