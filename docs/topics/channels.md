@@ -19,6 +19,7 @@ This matrix reflects the current `core/outbound` capability model used by the ru
 | [Slack](#slack) | yes | no | no | no | no |
 | [LINE](#line) | yes | no | no | no | no |
 | [Microsoft Teams](#microsoft-teams) | yes | no | no | no | no |
+| [Mattermost](#mattermost) | yes | no | no | no | no |
 | WeChat Work | yes | no | no | no | no |
 | WeChat | yes | no | no | no | no |
 | QQ | yes | no | no | no | no |
@@ -319,6 +320,40 @@ nothing is queued.
   go in pieces. Each person's last conversation is kept in
   `state/teams_conversations.json`, so reminders reach them after a restart.
 - Text only: no attachments, cards or edits yet.
+
+---
+
+## Mattermost
+
+Mattermost reaches Donkey over its WebSocket API: no public URL is needed.
+Create a bot account (System Console → Integrations → Bot Accounts), give it a
+personal access token, and add it to the teams and channels it should serve.
+
+### Configuration
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `MATTERMOST_URL` | yes | The server, `https://` only (the socket and every request carry the token). |
+| `MATTERMOST_TOKEN` | yes | The bot's personal access token. |
+
+### Behaviour
+
+- At connection Donkey asks `users/me` who the bot is, then authenticates the
+  socket with the token. A token the server refuses stops the connection
+  (reconnecting cannot help); other drops reconnect with backoff, and a ping
+  every 30 s keeps the link alive.
+- Direct messages follow the DM policy. In a channel the bot answers only when
+  mentioned, and the channel passes the shared group allowlist
+  (`DONKEY_TELEGRAM_ALLOWED_GROUPS`, with the channel id; empty = every
+  group). The `@mention` is taken out of the text.
+- A person is known by their Mattermost user id, so `/continue` links
+  Mattermost to the same person on another channel.
+- Replies in a channel go into the thread of the post they answer; direct
+  messages get a plain post. Long replies go in pieces. Each person's last
+  direct channel is kept in `state/mattermost_channels.json`, so reminders
+  reach them after a restart.
+- Posts made while the socket is down are not replayed.
+- Text only: no attachments or edits yet.
 
 ---
 

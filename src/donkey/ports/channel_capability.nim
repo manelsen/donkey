@@ -91,6 +91,12 @@ const
     downloadFile: false, sendMedia: false, sendVoice: false)
 
   # Teams: text replies in the thread (Markdown); no edits or media yet
+  # Mattermost: text posts in the thread; no edits or media yet
+  MattermostCapability = ChannelCapabilityDescriptor(
+    send: true, sendReturnId: false, editMessage: false,
+    sendKeyboard: false, editKeyboard: false, setMessageReaction: false,
+    downloadFile: false, sendMedia: false, sendVoice: false)
+
   TeamsCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: false, editMessage: false,
     sendKeyboard: false, editKeyboard: false, setMessageReaction: false,
@@ -130,6 +136,7 @@ proc channelCapabilityRegistry*(): ChannelCapabilityRegistry =
   result[ckCli]        = CliCapability
   result[ckLine]       = LineCapability
   result[ckTeams]      = TeamsCapability
+  result[ckMattermost] = MattermostCapability
   for kind in [ckWeCom, ckWeChat, ckFeishu, ckSlack, ckWhatsApp]:
     result[kind].repliesToRequester = true
 

@@ -31,6 +31,7 @@ type
     drainEmail*:     GatewayDrainProc
     drainSignal*:    GatewayDrainProc
     drainTeams*:     GatewayDrainProc
+    drainMattermost*: GatewayDrainProc
 
 func initGatewayDrainer*(
   drainDiscord:   GatewayDrainProc = nil,
@@ -47,6 +48,7 @@ func initGatewayDrainer*(
   drainEmail:     GatewayDrainProc = nil,
   drainSignal:    GatewayDrainProc = nil,
   drainTeams:     GatewayDrainProc = nil,
+  drainMattermost: GatewayDrainProc = nil,
 ): GatewayDrainer =
   ## Initializes a GatewayDrainer with channel drain callbacks.
   GatewayDrainer(
@@ -64,6 +66,7 @@ func initGatewayDrainer*(
     drainEmail:     drainEmail,
     drainSignal:    drainSignal,
     drainTeams:     drainTeams,
+    drainMattermost: drainMattermost,
   )
 
 # ── Polling & Batch Draining Helpers ──────────────────────────────────────────
@@ -283,6 +286,11 @@ proc drainSignalGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} 
   if drainer.drainSignal != nil:
     result = drainer.drainSignal()
 
+proc drainMattermostGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
+  ## Drains the Mattermost socket queue if configured.
+  if drainer.drainMattermost != nil:
+    result = drainer.drainMattermost()
+
 proc drainTeamsGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains the Teams webhook queue if configured.
   if drainer.drainTeams != nil:
@@ -305,3 +313,4 @@ proc drainGatewayEvents*(drainer: GatewayDrainer): int {.discardable, gcsafe.} =
   if drainEmailGateway(drainer): result.inc
   if drainSignalGateway(drainer): result.inc
   if drainTeamsGateway(drainer): result.inc
+  if drainMattermostGateway(drainer): result.inc

@@ -73,6 +73,9 @@ import donkey/adapters/channel/line
 import donkey/adapters/channel/line_runtime
 import donkey/adapters/channel/teams
 import donkey/adapters/channel/teams_runtime
+import donkey/adapters/channel/mattermost
+import donkey/adapters/channel/mattermost_runtime
+import donkey/adapters/channel/mattermost_socket
 import donkey/adapters/channel/cli_repl
 import donkey/adapters/webhook/webhook_receiver
 import donkey/domain/channels/line_policy
@@ -236,6 +239,8 @@ type DaemonEnv = object
   teamsAppPassword: string  ## MICROSOFT_APP_PASSWORD
   teamsTenantId: string     ## MICROSOFT_APP_TENANT_ID; empty = multi-tenant
   teamsServiceHosts: seq[string]
+  mattermostUrl: string     ## MATTERMOST_URL (https only)
+  mattermostToken: string   ## MATTERMOST_TOKEN: the bot's personal access token
 
 type DaemonAdapters = object
   tg: TelegramAdapter
@@ -256,6 +261,7 @@ type DaemonAdapters = object
   dt: DingTalkAdapter
   ln: LineAdapter
   teams: TeamsAdapter
+  mm: MattermostAdapter
   mx: MatrixAdapter
   em: EmailAdapter
   wa: WhatsAppAdapter
@@ -300,6 +306,7 @@ proc buildRuntimeOutboundPorts(adapters: var DaemonAdapters): OutboundChannelPor
     addr adapters.wch, addr adapters.qq, addr adapters.fs, addr adapters.mx,
     addr adapters.em, addr adapters.sl, addr adapters.dt, addr adapters.wa,
     addr adapters.cli, signalPtr, addr adapters.ln, addr adapters.teams,
+    mattermostAdapter = addr adapters.mm,
     tgPick = telegramPick(adapters), dcPick = discordPick(adapters),
     waPick = whatsappPick(adapters), teamsPick = teamsPick(adapters))
 
@@ -638,6 +645,8 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
   result.teamsAppPassword = cfg.env.get("MICROSOFT_APP_PASSWORD").strip()
   result.teamsTenantId = cfg.env.get("MICROSOFT_APP_TENANT_ID").strip()
   result.teamsServiceHosts = DefaultServiceHosts & parseChatIdList(cfg.env.get("TEAMS_SERVICE_HOSTS"))
+  result.mattermostUrl = cfg.env.get("MATTERMOST_URL").strip()
+  result.mattermostToken = cfg.env.get("MATTERMOST_TOKEN").strip()
   result.matrixWebhookToken = cfg.env.get("MATRIX_WEBHOOK_TOKEN")
   result.whatsappVerifyToken = cfg.env.get("WHATSAPP_VERIFY_TOKEN")
   result.whatsappAppSecret = cfg.env.get("WHATSAPP_APP_SECRET")
@@ -701,6 +710,8 @@ proc initDaemonAdapters(cfg: DonkeyConfig; env: DaemonEnv): DaemonAdapters =
     env.teamsTenantId, env.identityPath,
     cfg.home / "state" / "teams_conversations.json",
     serviceHosts = env.teamsServiceHosts)
+  result.mm = newMattermostAdapter(env.mattermostUrl, env.mattermostToken,
+    env.identityPath, cfg.home / "state" / "mattermost_channels.json")
   (result.teamsBots, result.teamsBotProblems) =
     buildTeamsBots(cfg.bots, cfg.env, result.teams, cfg.home / "state")
   result.mx = newMatrixAdapter(cfg.env.get("MATRIX_HOMESERVER"), cfg.env.get("MATRIX_BOT_USER_ID"),
@@ -843,6 +854,20 @@ proc slackSocketHttp(): HttpRuntimePort {.nimcall, gcsafe.} =
   ## Built on the Socket Mode reader thread (see SlackHttpFactory).
   newStdHttpAdapter(timeout = 15, maxRetries = 2,
                     circuitBreaker = false).toRuntimePort()
+
+proc mattermostSocketHttp(): HttpRuntimePort {.nimcall, gcsafe.} =
+  ## Built on the Mattermost socket thread (see MattermostHttpFactory).
+  newStdHttpAdapter(timeout = 15, maxRetries = 2,
+                    circuitBreaker = false).toRuntimePort()
+
+proc startOptionalMattermostGateway(url, token: string; log: Logger) =
+  if url.len == 0 and token.len == 0:
+    log.info("MATTERMOST_URL not set — Mattermost disabled")
+    return
+  startMattermostSocket(url, token, mattermostSocketHttp, log).isOkOr:
+    log.error("mattermost: " & error)
+    return
+  log.info("Mattermost socket started")
 
 proc startOptionalSlackGateway(slAdapter: var SlackAdapter;
                                slackBotToken: string;
@@ -1273,6 +1298,7 @@ func outboundPortForChannel(ports: OutboundChannelPorts;
   of ckCli: ports.cli
   of ckLine: ports.line
   of ckTeams: ports.teams
+  of ckMattermost: ports.mattermost
 
 proc makeCompleteBuilder(): proc(preferencesMd: string): CompleteFn {.gcsafe.} =
   result = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
@@ -1424,6 +1450,7 @@ proc startDaemonIngress(ctx: DaemonContext;
                             ctx.env.slackAppToken, ctx.env.slackSigningSecret,
                             slackSocketHttp, log)
   startOptionalDingTalkGateway(ctx.adapters.dt, ctx.env.dingTalkAppKey, log)
+  startOptionalMattermostGateway(ctx.env.mattermostUrl, ctx.env.mattermostToken, log)
   startOptionalMatrixGateway(ctx.adapters.mx, ctx.env.matrixConfigured, log)
   startOptionalWhatsAppGateway(ctx.adapters.wa, ctx.env.whatsappAccessToken,
                                ctx.env.whatsappPhoneNumberId, log)
@@ -1634,6 +1661,17 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
           slotAdapter(addr ctx.adapters.teamsBots, addr ctx.adapters.teams, bot),
         noteInbound = proc(userId: UserId; bot: string) {.gcsafe.} =
           noteInbound(ctx.adapters.teamsBots, userId, bot)) > 0,
+    drainMattermost = proc(): bool =
+      if ctx.env.mattermostToken.len == 0:
+        return false
+      let enqueueMattermostReply = proc(msg: OutboundMessage): Result[void, string] {.gcsafe, raises: [].} =
+        try:
+          ctx.runtime.globalOutbox.putNoWait(msg)
+          ok()
+        except AsyncQueueFullError:
+          err("Mattermost: outbox full, /continue reply dropped")
+      drainMattermostEvents(ctx.adapters.mm, ctx.runtime.sm, fallback,
+                            enqueueMattermostReply, log) > 0,
     drainMatrix = proc(): bool =
       let count = drainMatrixGateway(
         ctx.env.matrixConfigured,
@@ -2057,6 +2095,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
       ## The job writes through a pointer to the store: let it finish.
       discard await ctx.runtime.ledgerCompaction
     stopSlackSocketMode()
+    stopMattermostSocket()
     discord.stopGateway()
     stopQQOfficialGateway()
     stopWebhookReceiver()
