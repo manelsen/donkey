@@ -42,6 +42,8 @@ import ../domain/turn_trace_pure
 import ./turn_traces
 import ./otlp_export
 import ./learned_skills
+import ./background_review
+import ../domain/skills/review_pure
 import ./offloop_io
 import ../domain/memory/provenance_pure
 import ../domain/message
@@ -285,6 +287,19 @@ proc exportTraceAndLog(env: Environment; trace: TurnTrace; log: Logger) {.async:
   let sent = await exportTurnTrace(env, trace, offLoopIo())
   if sent.isErr:
     log.warn("turn trace export: " & sent.error)
+
+proc reviewAndLog(callModel: AsyncCompleteFn; fs: FsRuntimePort; paddockDir: string;
+                  history: seq[ChatMessage]; settings: ReviewSettings;
+                  uid: string; log: Logger) {.async: (raises: []).} =
+  ## The background review (E7.4): what it kept goes to the log.
+  try:
+    let kept = await runReview(callModel, fs, paddockDir, history, settings, epochMs())
+    if kept.isErr:
+      log.warn("review " & uid & ": " & kept.error)
+    elif kept.get.len > 0 and kept.get.toLowerAscii != "nothing":
+      log.info("review " & uid & ": " & kept.get)
+  except CatchableError as e:
+    log.warn("review " & uid & ": " & e.msg)
 
 # ── User turn setup ───────────────────────────────────────────────────────────
 
@@ -685,6 +700,18 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
     ## Sent in the background: a slow collector never delays the answer.
     if exportOtlp:
       asyncSpawn exportTraceAndLog(result.env, trace, log)
+  ## The background review (E7.4): after enough of this person's turns or
+  ## tool calls, a copy of the agent keeps what deserves a skill; spawned, so
+  ## the answer never waits for it, and it sees a copy of the history.
+  if msg.taskKind == tkUserMsg and asyncCompleteFn != nil:
+    let reviewSettings = reviewSettings(result.env)
+    if reviewSettings.enabled:
+      let turnAdded =
+        if loopResult.history.len > history.len: loopResult.history[history.len .. ^1]
+        else: @[]
+      if reviewDueAfterTurn($turnSetup.uid, toolCallsOfTurn(turnAdded).len, reviewSettings):
+        asyncSpawn reviewAndLog(asyncCompleteFn, fs, paddockDir, loopResult.history,
+                                reviewSettings, $turnSetup.uid, log)
   result =
     result |>->
     withLoopResult(loopResult)

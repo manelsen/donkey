@@ -47,3 +47,32 @@ hermes-agent (MIT).
 Every turn the system prompt lists the person's skills (name and
 description, at most 40), so the model knows which one to load; a skill
 written during a conversation is listed from the next turn.
+
+## Usage
+
+Each time `skill_view` loads a skill, the load is counted, with when it
+happened (`.usage.json` beside the skills); the curator and the journey read
+these counts.
+
+## The background review
+
+After every 10 of a person's turns, or 15 tool calls, whichever comes first,
+a copy of the agent reads the end of the conversation and keeps what deserves
+a skill: a task that took several steps, a correction the person made, a
+workflow they taught. It sees the person's existing skills, so it patches one
+instead of writing a near-duplicate, and it may only use `skill_view` and
+`skill_manage` (at most 4 rounds, within 3 minutes), every write through the
+guard and recorded as the review's. It runs after the turn: the answer never
+waits for it, and the conversation is not touched. What it kept goes to the
+log.
+
+```sh
+DONKEY_REVIEW=off                      # on by default
+DONKEY_REVIEW_EVERY_TURNS=10
+DONKEY_REVIEW_EVERY_TOOL_CALLS=15
+DONKEY_REVIEW_PROVIDER=openrouter      # a cheaper route for reviews;
+DONKEY_REVIEW_MODEL=<model>            # without them, the session's route
+```
+
+Facts are not the review's job: the memory (MAGMA) already keeps each turn
+that matters.
