@@ -102,6 +102,8 @@ import donkey/adapters/decision/perplexity_backtrail
 import donkey/app/blocking_executor
 import donkey/app/offloop_io
 import donkey/app/dead_letters
+import donkey/app/tools/web_tools
+import donkey/web_tool_jobs
 import donkey/adapters/tools/offloop_jobs
 import donkey/domain/memory/query_policy_pure
 import donkey/adapters/embedding/openrouter_embed
@@ -431,6 +433,18 @@ proc offLoopHttpPost(url, body: string; headers: seq[HttpHeader]; allowHosts: se
     return err("cancelled")
   except CatchableError as e:
     return err(e.msg)
+
+proc offLoopWebTool(job: WebToolJob): Future[WebToolOutput] {.async: (raises: []).} =
+  ## web_fetch, fetch, http_fetch, web_search on the blocking executor.
+  try:
+    let ran = await runOffLoop(webToolWorker, job)
+    if ran.isErr:
+      return WebToolOutput(text: "Error: " & ran.error)
+    return ran.get
+  except CancelledError:
+    return WebToolOutput(text: "Error: cancelled")
+  except CatchableError as e:
+    return WebToolOutput(text: "Error: " & e.msg)
 
 proc offLoopProcessRun(spec: ProcessSpec): Future[Result[ProcessOutput, string]] {.async: (raises: []).} =
   ## A native tool's process (git_inspect) on the blocking executor.
@@ -2359,7 +2373,7 @@ proc main =
   ## Native tools that await I/O (github, git_inspect) run it on the
   ## blocking executor through these, never on the loop.
   useOffLoopIo(OffLoopIo(httpGet: offLoopHttpGet, httpPost: offLoopHttpPost,
-                         processRun: offLoopProcessRun))
+                         processRun: offLoopProcessRun, webTool: offLoopWebTool))
   configureApprovalServiceFromEnv(
     newApprovalStore(cfg.home / "state" / "approvals.json").toApprovalPort(), cfg.env,
     newStandingApprovals(cfg.home / "state" / StandingApprovalsFile).toStandingPort())
