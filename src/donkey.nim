@@ -1139,26 +1139,38 @@ proc userSchedulePort(cfg: DonkeyConfig): SchedulePort =
     return SchedulePort()
   newScheduleStoreRef(cfg.home / "state").toSchedulePort()
 
+proc activeChannelsOf(ctx: DaemonContext): ActiveChannels =
+  ## The channels this daemon runs, for the status views.
+  let e = ctx.env
+  if e.telegramToken.len > 0: result.incl ckTelegram
+  if e.discordToken.len > 0: result.incl ckDiscord
+  if e.wecomCorpId.len > 0: result.incl ckWeCom
+  if e.wechatAppId.len > 0: result.incl ckWeChat
+  if ctx.adapters.qq.enabled(): result.incl ckQQ
+  if e.feishuAppId.len > 0: result.incl ckFeishu
+  if e.slackBotToken.len > 0: result.incl ckSlack
+  if e.whatsappAccessToken.len > 0: result.incl ckWhatsApp
+  if ctx.adapters.signal.account.len > 0: result.incl ckSignal
+  if e.dingTalkAppKey.len > 0: result.incl ckDingTalk
+  if e.matrixConfigured: result.incl ckMatrix
+  if ctx.adapters.em.imapHost.len > 0 or ctx.adapters.em.smtpHost.len > 0: result.incl ckEmail
+  if e.lineChannelAccessToken.len > 0: result.incl ckLine
+  if e.teamsAppId.len > 0 and e.teamsAppPassword.len > 0: result.incl ckTeams
+  if e.mattermostUrl.len > 0 and e.mattermostToken.len > 0: result.incl ckMattermost
+  if e.twilioAuthToken.len > 0 and e.twilioWebhookUrl.len > 0: result.incl ckSms
+  if e.irc.host.len > 0: result.incl ckIrc
+  if e.googleChatProjectNumber.len > 0: result.incl ckGoogleChat
+
 proc setupIpcServer(cfg: DonkeyConfig;
                     runtime: DaemonRuntime;
                     toolsCount: int;
                     daemonStartMs: int64;
-                    telegramToken: string;
-                    discordToken: string;
-                    wecomCorpId: string;
-                    wechatAppId: string;
-                    feishuAppId: string;
-                    slackBotToken: string;
-                    qqEnabled: bool;
+                    channels: ActiveChannels;
                     log: Logger;
                     gatewayInboundCtx: DaemonContext;
                     gatewayInboundMemory: MdFileAdapter;
                     gatewayInboundLog: Logger) =
   let sockPath = cfg.home / SockFileName
-  let channels = ActiveChannels(
-    telegram: telegramToken.len > 0, discord: discordToken.len > 0,
-    wecom: wecomCorpId.len > 0, wechat: wechatAppId.len > 0,
-    feishu: feishuAppId.len > 0, slack: slackBotToken.len > 0, qq: qqEnabled)
   let ipcStatusFn: StatusProvider = proc(): DaemonStatus {.gcsafe, raises: [].} =
     ## Reads the live session table (runtime.sm): the `sm` argument is a copy
     ## taken at startup, and showed the startup sessions forever.
@@ -1582,9 +1594,7 @@ proc setupDaemonRuntime(ctx: DaemonContext;
   ctx.adapters.dc.cursor.save = proc(userId: UserId; msgId: string) {.gcsafe.} =
     discard memory.saveChannelPreference(userId, "discord_last_msg_id", msgId)
   setupIpcServer(cfg, ctx.runtime, ctx.services.tools.len + nativeSessionTools().len, ctx.runtime.daemonStartMs,
-                 ctx.env.telegramToken, ctx.env.discordToken, ctx.env.wecomCorpId,
-                 ctx.env.wechatAppId, ctx.env.feishuAppId, ctx.env.slackBotToken,
-                 ctx.adapters.qq.enabled(), log,
+                 activeChannelsOf(ctx), log,
                  ctx, memory, log)
 
 proc activateDaemonBootstrap(ctx: DaemonContext;

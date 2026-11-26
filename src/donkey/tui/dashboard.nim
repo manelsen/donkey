@@ -230,7 +230,7 @@ proc drawStats(tb: var TerminalBuffer; st: TuiState; y0: int) =
       if st.status.recentProviderMetrics.len == 0:
         "-"
       else:
-        st.status.recentProviderMetrics.mapIt(
+        st.status.recentProviderMetrics[0 ..< min(5, st.status.recentProviderMetrics.len)].mapIt(
           it.providerName & " ok:" & $it.okCalls & "/" & $it.calls &
           " err:" & $it.errCalls &
           " avg:" & $it.avgLatencyMs & "ms").join(", "))

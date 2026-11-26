@@ -55,8 +55,7 @@ O que cada frente deixou de fora ao ser implementada. Nenhum está agendado.
 |---|---|---|
 | Teams com anexos e cartões | E2 | só texto entra e sai |
 | MCP sampling por HTTP | E5 | só servidores stdio podem pedir sampling |
-| Estado de conexão dos canais | E6 | o status do daemon não o informa; a TUI mostra só os canais ativos |
-| Saúde de todos os providers | E6 | o status manda métricas só dos 5 mais usados; os outros aparecem como "no recent calls" |
+| Estado de conexão dos canais | E6 | o status do daemon não o informa; a TUI mostra os canais ativos (todos os 19 desde a 2ª rodada: antes a lista conhecia só 7) |
 | Skill novo de usuário | E5 | as ferramentas aparecem a partir da mensagem seguinte (listagem em segundo plano) |
 | Renovação de token OAuth do MCP por HTTP | E5 | ainda roda no laço (rara, com prazo próprio) |
 | `web_fetch`, `fetch`, `http_fetch` e `web_search` | — | as ferramentas nativas rodam no laço e essas chamam o HTTP síncrono, segurando o laço até o prazo da requisição; "nenhuma chamada de ferramenta segura o laço" vale para MCP e skills. `github` e `git_inspect` já usam o executor (`app/offloop_io`) |
