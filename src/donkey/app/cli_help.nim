@@ -52,6 +52,7 @@ Commands:
   ctl skill install <slug>              Download/install remote skill bundle
   ctl skill list                        List local skill registry + remote installs
   ctl skill update <name> <script>      Update a local skill path
+  ctl skill rollback <uuid>             A person's learned skills as the curator's last backup had them
   ctl skill update [slug]               Update one/all remote installed skills
   ctl provider test <name>              Test provider connectivity
   ctl memory search <uuid> <q>   Semantic search in user memory via MAGMA

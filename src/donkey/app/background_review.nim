@@ -42,7 +42,7 @@ proc reviewDueAfterTurn*(userId: string; toolCalls: int; s: ReviewSettings): boo
 # ── The review ───────────────────────────────────────────────────────────────
 
 proc runTool(fs: FsRuntimePort; paddockDir: string; call: ToolCallRequest;
-             nowMs: int64): (string, ToolResultKind) =
+             nowMs: int64; by: string): (string, ToolResultKind) =
   let j =
     try: parseJson(if call.inputJson.len > 0: call.inputJson else: "{}")
     except CatchableError: newJObject()
@@ -50,7 +50,7 @@ proc runTool(fs: FsRuntimePort; paddockDir: string; call: ToolCallRequest;
   of SkillManageToolName:
     let c = parseSkillManage(j)
     if c.isErr: return (c.error, trkUsageError)
-    let done = performSkillManage(fs, paddockDir, c.get, nowMs, by = "review")
+    let done = performSkillManage(fs, paddockDir, c.get, nowMs, by = by)
     if done.isErr: ("Error: " & done.error, trkOperationalError) else: (done.get, trkOutput)
   of SkillViewToolName:
     let shown = performSkillView(fs, paddockDir, j{"name"}.getStr, nowMs)
@@ -58,20 +58,16 @@ proc runTool(fs: FsRuntimePort; paddockDir: string; call: ToolCallRequest;
   else:
     ("Error: the review may only use skill_manage and skill_view.", trkUsageError)
 
-proc reviewLoop(callModel: AsyncCompleteFn; fs: FsRuntimePort; paddockDir: string;
-                history: seq[ChatMessage]; s: ReviewSettings;
-                nowMs: int64): Future[Result[string, string]] {.async.} =
-  var docs: seq[SkillDoc]
-  for k in newLearnedSkills(fs, paddockDir).list(): docs.add k.doc
-  let system = ReviewInstructions & "\n\n" &
-    (if docs.len > 0: skillsIndex(docs) else: "## Skills you learned\n(none yet)\n")
+proc skillAgentLoop(callModel: AsyncCompleteFn; fs: FsRuntimePort; paddockDir: string;
+                    system, content, provider, model, by: string;
+                    nowMs: int64): Future[Result[string, string]] {.async.} =
   let tools = @[
     ToolDescription(name: SkillManageToolName, description: SkillManageToolDescription,
                     schemaJson: SkillManageToolSchema),
     ToolDescription(name: SkillViewToolName, description: SkillViewToolDescription,
                     schemaJson: SkillViewToolSchema)]
   var convo = newHistory()
-  convo.addUser("The conversation to review:\n\n" & reviewTranscript(history))
+  convo.addUser(content)
   var round = 0
   var actions: seq[string]
   while true:
@@ -79,7 +75,7 @@ proc reviewLoop(callModel: AsyncCompleteFn; fs: FsRuntimePort; paddockDir: strin
     let resp =
       try:
         await callModel(CompletionRequest(system: system, messages: convo, tools: offered,
-                                          providerOverride: s.provider, modelOverride: s.model))
+                                          providerOverride: provider, modelOverride: model))
       except CancelledError as e: raise e
       except Exception as e:  ## effect boundary: callee raises are unannotated
         return err(Result[string, string], "review: " & e.msg)
@@ -92,18 +88,32 @@ proc reviewLoop(callModel: AsyncCompleteFn; fs: FsRuntimePort; paddockDir: strin
     inc round
     convo.addAssistantWithToolCalls(answer.text, answer.toolCalls, reasoning = answer.reasoning)
     for call in answer.toolCalls:
-      let (text, kind) = runTool(fs, paddockDir, call, nowMs)
+      let (text, kind) = runTool(fs, paddockDir, call, nowMs, by)
       if call.name == SkillManageToolName and kind == trkOutput and not text.startsWith("No learned"):
         actions.add text
       convo.addToolResult(call.id, call.name, text, kind)
+
+proc runSkillAgent*(callModel: AsyncCompleteFn; fs: FsRuntimePort; paddockDir: string;
+                    system, content, provider, model, by: string;
+                    nowMs: int64): Future[Result[string, string]] {.async.} =
+  ## A copy of the agent that may only view and write the person's skills
+  ## (as `by`): the review's and the curator's. What it changed, or its
+  ## last words, within ReviewDeadlineMs.
+  if callModel == nil:
+    return err(Result[string, string], by & ": no model available")
+  let running = skillAgentLoop(callModel, fs, paddockDir, system, content, provider, model, by, nowMs)
+  if not await withTimeout(running, chronos.milliseconds(ReviewDeadlineMs)):
+    return err(Result[string, string], by & ": took too long")
+  return running.read()
 
 proc runReview*(callModel: AsyncCompleteFn; fs: FsRuntimePort; paddockDir: string;
                 history: seq[ChatMessage]; s: ReviewSettings;
                 nowMs: int64): Future[Result[string, string]] {.async.} =
   ## What the review kept (or its last words), within ReviewDeadlineMs.
-  if callModel == nil:
-    return err(Result[string, string], "review: no model available")
-  let running = reviewLoop(callModel, fs, paddockDir, history, s, nowMs)
-  if not await withTimeout(running, chronos.milliseconds(ReviewDeadlineMs)):
-    return err(Result[string, string], "review: took too long")
-  return running.read()
+  var docs: seq[SkillDoc]
+  for k in newLearnedSkills(fs, paddockDir).list(): docs.add k.doc
+  let system = ReviewInstructions & "\n\n" &
+    (if docs.len > 0: skillsIndex(docs) else: "## Skills you learned\n(none yet)\n")
+  return await runSkillAgent(callModel, fs, paddockDir, system,
+    "The conversation to review:\n\n" & reviewTranscript(history),
+    s.provider, s.model, "review", nowMs)

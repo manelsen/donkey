@@ -43,6 +43,8 @@ import ./turn_traces
 import ./otlp_export
 import ./learned_skills
 import ./background_review
+import ./curator
+import ../domain/skills/curator_pure
 import ../domain/skills/review_pure
 import ./offloop_io
 import ../domain/memory/provenance_pure
@@ -289,7 +291,7 @@ proc exportTraceAndLog(env: Environment; trace: TurnTrace; log: Logger) {.async:
     log.warn("turn trace export: " & sent.error)
 
 proc reviewAndLog(callModel: AsyncCompleteFn; fs: FsRuntimePort; paddockDir: string;
-                  history: seq[ChatMessage]; settings: ReviewSettings;
+                  history: seq[ChatMessage]; settings: ReviewSettings; env: Environment;
                   uid: string; log: Logger) {.async: (raises: []).} =
   ## The background review (E7.4): what it kept goes to the log.
   try:
@@ -298,6 +300,14 @@ proc reviewAndLog(callModel: AsyncCompleteFn; fs: FsRuntimePort; paddockDir: str
       log.warn("review " & uid & ": " & kept.error)
     elif kept.get.len > 0 and kept.get.toLowerAscii != "nothing":
       log.info("review " & uid & ": " & kept.get)
+    ## The curator (E7.6) rides on the review: at most every few days, on the
+    ## same auxiliary route, still off the turn.
+    let curator = curatorSettings(env)
+    if curatorDueFor(fs, paddockDir, curator, epochMs()):
+      let tended = await runCuratorPass(callModel, fs, paddockDir, curator, epochMs(),
+                                        provider = settings.provider, model = settings.model)
+      if tended.isErr: log.warn("curator " & uid & ": " & tended.error)
+      elif tended.get != "nothing": log.info("curator " & uid & ": " & tended.get)
   except CatchableError as e:
     log.warn("review " & uid & ": " & e.msg)
 
@@ -718,7 +728,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
         else: @[]
       if reviewDueAfterTurn($turnSetup.uid, toolCallsOfTurn(turnAdded).len, reviewSettings):
         asyncSpawn reviewAndLog(asyncCompleteFn, fs, paddockDir, loopResult.history,
-                                reviewSettings, $turnSetup.uid, log)
+                                reviewSettings, result.env, $turnSetup.uid, log)
   result =
     result |>->
     withLoopResult(loopResult)
