@@ -43,6 +43,9 @@ type
     reasoning*:  string        ## optional chain-of-thought (DeepSeek, etc)
     replayBlocks*: string      ## provider-opaque reasoning blocks (Anthropic thinking,
                                ## with signatures) to send back unchanged: JSON array
+    turnContext*: string       ## what was recalled for this turn (E8.1): sent with
+                               ## the message on every request, never edited, so
+                               ## the history stays append-only; not part of the text
     imageUrl*:   string        ## non-empty when message carries an image
     toolCalls*:  seq[ToolCallRequest]  ## non-empty: assistant issued pending calls
     toolCallId*: string        ## non-empty: this message is a tool result
@@ -228,13 +231,16 @@ func withTurnContext(system: string; history: ConversationHistory;
   ## turns are the same bytes from one request to the next. Only the request
   ## carries it: the history keeps the message as the person wrote it. With
   ## no message from the person, it stays in the system prompt.
-  if context.len == 0: return (system, history)
+  var msgs = history
+  for m in msgs.mitems:
+    if m.turnContext.len > 0:
+      m.text = turnContextBlock(m.turnContext) & m.text
+  if context.len == 0: return (system, msgs)
   for i in countdown(history.high, 0):
     if history[i].role == "user" and history[i].toolCallId.len == 0:
-      var msgs = history
       msgs[i].text = turnContextBlock(context) & msgs[i].text
       return (system, msgs)
-  (system & "\n\n## Memória relevante\n" & context, history)
+  (system & "\n\n## Memória relevante\n" & context, msgs)
 
 func buildPrompt*(system: string;
                   history: ConversationHistory;

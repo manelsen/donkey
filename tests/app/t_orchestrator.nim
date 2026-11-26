@@ -1492,14 +1492,14 @@ proc runTests*() =
 
   suite "normal turn helpers":
 
-    test "addUserTurn appends plain text and trims history":
+    test "addUserTurn appends plain text and never trims: compaction bounds the history (E8.5)":
       var history = newHistory()
       for i in 0 .. 19:
         history.addUser("m" & $i)
       let updated = addUserTurn(history, "latest", "")
-      check updated.len == 20
+      check updated.len == 21
       check updated[^1].text == "latest"
-      check updated[0].text == "m1"
+      check updated[0].text == "m0"   ## the beginning never moves: append-only, cache-friendly
 
     test "addUserTurn appends image messages when media exists":
       let updated = addUserTurn(newHistory(), "look", "https://x/y.png")

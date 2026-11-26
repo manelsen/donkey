@@ -386,10 +386,15 @@ compacta antes de ele expirar, aprende como cada rota cacheia).
 por turno medido antes e depois numa conversa de referência com ferramentas.
 
 *Decisões (26/11):* TTL padrão de 5 minutos; o volátil vai com a mensagem
-do turno, num bloco `<turn_context>` só no pedido (o histórico guarda a
-mensagem como a pessoa escreveu). Consequência: entre turnos, o cache lido
-vai até a mensagem anterior da pessoa (que perde o bloco dela); nas rodadas
-de ferramenta de um mesmo turno, vai até a cauda.
+do turno, num bloco `<turn_context>`. Primeiro só no pedido; corrigido no
+mesmo dia: o bloco fica guardado com a mensagem a que pertence
+(`turnContext`, fora do texto que vai para a transcrição) e segue com ela em
+todo pedido, porque tirá-lo editava um turno anterior (os modelos novos
+recusam, depois que os blocos de raciocínio voltam a ser enviados) e cortava
+o cache. Também saiu o corte do histórico nas 20 mensagens mais recentes a
+cada turno, que movia o começo do histórico; quem limita o histórico agora é
+a compactação (E8.5). O pedido é só acréscimo: o cache lê o histórico
+inteiro, entre turnos e entre rodadas.
 
 ---
 

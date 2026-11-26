@@ -108,6 +108,22 @@ proc runTests*() =
       check req.messages[0].text.count("</turn_context>") == 1
       check req.messages[0].text.endsWith("</turn_context>\n\noi")
 
+    test "a context kept with its message is sent with it on every later request (append-only)":
+      var h = newHistory()
+      h.addUser("oi")
+      h[^1].turnContext = "lembrança do turno 1"
+      h.addAssistant("olá")
+      let first = buildPrompt("Base.", h, "")
+      h.addUser("e agora?")
+      h[^1].turnContext = "lembrança do turno 2"
+      let second = buildPrompt("Base.", h, "")
+      ## the earlier turn is the same bytes in both requests
+      check second.messages[0].text == first.messages[0].text
+      check "lembrança do turno 1" in second.messages[0].text
+      check second.messages[2].text.endsWith("e agora?")
+      check "lembrança do turno 2" in second.messages[2].text
+      check h[0].text == "oi"                     ## the message itself is as written
+
     test "tool rounds of the same turn keep the context on the person's message":
       var h = newHistory()
       h.addUser("pesquisa isso")

@@ -250,7 +250,10 @@ func addUserTurn*(history: ConversationHistory;
     result.addUserWithImage(userText, userImageUrl)
   else:
     result.addUser(userText)
-  result.trimTo(20)
+  ## No window here: dropping the oldest messages every turn moved the start
+  ## of the history (no prompt cache across turns, and an edit the newer
+  ## models reject once thinking blocks are sent back). The history grows
+  ## until compaction (E8.5) turns its old part into a summary, in one step.
 
 func withAttachmentMarkers(text: string; markers: seq[string]): string =
   result = text

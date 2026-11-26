@@ -23,6 +23,12 @@ proc runTests*() =
     test "the estimate grows with the text, about four characters a token":
       check estimateTokens(turns(10, 400)) in 2000 .. 2600
 
+    test "a kept turn context counts toward the estimate":
+      var h = turns(1, 400)
+      let before = estimateTokens(h)
+      h[0].turnContext = "z".repeat(4000)
+      check estimateTokens(h) >= before + 1000
+
     test "past the threshold after an idle pause, or well past it at once":
       check not shouldCompact(tokens = 50_000, window = 100_000, idleMs = 600_000)
       check shouldCompact(tokens = 61_000, window = 100_000, idleMs = 600_000)

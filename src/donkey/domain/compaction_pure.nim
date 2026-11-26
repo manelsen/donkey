@@ -28,7 +28,7 @@ func compactionThreshold*(contextWindow: int): int =
   if window >= LargeContext: window * 40 div 100 else: window * 60 div 100
 
 func messageTokens(m: ChatMessage): int =
-  var chars = m.text.len + m.reasoning.len
+  var chars = m.text.len + m.reasoning.len + m.turnContext.len
   for tc in m.toolCalls: chars += tc.name.len + tc.inputJson.len
   chars div 4 + 4
 
