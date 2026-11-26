@@ -237,6 +237,49 @@ mostra os ativos.
 
 ---
 
+## E7 — Auto-aprimoramento
+
+**Problema.** O Donkey lembra fatos (MAGMA), mas não aprende procedimentos:
+o que funcionou numa tarefa não vira um modo de fazer reaproveitável, e
+nada revisa o que foi aprendido. O Hermes tem um ciclo completo: skills em
+Markdown que o agente escreve e corrige, revisão em segundo plano depois dos
+turnos, um curador que consolida, e a jornada do que foi aprendido.
+
+**Decisões (26/11).** Skills por pessoa, no paddock; revisão com um modelo
+auxiliar barato configurável; guarda que bloqueia antes de gravar.
+
+**Histórias**
+- **E7.1 Skills aprendidas.** O formato `SKILL.md` (frontmatter com nome de
+  1–64 caracteres a-z, 0-9 e '-' e uma descrição de até 1024; instruções
+  depois), guardado em `{paddock}/learned_skills/<nome>/`, com proveniência
+  (quem criou, quando, a partir de quê). A guarda, com categorias e padrões
+  do Hermes (MIT), bloqueia exfiltração de segredos, injeção de prompt,
+  caracteres invisíveis e comandos destrutivos; o bloqueado não é gravado e
+  o motivo volta. Arquivar move para `.archive/`; nada é apagado.
+- **E7.2 Ferramentas.** `skill_manage` (create, edit, patch, archive,
+  restore) e `skill_view`; o índice das skills (nome e descrição) entra no
+  prompt de sistema, e uma skill criada no meio da sessão chega como nota.
+- **E7.3 Uso.** Cada carga de skill conta; o curador e a jornada leem.
+- **E7.4 Revisão em segundo plano.** Depois de N turnos de usuário ou de M
+  rodadas de ferramenta, uma cópia do agente com a rota auxiliar relê a
+  conversa e só pode usar `skill_manage` e a memória; fora do laço, sem
+  tocar a sessão.
+- **E7.5 `/refine` e `/learn`.** A revisão agora; uma fonte (texto, URL,
+  "o que acabamos de fazer") vira skill pelo próprio agente.
+- **E7.6 Curador.** Quando a pessoa está inativa e o último passe é antigo:
+  arquiva o que não é usado há muito tempo e consolida duplicatas por uma
+  cópia do agente; nunca apaga; backup antes de mudar, com rollback.
+- **E7.7 Jornada.** `donkey ctl skills learned <uuid>`, a seção na TUI e
+  `/skills learned` para a pessoa: listar, ver, arquivar, restaurar.
+- **E7.8 Insights.** `/insights`: ferramentas e skills mais usadas, tokens
+  e custo estimado, dos traços e métricas.
+
+*Aceite geral:* nada aprendido com uma pessoa aparece para outra; toda
+gravação de skill passa pela guarda; a revisão nunca segura o laço nem muda
+a sessão em curso.
+
+---
+
 ## Ordem e dependências
 
 E1 → E2 → E3 (E3.6 depois de E2) → E4 → E5 → E6 (E6.5 depois de E5).
