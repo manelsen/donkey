@@ -4,13 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## O que é o Donkey
 
-**Donkey** é um sistema de agentes de IA ("Claw") escrito em Nim, self-hosted em VPS, servindo equipes corporativas pequenas. São ~80 mil linhas em 364 módulos Nim, com 373 arquivos de teste, seguindo rigorosamente arquitetura hexagonal e TDD.
+**Donkey** é um sistema de agentes de IA ("Claw") escrito em Nim, self-hosted em VPS, servindo equipes corporativas pequenas. São ~83 mil linhas em 387 módulos Nim, com 397 arquivos de teste, seguindo rigorosamente arquitetura hexagonal e TDD.
 
 **Estado atual (25/11/2026; o planejamento está em [`docs/ROADMAP.md`](docs/ROADMAP.md), o detalhe por épico em [`docs/prd/PRD-roadmap.md`](docs/prd/PRD-roadmap.md)):**
-- **Canais (15):** Telegram, Discord, Slack, WhatsApp (Cloud API), Microsoft Teams, WeCom, WeChat, QQ (OneBot e oficial), Feishu, DingTalk, LINE, Matrix, Signal, Email, CLI; vários bots por canal (Telegram, Discord, WhatsApp, Teams), só a fachada: usuários e memória são os da instância
+- **Canais (19):** Telegram, Discord, Slack, WhatsApp (Cloud API), Microsoft Teams, Google Chat, Mattermost, WeCom, WeChat, QQ (OneBot e oficial), Feishu, DingTalk, LINE, Matrix, Signal, IRC, SMS (Twilio), Email, CLI; vários bots por canal (Telegram, Discord, WhatsApp, Teams), só a fachada: usuários e memória são os da instância
 - **Providers:** OpenRouter, Anthropic, OpenAI, DeepSeek, Gemini, MiniMax, ZAI, Groq, Ollama, OpenCode Go e Zen, NVIDIA, Alibaba, Fireworks, Mistral, Bedrock, Azure OpenAI; streaming pela rota escolhida
 - **Memória:** MAGMA (grafo em SQLite por padrão; PostgreSQL + pgvector opcional), busca em conversas antigas, Backtrail
-- Orchestrator multi-turn, tool loop, agentes nomeados e salas, sub-agentes, agendamentos (cron, intervalo e disparo único), quadro de tarefas (`manage_tasks`, `/tasks`), onboarding, MCP (stdio e HTTP com OAuth; sampling com aprovação), skills Deno, métricas e traços por turno
+- Orchestrator multi-turn, tool loop, agentes nomeados e salas, sub-agentes, agendamentos (cron, intervalo e disparo único), quadro de tarefas (`manage_tasks`, `/tasks`), onboarding, MCP (stdio e HTTP com OAuth; sampling com aprovação), skills Deno, ferramentas `github` e `git_inspect` (só leitura), métricas e traços por turno (arquivo e OpenTelemetry)
+- Respostas que um canal recusa vão para uma fila de mensagens mortas e são reenviadas (`donkey ctl deliveries`)
 - Retomada de turno após queda (journal em `state/turns/`, sem refazer efeitos); nenhuma chamada de ferramenta segura o laço
 - Gestão pela TUI: usuários, pareamentos, agendamentos, aprovações, traços, agentes da instância e saúde dos providers
 
