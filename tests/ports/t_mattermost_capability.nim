@@ -55,9 +55,11 @@ proc runTests*() =
 
   suite "google chat capability":
 
-    test "the registry says: send only; the port reaches the adapter":
+    test "the registry says: send text, receive attachments (E9.2); the port reaches the adapter":
       let c = channelCapabilityRegistry()[ckGoogleChat]
       check c.send and not c.editMessage and not c.sendMedia
+      check c.downloadFile   ## an app cannot upload (user auth only), but it can download
+      check googleChatOutboundPort(nil).downloadFile("AbC").isErr
       check $ckGoogleChat == "google-chat"
       check googleChatOutboundPort(nil).send(OutboundMessage(channel: ckGoogleChat, text: "oi")).isErr
       var a = newGoogleChatAdapter("", "", "")

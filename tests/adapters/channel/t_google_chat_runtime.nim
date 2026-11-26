@@ -2,9 +2,10 @@
 ## become session turns through the shared inbound gate; a direct space is
 ## remembered; a redelivered message is one turn; `/continue` is local.
 
-import std/[os, unittest]
+import std/[os, strutils, unittest]
 import donkey/adapters/channel/google_chat
 import donkey/adapters/channel/google_chat_runtime
+import donkey/domain/channels/google_chat_pure
 import donkey/app/session_manager
 import donkey/core/log
 import donkey/core/pipeops
@@ -95,5 +96,28 @@ proc runTests*() =
       discard drainGoogleChatEvents(a, sm, fallbackFor(s), replyFor(s), rtLog)
       check s.turns.len == 0 and s.replies.len == 1 and s.replies[0].replyTo == "spaces/S1"
 
+proc runMediaTests*() =
+  suite "google chat runtime — attachments (E9.2)":
+    setup:
+      while tryRecvChatEvent()[0]: discard
+
+    test "the first uploaded file goes to the turn; a Drive file and the rest are named":
+      var a = newAdapter()
+      var sm: SessionManager
+      sm.init()
+      let s = Sink()
+      var e = ev(text = "")
+      e.attachments = @[
+        ChatAttachment(name: "plano.gdoc", drive: true),
+        ChatAttachment(resourceName: "AbC-123_xyz=", name: "foto.png", mimeType: "image/png"),
+        ChatAttachment(resourceName: "DeF-456=", name: "nota.pdf")]
+      pushChatEvent(e)
+      check drainGoogleChatEvents(a, sm, fallbackFor(s), replyFor(s), rtLog) == 1
+      let m = s.turns[0]
+      check m.mediaUrl == "AbC-123_xyz=" and m.mediaFileName == "foto.png"
+      check m.mediaMimeType == "image/png"
+      check "plano.gdoc" in m.text and "nota.pdf" in m.text
+
 when isMainModule:
   runTests()
+  runMediaTests()

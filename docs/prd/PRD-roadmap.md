@@ -422,6 +422,13 @@ arquivo por SMS, responde com texto.
 - **E9.2 Google Chat.** Entrada: anexos da mensagem pela API de mídia, com o
   token da conta de serviço. Saída: upload de anexo; cartões (cardsV2) para
   pedidos de aprovação.
+  *Feito (entrada):* `message.attachment[]`; o primeiro arquivo enviado
+  (até 25 MB) é baixado por `media.download` com o token do app (escopo
+  `chat.bot`); um arquivo do Drive (que o app não lê) e os outros são
+  nomeados. *Saída:* não há: a documentação do Google diz que
+  `media.upload` exige autenticação de usuário ("Requires user
+  authentication"), então um app não manda arquivo. Os cartões de aprovação
+  ficam para quando a aprovação (E11.3) for usada por canais.
 - **E9.3 SMS → MMS, só de entrada.** `NumMedia` e `MediaUrlN` do webhook da
   Twilio, baixados com autenticação. Um anexo de saída vira texto (o nome e
   o que é), nunca uma URL.
@@ -430,6 +437,13 @@ arquivo por SMS, responde com texto.
 - **E9.5 IRC.** Só links: o protocolo não carrega arquivos (DCC fica fora).
   Na entrada, uma URL de imagem pode ir ao `inspect_image` por decisão do
   agente, como em qualquer canal.
+- **E9.6 Ferramenta `send_file`.** Achado ao fazer E9.1: o único arquivo
+  que sai hoje é a resposta em voz (e só onde há `sendVoice`); nenhuma
+  ferramenta manda ao canal um arquivo do paddock. `send_file` manda um
+  arquivo do paddock da pessoa para o canal da conversa, lido só dentro do
+  paddock; onde o canal não aceita arquivo (`sendMedia`), responde com o
+  nome e que ele está guardado. Sem ela, o upload do Mattermost (E9.1) só
+  serve à voz.
 
 *Aceite geral:* uma foto e um áudio mandados em cada canal chegam ao agente
 como nos canais antigos (teste com servidor falso por canal); limites de

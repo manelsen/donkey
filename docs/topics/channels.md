@@ -470,7 +470,12 @@ minutes of skew. Anything else is a 401 and nothing is queued.
   service account (its own RS256 assertion, exchanged for a `chat.bot` token
   renewed before it expires), in the thread of the message they answer, in
   pieces under 4000 characters.
-- Text only: no cards, attachments or edits yet.
+- Attachments come in: a message's first uploaded file (25 MB at most) is
+  downloaded with the app's own token (`media.download`, scope `chat.bot`)
+  and handed to the turn like on the other channels; a Drive file, which the
+  app cannot read, and the others are named in the text. Nothing goes out
+  as a file: Google only lets a user, not an app, upload an attachment.
+- No cards or edits yet.
 
 ---
 
