@@ -81,6 +81,11 @@ proc runMediaTests*() =
       check not twilioMediaUrl(MediaBase & "ME1", "AC2")             ## another account
       check not twilioMediaUrl("https://evil.example/2010-04-01/Accounts/AC1/Messages/M/Media/X", "AC1")
       check not twilioMediaUrl("http://api.twilio.com/2010-04-01/Accounts/AC1/Messages/M/Media/X", "AC1")
+      ## the exact shape: no query, fragment, encoding or extra segment
+      check not twilioMediaUrl(MediaBase & "ME1?x=/Media/", "AC1")
+      check not twilioMediaUrl(MediaBase & "ME1#frag", "AC1")
+      check not twilioMediaUrl("https://api.twilio.com/2010-04-01/Accounts/AC1/Messages/%2e%2e/Media/X", "AC1")
+      check not twilioMediaUrl("https://api.twilio.com/2010-04-01/Accounts/AC1/Messages/MM1/x/Media/ME1", "AC1")
 
     test "a redirect is followed only to Twilio's media storage":
       check twilioMediaRedirect("https://media.twiliocdn.com/AC1/abc")

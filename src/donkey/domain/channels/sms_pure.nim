@@ -67,12 +67,22 @@ func parseInboundSms*(p: FormParams): Result[InboundSms, string] =
                 receiver: p.get("To").strip, text: p.get("Body"),
                 mediaCount: media, media: items))
 
+func sidSegment(s: string): bool =
+  if s.len == 0 or s.len > 64: return false
+  for c in s:
+    if c notin {'A'..'Z', 'a'..'z', '0'..'9'}: return false
+  true
+
 func twilioMediaUrl*(url, accountSid: string): bool =
   ## A media item of this account's messages, and nothing else, is fetched
-  ## with the account's credentials.
-  accountSid.len > 0 and
-    url.startsWith("https://api.twilio.com/2010-04-01/Accounts/" & accountSid & "/Messages/") and
-    "/Media/" in url and ".." notin url
+  ## with the account's credentials: exactly
+  ## `https://api.twilio.com/2010-04-01/Accounts/<account>/Messages/<sid>/Media/<sid>`,
+  ## with no query, fragment, encoding or other segment.
+  if not sidSegment(accountSid): return false
+  let prefix = "https://api.twilio.com/2010-04-01/Accounts/" & accountSid & "/Messages/"
+  if not url.startsWith(prefix): return false
+  let parts = url[prefix.len .. ^1].split('/')
+  parts.len == 3 and sidSegment(parts[0]) and parts[1] == "Media" and sidSegment(parts[2])
 
 func twilioMediaRedirect*(location: string): bool =
   ## Where Twilio's media URL may redirect: its own media storage, over
