@@ -14,6 +14,7 @@ import adapters/tool/mcp_oauth
 import config/environment
 import domain/memory/conversation_search_pure
 import domain/turn_trace_pure
+import domain/dead_letters_pure
 import app/turn_traces
 import config/skills_registry
 import config/clawhub_registry
@@ -361,6 +362,23 @@ proc ctlTraces*(paddocksDir: string; args: seq[string]): int =
     return 1
   for line in exportTraces(tracesDir(paddocksDir), options.get.sinceMs, options.get.user):
     echo line
+  0
+
+proc ctlDeliveries*(home: string): int =
+  ## `ctl deliveries`: the replies a channel refused, waiting for a retry or
+  ## dead (app/dead_letters), one per line.
+  let path = home / "state" / "dead_letters.json"
+  if not fileExists(path):
+    echo "no failed deliveries"
+    return 0
+  let letters = decodeDeadLetters(readFile(path))
+  if letters.isErr:
+    echo "cannot read " & path & ": " & letters.error
+    return 1
+  if letters.get.len == 0:
+    echo "no failed deliveries"
+  for l in letters.get:
+    echo operatorLine(l)
   0
 
 proc ctlToolAddHttp*(home, registryPath: string; args: seq[string]): int =
@@ -903,6 +921,8 @@ proc dispatchCtl*(cfg: DonkeyConfig;
     return ctlToolAddHttp(cfg.home, registryPath, args[3 ..^ 1])
   if args[1] == "traces":
     return ctlTraces(cfg.paddocks, args[2 ..^ 1])
+  if args[1] == "deliveries":
+    return ctlDeliveries(cfg.home)
   if args[1] == "mcp" and args.len >= 4 and args[2] == "login":
     return ctlMcpLogin(cfg.home, args[3], cfg.env, args[4 ..^ 1])
 

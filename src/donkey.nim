@@ -101,6 +101,7 @@ import donkey/ports/backtrail
 import donkey/adapters/decision/perplexity_backtrail
 import donkey/app/blocking_executor
 import donkey/app/offloop_io
+import donkey/app/dead_letters
 import donkey/adapters/tools/offloop_jobs
 import donkey/domain/memory/query_policy_pure
 import donkey/adapters/embedding/openrouter_embed
@@ -373,6 +374,7 @@ type DaemonRuntime = ref object
     ## the daemon loop.
   stateStore:           RuntimeStateStore
   ledger:               DeliveryLedgerPort
+  deadLetters:          DeadLetterBox   ## replies the channel refused, retried (app/dead_letters)
   ledgerCompaction:     Future[Result[bool, string]]
     ## The ledger compaction in flight on the blocking executor; it holds a
     ## pointer to `stateStore`, so shutdown awaits it.
@@ -846,6 +848,7 @@ proc initDaemonRuntime(home: string; env: Environment): DaemonRuntime =
   result.stateStore = stateStore
   result.sm.setRegistryStore(stateStore.sessionRegistry())
   result.ledger = stateStore.deliveryLedger()
+  result.deadLetters = newDeadLetterBox(newFsAdapter(), home / "state" / "dead_letters.json")
   result.presentationState = initPresentationState()
   result.routeHealth = newRouteHealth(
     routeHealthFileStore(home / "state" / "route_health.json"),
@@ -1515,8 +1518,17 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
         discard runtime.apiChatBridge.deliver(outMsg, outMsg.bridgeToken)
       continue
     completeReactionFor(runtime.presentationState, outboundPorts, outMsg)
-    routeOutbound(outMsg, outboundPorts, log, runtime.presentationState, runtime.ledger)
+    routeOutbound(outMsg, outboundPorts, log, runtime.presentationState, runtime.ledger,
+                  runtime.deadLetters)
     settleDiscordCursorOnReply(adapters.dc, runtime.sm, outMsg)
+  ## Replies a channel refused earlier, when their retry is due.
+  if runtime.deadLetters != nil and runtime.deadLetters.letters.len > 0:
+    let tried = runtime.deadLetters.retryDue(epochMs(),
+      proc(m: OutboundMessage): Result[void, string] {.gcsafe.} =
+        sendThroughPorts(m, outboundPorts))
+    if tried > 0:
+      log.info("dead letters: retried " & $tried & ", " &
+               $runtime.deadLetters.letters.len & " kept")
 
 proc startDaemonIngress(ctx: DaemonContext;
                         log: Logger) =
