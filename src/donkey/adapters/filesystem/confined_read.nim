@@ -17,11 +17,11 @@ const UploadReadChunk = 64 * 1024
 
 when defined(posix):
   var
-    PosixONoFollow {.importc: "O_NOFOLLOW", header: "<fcntl.h>".}: cint
-    PosixONonBlock {.importc: "O_NONBLOCK", header: "<fcntl.h>".}: cint
-    PosixODirectory {.importc: "O_DIRECTORY", header: "<fcntl.h>".}: cint
+    PosixONoFollow* {.importc: "O_NOFOLLOW", header: "<fcntl.h>".}: cint
+    PosixONonBlock* {.importc: "O_NONBLOCK", header: "<fcntl.h>".}: cint
+    PosixODirectory* {.importc: "O_DIRECTORY", header: "<fcntl.h>".}: cint
 
-  proc posixOpenAt(dirfd: cint; path: cstring; flags: cint;
+  proc posixOpenAt*(dirfd: cint; path: cstring; flags: cint;
                    mode: Mode = Mode(0)): cint
                    {.importc: "openat", header: "<fcntl.h>", varargs.}
     ## Nim's std/posix has no `openat`, and it is the only way to open one
