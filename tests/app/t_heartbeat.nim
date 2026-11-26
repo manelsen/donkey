@@ -209,6 +209,23 @@ proc runTests*() =
         check "Review the logs" in dispatched[0]
         check "Check email" in dispatched[0]
 
+    test "a cooldown that cannot be saved means no dispatch (audit of 26/11, finding 3)":
+      ## Dispatching first and saving after meant a failed save sent the same
+      ## tasks again on the next cycle. Now the state is saved first: at worst
+      ## a heartbeat is missed, never repeated.
+      let tmp = getTempDir() / "donkey_hb_nosave"
+      try: removeDir(tmp) except: discard
+      createDir(tmp / "user-uuid")
+      writeFile(tmp / "user-uuid" / "HEARTBEAT.md", "- [ ] Review the logs")
+      var failing = testFs
+      failing.writeFile = proc(path, content: string): Result[void, string] {.gcsafe, raises: [].} =
+        err("disk full")
+      var dispatched = 0
+      let outboxFn: HeartbeatOutboxFn = proc(userId, channel, taskPayload: string) {.gcsafe.} =
+        {.cast(gcsafe).}: inc dispatched
+      deliverHeartbeats(failing, tmp, outboxFn)
+      check dispatched == 0
+
     test "skips already dispatched users within cooldown":
       let tmp = getTempDir() / "donkey_hb_cooldown"
       try: removeDir(tmp) except: discard
