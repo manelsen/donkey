@@ -174,6 +174,8 @@ proc converseStreamResponse*(body: string;
   var resp = CompletionResponse()
   var tools = initTable[int, ToolCallRequest]()
   var order: seq[int]
+  var reasoning = initTable[int, JsonNode]()   ## index -> the reasoningContent being assembled
+  var reasoningOrder: seq[int]
   var stopped = false
   for m in messages:
     if m.header(":message-type") == "exception":
@@ -208,7 +210,23 @@ proc converseStreamResponse*(body: string;
                      " that never started")
         tools[index].inputJson.add delta["toolUse"]{"input"}.getStr("")
       elif delta.hasKey("reasoningContent"):
-        resp.reasoning.add delta["reasoningContent"]{"text"}.getStr("")
+        let rc = delta["reasoningContent"]
+        if index notin reasoning:
+          reasoning[index] = newJObject()
+          reasoningOrder.add index
+        let acc = reasoning[index]
+        if rc.hasKey("redactedContent"):
+          acc["redactedContent"] = %(acc{"redactedContent"}.getStr & rc["redactedContent"].getStr(""))
+        else:
+          if not acc.hasKey("reasoningText"):
+            acc["reasoningText"] = %* {"text": ""}
+          let text = rc{"text"}.getStr("")
+          if text.len > 0:
+            resp.reasoning.add text
+            acc["reasoningText"]["text"] = %(acc["reasoningText"]["text"].getStr & text)
+          if rc.hasKey("signature"):
+            acc["reasoningText"]["signature"] =
+              %(acc["reasoningText"]{"signature"}.getStr & rc["signature"].getStr(""))
     of "messageStop":
       stopped = true
     of "metadata":
@@ -227,4 +245,8 @@ proc converseStreamResponse*(body: string;
     if call.name.len == 0: continue
     if call.inputJson.strip.len == 0: call.inputJson = "{}"
     resp.toolCalls.add call
+  if reasoningOrder.len > 0:
+    var replay = newJArray()
+    for index in reasoningOrder: replay.add(%* {"reasoningContent": reasoning[index]})
+    resp.replayBlocks = $replay
   ok(resp)

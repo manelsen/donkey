@@ -95,7 +95,7 @@ func imageBlock(imageUrl: string): JsonNode =
     }}
   nil
 
-proc toJson(msg: ChatMessage): JsonNode =
+proc toJsonPlain(msg: ChatMessage): JsonNode =
   ## Anthropic tool results are represented as a user turn with tool_result blocks.
   if msg.role == "tool":
     return %* {
@@ -121,6 +121,23 @@ proc toJson(msg: ChatMessage): JsonNode =
       return %* {"role": msg.role, "content": content}
 
   %* {"role": msg.role, "content": msg.text}
+
+proc toJson(msg: ChatMessage): JsonNode =
+  ## An assistant turn that reasoned carries its thinking blocks first,
+  ## exactly as they came: the API checks them (signatures, order), and a
+  ## turn whose blocks were dropped or changed breaks.
+  result = toJsonPlain(msg)
+  if msg.role != roleAssistant or msg.replayBlocks.len == 0: return
+  let blocks = try: parseJson(msg.replayBlocks) except CatchableError: return
+  if blocks.kind != JArray or blocks.len == 0: return
+  var content = newJArray()
+  for b in blocks: content.add b
+  let rest = result["content"]
+  if rest.kind == JString:
+    if rest.getStr.len > 0: content.add textBlock(rest.getStr)
+  else:
+    for b in rest: content.add b
+  result["content"] = content
 
 func promptCache*(a: AnthropicAdapter): bool =
   ## Cache markers only on Anthropic's own API: a compatible endpoint (Z.ai)
@@ -153,6 +170,16 @@ proc withCacheMarkers(body: JsonNode) =
   if not messages.isNil and messages.len > 0:
     markLastBlock(messages[messages.len - 1])
 
+func adaptiveThinking*(model: string): bool =
+  ## Adaptive thinking from Opus 4.6 and Sonnet 4.6 on; `budget_tokens` is
+  ## rejected by the current models (Opus 5.5, Sonnet 5.5, Haiku 5.5, Fable).
+  const legacy = ["claude-3", "sonnet-4-5", "opus-4-5", "haiku-4-5", "opus-4-1",
+                  "sonnet-4-0", "opus-4-0", "sonnet-4-2025", "opus-4-2025"]
+  let m = model.toLowerAscii
+  for l in legacy:
+    if l in m: return false
+  true
+
 proc buildBody*(a: AnthropicAdapter; req: CompletionRequest): JsonNode =
   ## Exported for unit testing.
   ## system is top-level; messages array contains only user/assistant turns.
@@ -169,9 +196,14 @@ proc buildBody*(a: AnthropicAdapter; req: CompletionRequest): JsonNode =
   }
 
   if req.reasoning:
-    result["thinking"] = %* {"type": "enabled", "budget_tokens": 1024}
-    if maxTok <= 1024:
-      result["max_tokens"] = %2048
+    if adaptiveThinking(a.model):
+      ## Current models: the model decides how much to think; "summarized"
+      ## because the default ("omitted") returns empty thinking text.
+      result["thinking"] = %* {"type": "adaptive", "display": "summarized"}
+    else:
+      result["thinking"] = %* {"type": "enabled", "budget_tokens": 1024}
+      if maxTok <= 1024:
+        result["max_tokens"] = %2048
 
   if req.system.len > 0:
     result["system"] = %req.system
@@ -213,8 +245,16 @@ func parseAnthropicResponse*(j: JsonNode): Result[CompletionResponse, string] =
 
   var textParts: seq[string] = @[]
   var toolCalls: seq[ToolCallRequest] = @[]
+  var thinking: seq[string] = @[]
+  var replay = newJArray()
   for blk in content:
     case blk.getOrDefault("type").getStr("")
+    of "thinking":
+      replay.add blk
+      let t = blk.getOrDefault("thinking").getStr("")
+      if t.len > 0: thinking.add t
+    of "redacted_thinking":
+      replay.add blk
     of "text":
       let text = blk.getOrDefault("text").getStr("")
       if text.len > 0:
@@ -238,6 +278,8 @@ func parseAnthropicResponse*(j: JsonNode): Result[CompletionResponse, string] =
     cacheWriteTokens: cache.cacheWrite,
     outputTokens: usage.jInt("output_tokens"),
     toolCalls:    toolCalls,
+    reasoning:    thinking.join("\n"),
+    replayBlocks: (if replay.len > 0: $replay else: ""),
   )
 
 proc parseAnthropicSseLine*(line: string): Result[AnthropicSseChunk, string] =

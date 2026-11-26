@@ -725,7 +725,8 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
                  "] |" & $streamed.text.len & "| stream")
         if streamed.toolCalls.len > 0:
           loopState.history.addAssistantWithToolCalls(streamed.text, streamed.toolCalls,
-                                                      reasoning = streamed.reasoning)
+                                                      reasoning = streamed.reasoning,
+                                                      replayBlocks = streamed.replayBlocks)
           let batchResult = await processToolCalls(
             globalOutbox, toolInbox, toolOut, nativeCtx, state, loopState.history,
             uid, channel, replyTo, msgId, round, toolStatusId, streamed.toolCalls,
@@ -736,9 +737,8 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
             withToolBatchState(batchResult)
           recentCalls = batchResult.recentCalls
         else:
-          loopState =
-            loopState |>->
-            withStreamFinalText(streamed.text, streamed.reasoning)
+          loopState = withStreamFinalText(streamed.text, streamed.reasoning, loopState,
+                                          streamed.replayBlocks)
         continue
     var resp = await completeOnce(req, completeFn, asyncCompleteFn)
     ## One retry per turn: the flag lives in `loopState`, which survives every
@@ -809,7 +809,8 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
 
     of tlrkHandleToolBatch:
       loopState.history.addAssistantWithToolCalls(r.text, r.toolCalls,
-                                                  reasoning = r.reasoning)
+                                                  reasoning = r.reasoning,
+                                                  replayBlocks = r.replayBlocks)
       let batchResult = await processToolCalls(
         globalOutbox, toolInbox, toolOut, nativeCtx, state, loopState.history,
         uid, channel, replyTo, msgId, round, toolStatusId, r.toolCalls,

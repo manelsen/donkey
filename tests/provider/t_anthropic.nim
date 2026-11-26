@@ -181,6 +181,46 @@ proc runTests*() =
       check body["system"].kind == JString
       check "cache_control" notin $body
 
+  suite "AnthropicAdapter thinking":
+
+    test "reasoning on a current model is adaptive, summarized":
+      var h = newHistory()
+      h.addUser("pense")
+      let body = newAnthropicAdapter("k", model = "claude-sonnet-5-5").buildBody(
+        CompletionRequest(messages: h, reasoning: true))
+      check body["thinking"] == %* {"type": "adaptive", "display": "summarized"}
+      check body["max_tokens"].getInt == 4096
+
+    test "reasoning on an older model keeps a thinking budget":
+      var h = newHistory()
+      h.addUser("pense")
+      let body = newAnthropicAdapter("k", model = "claude-haiku-4-5").buildBody(
+        CompletionRequest(messages: h, reasoning: true))
+      check body["thinking"] == %* {"type": "enabled", "budget_tokens": 1024}
+
+    test "thinking blocks come back whole, to be sent back unchanged":
+      let j = %* {"content": [
+        {"type": "thinking", "thinking": "vou buscar", "signature": "sig-1"},
+        {"type": "redacted_thinking", "data": "opaque"},
+        {"type": "tool_use", "id": "t1", "name": "web_search", "input": {"q": "nim"}}],
+        "usage": {"input_tokens": 8, "output_tokens": 4}}
+      let resp = parseAnthropicResponse(j).get()
+      check resp.reasoning == "vou buscar"
+      check parseJson(resp.replayBlocks) == %* [
+        {"type": "thinking", "thinking": "vou buscar", "signature": "sig-1"},
+        {"type": "redacted_thinking", "data": "opaque"}]
+
+    test "an assistant turn replays its thinking blocks first, unchanged":
+      var h = newHistory()
+      h.addUser("pesquisa")
+      h.addAssistantWithToolCalls("", @[ToolCallRequest(id: "t1", name: "web_search", inputJson: "{}")],
+        replayBlocks = $(%* [{"type": "thinking", "thinking": "vou buscar", "signature": "sig-1"}]))
+      h.addToolResult("t1", "web_search", "achei", trkOutput)
+      let body = newAnthropicAdapter("k").buildBody(CompletionRequest(messages: h))
+      let assistant = body["messages"][1]
+      check assistant["content"][0] == %* {"type": "thinking", "thinking": "vou buscar", "signature": "sig-1"}
+      check assistant["content"][1]["type"].getStr == "tool_use"
+
   suite "AnthropicAdapter parseResponse":
 
     test "extracts text from content[0].text":

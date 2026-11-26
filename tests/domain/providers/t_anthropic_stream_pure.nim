@@ -3,7 +3,7 @@
 ## assembled from `input_json_delta`, usage, and an `error` event or a cut
 ## stream as an error.
 
-import std/[strutils, unittest]
+import std/[json, strutils, unittest]
 import donkey/core/pipeops
 import donkey/domain/providers/anthropic_stream_pure
 
@@ -58,6 +58,26 @@ proc runTests*() =
       check fed.isOk
       let r = acc.finish("Anthropic").get
       check r.cacheReadTokens == 4000 and r.inputTokens == 4000
+
+    test "a thinking block is assembled with its signature, to be sent back":
+      let (acc, tokens, fed) = feedAll([
+        start,
+        """data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}""",
+        """data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"vou "}}""",
+        """data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"buscar"}}""",
+        """data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig-1"}}""",
+        """data: {"type":"content_block_stop","index":0}""",
+        """data: {"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"opaque"}}""",
+        """data: {"type":"content_block_stop","index":1}""",
+        """data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}""",
+        """data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"oi"}}""",
+        """data: {"type":"content_block_stop","index":2}""",
+        stop])
+      check fed.isOk
+      check tokens == @["oi"]                 ## reasoning is never streamed as answer text
+      let r = acc.finish("Anthropic").get
+      check r.text == "oi" and r.reasoning == "vou buscar"
+      check parseJson(r.replayBlocks) == parseJson("""[{"type":"thinking","thinking":"vou buscar","signature":"sig-1"},{"type":"redacted_thinking","data":"opaque"}]""")
 
     test "a tool_use block comes back with its input assembled":
       let (acc, tokens, _) = feedAll([

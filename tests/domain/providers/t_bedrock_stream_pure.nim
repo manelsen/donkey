@@ -35,6 +35,20 @@ proc runTests*() =
       check messages[0].header(":event-type") == "messageStart"
       check messages[0].payload == "{\"role\":\"assistant\"}"
 
+    test "reasoning blocks are assembled with their signature, to be sent back":
+      let body = stream(
+        event("messageStart", %* {"role": "assistant"}),
+        event("contentBlockDelta", %* {"contentBlockIndex": 0, "delta": {"reasoningContent": {"text": "vou "}}}),
+        event("contentBlockDelta", %* {"contentBlockIndex": 0, "delta": {"reasoningContent": {"text": "buscar"}}}),
+        event("contentBlockDelta", %* {"contentBlockIndex": 0, "delta": {"reasoningContent": {"signature": "sig-1"}}}),
+        event("contentBlockStop", %* {"contentBlockIndex": 0}),
+        event("contentBlockDelta", %* {"contentBlockIndex": 1, "delta": {"text": "oi"}}),
+        event("messageStop", %* {"stopReason": "end_turn"}))
+      let r = converseStreamResponse(body, nil).get
+      check r.text == "oi" and r.reasoning == "vou buscar"
+      check parseJson(r.replayBlocks) == %* [{"reasoningContent":
+        {"reasoningText": {"text": "vou buscar", "signature": "sig-1"}}}]
+
     test "several frames in one body":
       let body = stream(event("messageStart", %* {"role": "assistant"}),
                         event("messageStop", %* {"stopReason": "end_turn"}))

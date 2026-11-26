@@ -29,6 +29,23 @@ proc runTests*() =
       check body["messages"] == %* [{"role": "user", "content": [{"text": "oi"},
                                                                {"cachePoint": {"type": "default"}}]}]
 
+    test "an assistant turn replays its reasoning blocks first, unchanged":
+      let blocks = $(%* [{"reasoningContent": {"reasoningText": {"text": "vou buscar", "signature": "sig-1"}}}])
+      let body = converseBody(CompletionRequest(messages: @[
+        ChatMessage(role: roleUser, text: "pesquisa"),
+        ChatMessage(role: roleAssistant, text: "ok", replayBlocks: blocks)]))
+      check body["messages"][1]["content"][0] == %* {"reasoningContent":
+        {"reasoningText": {"text": "vou buscar", "signature": "sig-1"}}}
+      check body["messages"][1]["content"][1] == %* {"text": "ok"}
+
+    test "reasoning blocks come back whole from a response":
+      let r = parseConverseResponse(%* {"output": {"message": {"role": "assistant", "content": [
+        {"reasoningContent": {"reasoningText": {"text": "vou buscar", "signature": "sig-1"}}},
+        {"text": "oi"}]}}, "stopReason": "end_turn", "usage": {"inputTokens": 3, "outputTokens": 1}}).get
+      check r.reasoning == "vou buscar" and r.text == "oi"
+      check parseJson(r.replayBlocks) == %* [{"reasoningContent":
+        {"reasoningText": {"text": "vou buscar", "signature": "sig-1"}}}]
+
     test "maxTokens goes in inferenceConfig":
       let body = converseBody(CompletionRequest(maxTokens: 512,
         messages: @[ChatMessage(role: roleUser, text: "oi")]))

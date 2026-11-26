@@ -41,6 +41,8 @@ type
     role*:       string
     text*:       string
     reasoning*:  string        ## optional chain-of-thought (DeepSeek, etc)
+    replayBlocks*: string      ## provider-opaque reasoning blocks (Anthropic thinking,
+                               ## with signatures) to send back unchanged: JSON array
     imageUrl*:   string        ## non-empty when message carries an image
     toolCalls*:  seq[ToolCallRequest]  ## non-empty: assistant issued pending calls
     toolCallId*: string        ## non-empty: this message is a tool result
@@ -121,6 +123,7 @@ type
     outputTokens*: int
     cacheReadTokens*:  int      ## of inputTokens, served from the prompt cache
     cacheWriteTokens*: int      ## of inputTokens, written to the prompt cache
+    replayBlocks*: string       ## reasoning blocks to send back unchanged (JSON array)
     toolCalls*:    seq[ToolCallRequest]
 
 # ── history helpers ───────────────────────────────────────────────────────────
@@ -147,8 +150,10 @@ func addUser*(h: var ConversationHistory; text: string) =
 func addUserWithImage*(h: var ConversationHistory; text, imageUrl: string) =
   h.add ChatMessage(role: roleUser, text: text, imageUrl: imageUrl)
 
-func addAssistant*(h: var ConversationHistory; text: string; reasoning = "") =
-  h.add ChatMessage(role: roleAssistant, text: text, reasoning: reasoning)
+func addAssistant*(h: var ConversationHistory; text: string; reasoning = "";
+                   replayBlocks = "") =
+  h.add ChatMessage(role: roleAssistant, text: text, reasoning: reasoning,
+                    replayBlocks: replayBlocks)
 
 func toolResultKindLabel*(kind: ToolResultKind): string =
   case kind
@@ -180,13 +185,13 @@ func addToolResult*(h: var ConversationHistory; id, name, output: string;
 
 func addAssistantWithToolCalls*(h: var ConversationHistory;
                                 text: string; calls: seq[ToolCallRequest];
-                                reasoning = "") =
+                                reasoning = ""; replayBlocks = "") =
   ## Appends an assistant message that requested tool calls.
   ## Required before addToolResult for correct function-calling conversation format.
   ## The reasoning is kept: DeepSeek wants it back on the next request of the
   ## same tool round.
   h.add ChatMessage(role: roleAssistant, text: text, toolCalls: calls,
-                    reasoning: reasoning)
+                    reasoning: reasoning, replayBlocks: replayBlocks)
 
 func trimTo*(h: var ConversationHistory; maxLen: int) =
   ## Keeps the most recent `maxLen` turns (discards oldest).
