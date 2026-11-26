@@ -117,7 +117,7 @@ proc withClaudeCacheMarkers(a: OpenRouterAdapter; body: JsonNode) =
   let msgs = body{"messages"}
   if msgs.isNil or msgs.len == 0: return
   if msgs[0]{"role"}.getStr == "system": markText(msgs[0])
-  if msgs.len > 1: markText(msgs[msgs.len - 1])
+  if msgs[msgs.len - 1]{"role"}.getStr != "system": markText(msgs[msgs.len - 1])
 
 proc buildBody*(a: OpenRouterAdapter; req: CompletionRequest): JsonNode =
   ## Exported for unit testing of JSON serialisation without live HTTP.

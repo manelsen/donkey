@@ -146,7 +146,7 @@ proc withCacheMarkers(body: JsonNode) =
   ## E8.2: two of the four markers. One closes the stable prefix (tools and
   ## system, the same bytes for the whole session since E8.1); the other
   ## moves with the conversation's last block.
-  if body.hasKey("system"):
+  if body.hasKey("system") and body["system"].kind == JString:
     body["system"] = %* [{"type": "text", "text": body["system"].getStr,
                           "cache_control": parseJson(CacheMarker)}]
   let messages = body{"messages"}
