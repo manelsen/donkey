@@ -95,6 +95,17 @@ proc runTests*() =
       check s.requests.len == MaxReviewRounds + 1
       check s.requests[^1].tools.len == 0
 
+    test "a review past its deadline is stopped, and writes nothing afterwards":
+      let p = paddock()
+      let slow: AsyncCompleteFn = proc(req: CompletionRequest): Future[Result[CompletionResponse, string]] {.async.} =
+        await sleepAsync(chronos.milliseconds(400))
+        return ok(call("skill_manage", %* {"action": "create", "content": Skill}))
+      let r = waitFor runSkillAgent(slow, newFsAdapter(), p, "sys", "content", "", "", "review",
+                                    nowMs = 1, deadlineMs = 100)
+      check r.isErr and "too long" in r.error
+      waitFor sleepAsync(chronos.milliseconds(700))
+      check newLearnedSkills(newFsAdapter(), p).list().len == 0
+
     test "counts per person decide when it is due":
       resetReviewCounts()
       let s = ReviewSettings(enabled: true, everyTurns: 2, everyToolCalls: 100)

@@ -76,6 +76,9 @@ proc runTests*() =
       let p = learningCommandPrompt("/refine").get
       check "skill_manage" in p and "Worth a skill" in p
 
+    test "any whitespace separates the command from its source":
+      check "some/path" in learningCommandPrompt("/learn\tsome/path").get
+
     test "anything else is left alone; a bot mention after the command is fine":
       check learningCommandPrompt("hello").isNone
       check learningCommandPrompt("/learning is fun").isNone

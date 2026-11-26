@@ -24,9 +24,9 @@ proc runTests*() =
     test "create, then view: the whole SKILL.md comes back":
       let p = paddock()
       check manage(p, %* {"action": "create", "content": Skill}).get.contains("deploy-staging")
-      let v = performSkillView(newFsAdapter(), p, "deploy-staging")
+      let v = performSkillView(newFsAdapter(), p, "deploy-staging", 1)
       check v.isOk and "2. Push." in v.get and "name: deploy-staging" in v.get
-      check performSkillView(newFsAdapter(), p, "nope").isErr
+      check performSkillView(newFsAdapter(), p, "nope", 1).isErr
       check newLearnedSkills(newFsAdapter(), p).list()[0].usage.loads == 1   ## a view is a use
 
     test "a blocked skill is refused with the guard's reason":
@@ -39,7 +39,7 @@ proc runTests*() =
       discard manage(p, %* {"action": "create", "content": Skill})
       check manage(p, %* {"action": "patch", "name": "deploy-staging",
                           "old_text": "2. Push.", "new_text": "2. Push.\n3. Check."}).isOk
-      check "3. Check." in performSkillView(newFsAdapter(), p, "deploy-staging").get
+      check "3. Check." in performSkillView(newFsAdapter(), p, "deploy-staging", 1).get
       check manage(p, %* {"action": "archive", "name": "deploy-staging"}).isOk
       check "archived: deploy-staging" in manage(p, %* {"action": "list"}).get
       check manage(p, %* {"action": "restore", "name": "deploy-staging"}).isOk

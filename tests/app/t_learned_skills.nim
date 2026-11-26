@@ -106,6 +106,16 @@ proc runTests*() =
       let s = newLearnedSkills(newFsAdapter(), p).list()[0]   ## survives a restart
       check s.usage.loads == 2 and s.usage.lastUsedMs == 9_000
 
+    test "usage or provenance files that are JSON but not objects are ignored, not fatal":
+      let p = paddock()
+      let store = newLearnedSkills(newFsAdapter(), p)
+      check store.create(Skill, by = "agent", nowMs = 1).isOk
+      writeFile(p / "learned_skills" / ".usage.json", "[1, 2]")
+      writeFile(p / "learned_skills" / ".provenance.json", "\"x\"")
+      check store.list().len == 1
+      store.recordUse("deploy-staging", 5)
+      check store.list()[0].usage.loads == 1
+
     test "recording a use of a missing or bad name does nothing":
       let store = newLearnedSkills(newFsAdapter(), paddock())
       store.recordUse("nope", 1)
@@ -133,6 +143,16 @@ proc runTests*() =
       let j = journey(store)
       check "deploy-staging" in j and "archived: other" in j
       check journey(newLearnedSkills(newFsAdapter(), paddock())) == "No learned skills yet."
+
+  suite "learned skills — whose paddock":
+
+    test "a person id that could leave the paddocks is refused":
+      check validPaddockId("3f2a9c1e-0000-4000-8000-000000000001")
+      check not validPaddockId("../..")
+      check not validPaddockId("a/b")
+      check not validPaddockId("")
+      check not validPaddockId(".")          ## the paddocks directory itself
+      check not validPaddockId(".hidden")
 
 when isMainModule:
   runTests()
