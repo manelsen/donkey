@@ -3,7 +3,6 @@
 ## Provides:
 ##   - downloadUrlAsBytes: downloads any URL to seq[byte]
 ##   - downloadUrlToFile: downloads any URL to local file path
-##   - saveFileToDisk: saves seq[byte] to a file in a directory
 
 import std/[os, strutils]
 import ../ports/http
@@ -75,36 +74,3 @@ proc downloadUrl*(http: HttpPort; url: string;
     localPath: "",
     data: data
   ))
-
-proc saveFileToDisk*(download: var FileDownload; directory: string): Result[string, string] =
-  ## Saves downloaded file to disk in specified directory.
-  ## Returns the full path of the saved file.
-  try:
-    if not dirExists(directory):
-      createDir(directory)
-    
-    # Ensure unique file name
-    var finalPath = directory / download.fileName
-    var counter = 1
-    ## A dangling symlink is not reported by fileExists, but writing through it
-    ## would follow the link target. Treat it as an occupied name.
-    while fileExists(finalPath) or symlinkExists(finalPath):
-      let nameParts = download.fileName.split('.')
-      if nameParts.len > 1:
-        let ext = nameParts[^1]
-        let base = nameParts[0 .. ^2].join(".")
-        finalPath = directory / (base & "_" & $counter & "." & ext)
-      else:
-        finalPath = directory / (download.fileName & "_" & $counter)
-      inc(counter)
-    
-    # Write bytes to file
-    var content = newString(download.data.len)
-    for i in 0 ..< download.data.len:
-      content[i] = cast[char](download.data[i])
-    writeFile(finalPath, content)
-    
-    download.localPath = finalPath
-    ok(finalPath)
-  except CatchableError as e:
-    err("saveFileToDisk: " & e.msg)
