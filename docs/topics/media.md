@@ -132,6 +132,25 @@ text_to_speech(text, as_voice = true, caption)
   `sendPhoto` to `sendDocument`. The final failure is a neutral text with no
   path or file name.
 
+## Sending a file (send_file, E9.6)
+
+```text
+send_file(path, caption)
+  -> parseSendFileContext: the path resolved inside the paddock
+  -> prepareSendFile: a regular file; supports(channel, cfSendFile)?
+       yes -> OutboundMessage(mediaUrl absolute, mediaRoot paddockDir,
+                              text = caption, replyTo) -> NativeToolResult.outbound
+       no  -> nothing goes out; the agent is told the file's workspace path,
+              to tell the person
+  -> the adapter reads the file confined to the paddock (confined_read) and
+     uploads it: Telegram (sendDocument / sendPhoto), Mattermost (POST /files)
+```
+
+- `cfSendFile` is its own capability: `sendMedia` says a channel shows media,
+  not that its adapter reads a paddock file. Discord drops `mediaUrl` on send
+  and WhatsApp would send the path as a link, so neither is offered the tool
+  until its upload exists.
+
 ## Tests
 
 - Pure: `tests/domain/providers/t_inline_image_pure.nim`,

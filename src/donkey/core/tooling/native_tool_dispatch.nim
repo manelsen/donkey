@@ -59,6 +59,7 @@ const
     "inspect_image",
     "transcribe_audio",
     "text_to_speech",
+    "send_file",
   ]
 
   SessionNativeTools* = [

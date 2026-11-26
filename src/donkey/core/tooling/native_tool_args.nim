@@ -110,6 +110,10 @@ type
     path*:   string
     prompt*: string
 
+  SendFileContext* = object
+    path*:    string
+    caption*: string
+
   TaskContext* = object
     prompt*:  string
     context*: string
@@ -377,6 +381,10 @@ func parseCpMvArgs*(j: JsonNode): Result[CpMvContext, string] =
 func parseInspectImageArgs*(j: JsonNode): Result[InspectImageContext, string] =
   ok(InspectImageContext(path: ?j.requireStringField("path"),
                          prompt: j.getOrDefault("prompt").getStr("")))
+
+func parseSendFileArgs*(j: JsonNode): Result[SendFileContext, string] =
+  ok(SendFileContext(path: ?j.requireStringField("path"),
+                     caption: j.getOrDefault("caption").getStr("")))
 
 func parseTranscribeArgs*(j: JsonNode): Result[TranscribeContext, string] =
   ok(TranscribeContext(

@@ -16,6 +16,7 @@
 
 # ── Re-export all extracted tool modules (public API stability) ───────────────
 
+import ./tools/file_tools
 import ./tools/fs_tools
 import ./tools/text_tools
 import ./tools/search_tools
@@ -295,6 +296,12 @@ proc parseInspectImageContext*(j: JsonNode; paddockDir: string;
                                fs: FsRuntimePort = unavailableFs()):
                                Result[InspectImageContext, string] {.gcsafe, raises: [].} =
   parseInspectImageArgs(j).resolvedPathOf(paddockDir, log, toolName, fs)
+
+proc parseSendFileContext*(j: JsonNode; paddockDir: string;
+                           log: Logger = Logger();
+                           fs: FsRuntimePort = unavailableFs()):
+                           Result[SendFileContext, string] {.gcsafe, raises: [].} =
+  parseSendFileArgs(j).resolvedPathOf(paddockDir, log, SendFileToolName, fs)
 
 proc parseTranscribeContext*(j: JsonNode; paddockDir: string;
                              log: Logger = Logger();
@@ -778,6 +785,15 @@ proc executeUtilityNativeTool(tc: ToolCallRequest;
       language: ctxAudio.language, prompt: ctxAudio.prompt,
       settings: speechSettings(ctx.env)), ctx)
     return handledOutcome(heard.text)
+  of SendFileToolName:
+    ## E9.6: a workspace file to the channel of the conversation.
+    let fileCtx = parseSendFileContext(j, ctx.paddockDir, ctx.log, ctx.fs).valueOr:
+      return handledError(error)
+    let prepared = prepareSendFile(ctx.fs, ctx.paddockDir, fileCtx.path, fileCtx.caption,
+                                   ctx.channel, ctx.uid, ctx.replyTo).valueOr:
+      return handledError(error)
+    return NativeToolResult(handled: true, text: prepared.text, resultKind: trkOutput,
+                            outbound: prepared.outbound)
   of TextToSpeechToolName:
     let speechCtx = parseSpeechContext(j).valueOr:
       return handledError(error)
