@@ -145,7 +145,7 @@ func scanText(t: string; findings: var seq[GuardFinding]) =
                "hide this from the user", "without telling the user", "do not mention this to"]):
     found("deception", "injection", "prompt injection: hides something from the user")
   if near(t, "system prompt", "verbatim") or near(t, "reveal", "system prompt") or
-      near(t, "print", "system prompt") or near(t, "new system prompt", "") or
+      near(t, "print", "system prompt") or "new system prompt" in t or
       near(t, "override", "system prompt"):
     found("system_prompt", "injection", "prompt injection: reads or replaces the system prompt")
   if anyOf(t, ["not watching", "no one is watching", "when unobserved", "nobody is watching"]):

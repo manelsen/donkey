@@ -126,7 +126,13 @@ proc archive*(s: LearnedSkills; name: string; nowMs: int64): Result[void, string
   if s.fs.entryKind(s.skillDir(name)) != fekDir:
     return err("no skill " & name)
   ? s.fs.createDir(s.root / ArchiveDirName)
-  s.fs.move(s.skillDir(name), s.root / ArchiveDirName / (name & "@" & $nowMs))
+  ## Never over an earlier copy: the same millisecond gets a suffix.
+  var dest = s.root / ArchiveDirName / (name & "@" & $nowMs)
+  var extra = 0
+  while s.fs.entryKind(dest) != fekMissing:
+    inc extra
+    dest = s.root / ArchiveDirName / (name & "@" & $nowMs & "-" & $extra)
+  s.fs.move(s.skillDir(name), dest)
 
 proc archived*(s: LearnedSkills): seq[string] =
   for e in s.fs.listDir(s.root / ArchiveDirName).get(@[]):
@@ -147,7 +153,9 @@ proc restore*(s: LearnedSkills; name: string): Result[void, string] =
     let entry = extractFilename(e.path)
     if entry.startsWith(name & "@"):
       try:
-        let ms = parseBiggestInt(entry[name.len + 1 .. ^1])
+        let stamp = entry[name.len + 1 .. ^1]
+        let dash = stamp.find('-')
+        let ms = parseBiggestInt(if dash > 0: stamp[0 ..< dash] else: stamp)
         if ms > latestMs: (latest, latestMs) = (entry, ms)
       except ValueError: discard
   if latest.len == 0: return err("no archived skill " & name)
