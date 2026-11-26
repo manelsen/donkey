@@ -186,7 +186,8 @@ type
 
   SpeechJob* = object
     ## No ref, no closure. `transportAllowlist` and `proxy` rebuild the
-    ## session's transport on the worker.
+    ## session's transport on the worker; the tools fill them from their
+    ## context, so a caller does not set them.
     kind*:               SpeechJobKind
     path*, language*, prompt*: string
     text*, caption*, voice*, format*, paddockDir*, replyTo*: string
@@ -210,9 +211,11 @@ proc runSpeechJob*(job: SpeechJob; fs: FsRuntimePort; attachments: AttachmentSto
   let s = job.settings
   case job.kind
   of sjTranscribe:
-    SpeechOutput(text: performTranscribe(fs, job.path, http, language = job.language,
+    let heard = performTranscribe(fs, job.path, http, language = job.language,
       prompt = job.prompt, apiKey = s.sttApiKey, endpoint = s.sttEndpoint, model = s.sttModel,
-      maxBytes = (if job.maxBytes > 0: job.maxBytes else: MaxTranscriptionBytes)))
+      maxBytes = (if job.maxBytes > 0: job.maxBytes else: MaxTranscriptionBytes))
+    let failed = heard.startsWith("Error:")
+    SpeechOutput(text: heard, ok: not failed, error: (if failed: heard else: ""))
   of sjSave:
     let saved = performSpeech(attachments, job.text, job.paddockDir, http,
       voice = (if job.voice.strip.len > 0: job.voice else: s.ttsVoice), format = job.format,

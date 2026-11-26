@@ -34,7 +34,9 @@ proc runTests*() =
       let job = SpeechJob(kind: sjTranscribe, path: dir / "a.mp3", settings: settings,
                           maxBytes: 1_000_000)
       let o = runSpeechJob(job, newFsAdapter(), newAttachmentStore(), answering(200, """{"text":"olá"}"""))
-      check o.text == "olá"
+      check o.text == "olá" and o.ok and o.error.len == 0
+      let down = runSpeechJob(job, newFsAdapter(), newAttachmentStore(), answering(503, "x"))
+      check not down.ok and down.text.startsWith("Error:") and down.error == down.text
 
     test "a speech job saves the audio in the paddock's attachments":
       let dir = getTempDir() / "donkey_speech_s"
