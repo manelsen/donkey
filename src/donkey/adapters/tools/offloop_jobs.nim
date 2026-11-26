@@ -17,6 +17,12 @@ type
     allowHosts*: seq[string]
     timeoutSec*: int
 
+  HttpPostJob* = object
+    url*, body*: string
+    headers*:    seq[HttpHeader]
+    allowHosts*: seq[string]
+    timeoutSec*: int
+
   ProcessJob* = object
     spec*: ProcessSpec
 
@@ -27,6 +33,19 @@ proc httpGetJob*(job: HttpGetJob): Result[HttpResponse, string] {.nimcall, gcsaf
   try:
     newStdHttpAdapter(timeout = max(1, job.timeoutSec), allowlist = job.allowHosts)
       .toRuntimePort().get(job.url, job.headers)
+  except CatchableError as e:
+    err(e.msg)
+  except Exception as e:  ## effect boundary: callee raises are unannotated
+    err(e.msg)
+
+proc httpPostJob*(job: HttpPostJob): Result[HttpResponse, string] {.nimcall, gcsafe, raises: [].} =
+  ## Egress only to `allowHosts`; not retried (the caller decides).
+  if job.allowHosts.len == 0:
+    return err("no host allowed")
+  try:
+    newStdHttpAdapter(timeout = max(1, job.timeoutSec), allowlist = job.allowHosts,
+                      retryNonIdempotent = false)
+      .toRuntimePort().post(job.url, job.body, job.headers)
   except CatchableError as e:
     err(e.msg)
   except Exception as e:  ## effect boundary: callee raises are unannotated

@@ -408,6 +408,17 @@ proc offLoopHttpGet(url: string; headers: seq[HttpHeader]; allowHosts: seq[strin
   except CatchableError as e:
     return err(e.msg)
 
+proc offLoopHttpPost(url, body: string; headers: seq[HttpHeader]; allowHosts: seq[string]):
+    Future[Result[HttpResponse, string]] {.async: (raises: []).} =
+  ## An export (OTLP) on the blocking executor, from plain data.
+  try:
+    return await runOffLoop(httpPostJob, HttpPostJob(url: url, body: body, headers: headers,
+      allowHosts: allowHosts, timeoutSec: OffLoopHttpTimeoutSec))
+  except CancelledError:
+    return err("cancelled")
+  except CatchableError as e:
+    return err(e.msg)
+
 proc offLoopProcessRun(spec: ProcessSpec): Future[Result[ProcessOutput, string]] {.async: (raises: []).} =
   ## A native tool's process (git_inspect) on the blocking executor.
   try:
@@ -2272,7 +2283,8 @@ proc main =
   useCredentials(cfg.env)
   ## Native tools that await I/O (github, git_inspect) run it on the
   ## blocking executor through these, never on the loop.
-  useOffLoopIo(OffLoopIo(httpGet: offLoopHttpGet, processRun: offLoopProcessRun))
+  useOffLoopIo(OffLoopIo(httpGet: offLoopHttpGet, httpPost: offLoopHttpPost,
+                         processRun: offLoopProcessRun))
   configureApprovalServiceFromEnv(
     newApprovalStore(cfg.home / "state" / "approvals.json").toApprovalPort(), cfg.env,
     newStandingApprovals(cfg.home / "state" / StandingApprovalsFile).toStandingPort())

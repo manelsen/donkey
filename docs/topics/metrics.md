@@ -80,3 +80,26 @@ donkey ctl traces                       # everything kept
 donkey ctl traces --since 24h           # or 7d, 2w, YYYY-MM-DD
 donkey ctl traces --user <uuid> --since 7d
 ```
+
+### OpenTelemetry
+
+The same account can go to an OpenTelemetry collector, as one span per turn,
+over OTLP/HTTP with the JSON encoding. It is configured with the standard
+variables, independently of `DONKEY_TRACES`:
+
+```sh
+OTEL_EXPORTER_OTLP_ENDPOINT=https://otel.example:4318      # spans go to …/v1/traces
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://otel.example/x  # or this exact URL
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer%20<token>  # key=value pairs, URL-encoded
+```
+
+The span is `donkey.turn <kind>` for the `donkey` service, with the trace's
+fields as attributes (`donkey.channel`, `donkey.provider`, `donkey.outcome`,
+`gen_ai.usage.input_tokens`, …) and each tool call as an event with its
+outcome; a turn that did not end `ok` (or `stopped`) is an error span. As with
+the file, nothing that was said goes out. The export runs off the event loop
+after the turn, only to the endpoint's host, so a slow or absent collector
+never delays an answer; a failure is a warning in the log.
+
+Traces are not replayable: they carry no content, by design, so a turn cannot
+be re-run from one.

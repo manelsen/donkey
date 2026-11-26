@@ -85,6 +85,7 @@ coberto por `inspect_image`, que usa um modelo com visão.
 | Geração de imagem | Fora do escopo do assistente (decisão do §10, mantida). |
 | OAuth de provider (assinaturas em vez de chave) | Recusado em 18/11, mantido. |
 | Dashboard web | O projeto não tem UI web; a gestão vai para a TUI (E6). |
+| Replay de traço | O traço não guarda conteúdo, por decisão de privacidade ("nunca o que foi dito"); reproduzir um turno exigiria guardar mensagens e saídas de ferramentas. A frente 3 da segunda rodada ficou na exportação OpenTelemetry. |
 | Bots isolados (usuários e memória por bot) | Multi-bot é só fachada (E3); isolamento total seria uma instância por cliente. |
 
 ## 6. Pendências fora do código
