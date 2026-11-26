@@ -41,7 +41,7 @@
 | 2 | Canal Microsoft Teams | Canal novo, antes do resto (há usuária em Teams). **Feito** (texto; anexos e cartões depois) | Canais (~0,5) | E2 |
 | 3 | Multi-bot | Vários bots por canal numa instância; só a fachada (token, nome, persona, modelo); usuários, memória e sessões são os da instância. Telegram, Discord, WhatsApp e Teams. **Feito** (persona do operador em `{home}/agents/`; o bot que responde é o último com que a pessoa falou) | Multiagente (~1) | E3 |
 | 4 | Kanban mínimo | Quadro de tarefas sem UI: ferramenta, comando e atribuição a agentes nomeados. **Feito** (`manage_tasks`, `/tasks`; tarefa de agente com prazo vira turno dele no dia) | Ferramentas (~1,5–2) | E4 |
-| 5 | MCP sampling | Permitido com aprovação a cada pedido, e aprovação permanente por servidor como opção. **Feito** para servidores stdio; nenhuma chamada a MCP (stdio ou HTTP), a skill Deno ou às ferramentas de web segura mais o laço; transcrição e fala ainda seguram (§3) | Extensibilidade (~0,5) | E5 |
+| 5 | MCP sampling | Permitido com aprovação a cada pedido, e aprovação permanente por servidor como opção. **Feito** para servidores stdio; nenhuma chamada a MCP (stdio ou HTTP), a skill Deno ou a ferramenta nativa de rede (web, GitHub, git, transcrição, fala) segura mais o laço | Extensibilidade (~0,5) | E5 |
 | 6 | Gestão pela TUI | Ampliar a TUI existente com ações de gestão; nada de UI web. **Feito**: usuários, pareamentos, agendamentos, aprovações (pendentes e permanentes), traços, agentes da instância (criar, editar e apagar num formulário) e saúde dos providers (chamadas, latência e cooldown da janela recente); o que ficou de fora está no §3 | Interfaces (~1,5) | E6 |
 
 Ganho somado estimado: ~6 pontos, para ~84%. Medido depois (comparativo de
@@ -55,10 +55,8 @@ O que cada frente deixou de fora ao ser implementada. Nenhum está agendado.
 |---|---|---|
 | Teams com anexos e cartões | E2 | só texto entra e sai |
 | MCP sampling por HTTP | E5 | só servidores stdio podem pedir sampling |
-| Estado de conexão dos canais | E6 | o status do daemon não o informa; a TUI mostra só os canais ativos |
-| Saúde de todos os providers | E6 | o status manda métricas só dos 5 mais usados; os outros aparecem como "no recent calls" |
+| Estado de conexão dos canais | E6 | o status do daemon não o informa; a TUI mostra os canais ativos (todos os 19 desde a 2ª rodada: antes a lista conhecia só 7) |
 | Skill novo de usuário | E5 | as ferramentas aparecem a partir da mensagem seguinte (listagem em segundo plano) |
-| `transcribe_audio` e `text_to_speech` | — | ainda chamam o HTTP síncrono no laço, até o prazo da requisição. `web_fetch`, `fetch`, `http_fetch` e `web_search` já rodam no executor (`WebToolJob`), como `github` e `git_inspect` (`app/offloop_io`) |
 | Escrita no GitHub (abrir issue, comentar) | 2ª rodada, frente 2 | fora de propósito: o agente lê texto de terceiros; pede decisão sobre aprovação |
 | Mattermost, SMS, IRC e Google Chat com mídia | 2ª rodada, frente 1 | só texto; no IRC, só quem tem conta nos serviços da rede é atendido |
 | Mensagens do Mattermost com o socket caído | 2ª rodada, frente 1 | não são reapresentadas ao reconectar |

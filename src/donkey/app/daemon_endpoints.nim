@@ -17,9 +17,9 @@ import ./route_health
 import ./session_manager
 
 type
-  ActiveChannels* = object
-    ## Which channels this daemon runs, for the status views.
-    telegram*, discord*, wecom*, wechat*, feishu*, slack*, qq*: bool
+  ActiveChannels* = set[ChannelKind]
+    ## Which channels this daemon runs, for the status views: any of them,
+    ## so a new channel needs no change here.
 
   DaemonStatusInputs* = object
     channels*:      ActiveChannels
@@ -34,13 +34,8 @@ type
                             {.gcsafe, raises: [CatchableError].}
 
 func activeChannelNames*(channels: ActiveChannels): seq[string] =
-  if channels.telegram: result.add "telegram"
-  if channels.discord: result.add "discord"
-  if channels.wecom: result.add "wecom"
-  if channels.wechat: result.add "wechat"
-  if channels.feishu: result.add "feishu"
-  if channels.slack: result.add "slack"
-  if channels.qq: result.add "qq"
+  for kind in ChannelKind:
+    if kind in channels: result.add $kind
 
 proc daemonStatus*(sm: SessionManager; inputs: DaemonStatusInputs): DaemonStatus =
   var sessions: seq[SessionInfo]
@@ -63,7 +58,9 @@ proc daemonStatus*(sm: SessionManager; inputs: DaemonStatusInputs): DaemonStatus
     result.routeCounts = inputs.health.topRouteCounts()
     result.routeMetrics = inputs.health.topRouteMetrics()
     result.recentRouteMetrics = inputs.health.topRecentRouteMetrics()
-    result.recentProviderMetrics = inputs.health.topRecentProviderMetrics()
+    ## Every provider with recent calls: the TUI shows each one's health
+    ## (the stats panel keeps to the busiest).
+    result.recentProviderMetrics = inputs.health.topRecentProviderMetrics(limit = high(int))
     result.providerCooldowns = inputs.health.activeCooldownLabels()
 
 proc authorizeUser*(userId: UserId; isRevoked, isDmAllowed: ProfileCheck;

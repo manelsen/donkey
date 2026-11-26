@@ -349,6 +349,17 @@ proc webToolResult(o: WebToolOutput): NativeToolResult {.gcsafe, raises: [].} =
   if o.structured: NativeToolResult(handled: true, text: o.text, resultKind: o.kind)
   else: handledOutcome(o.text)
 
+proc runSpeech(job: SpeechJob; ctx: NativeCtx): Future[SpeechOutput] {.async.} =
+  ## Off the loop through the installed runner, like the web tools; in
+  ## place, through ctx's ports, when nothing is installed (tests).
+  var job = job
+  job.transportAllowlist = ctx.webAllowlist
+  job.proxy = ctx.env.get("DONKEY_WEB_PROXY").strip()
+  let io = offLoopIo()
+  if io.speechTool != nil:
+    return await io.speechTool(job)
+  return runSpeechJob(job, ctx.fs, ctx.attachments, ctx.http)
+
 proc runWeb(job: WebToolJob; ctx: NativeCtx): Future[WebToolOutput] {.async.} =
   ## Off the loop through the installed runner (app/offloop_io), with a
   ## transport like the session's; in place, through ctx.http, when nothing
@@ -761,36 +772,31 @@ proc executeUtilityNativeTool(tc: ToolCallRequest;
     let ctxAudio = parseTranscribeContext(j, ctx.paddockDir, ctx.log,
                                           ctx.fs).valueOr:
       return handledError(error)
-    let speech = speechSettings(ctx.env)
-    return handledOutcome(performTranscribe(ctx.fs, ctxAudio.path, ctx.http,
-      language = ctxAudio.language, prompt = ctxAudio.prompt,
-      apiKey = speech.sttApiKey, endpoint = speech.sttEndpoint,
-      model = speech.sttModel))
+    let heard = await runSpeech(SpeechJob(kind: sjTranscribe, path: ctxAudio.path,
+      language: ctxAudio.language, prompt: ctxAudio.prompt,
+      settings: speechSettings(ctx.env)), ctx)
+    return handledOutcome(heard.text)
   of TextToSpeechToolName:
     let speechCtx = parseSpeechContext(j).valueOr:
       return handledError(error)
     let speech = speechSettings(ctx.env)
     if speechCtx.asVoice:
-      let prepared = prepareVoiceReply(ctx.attachments,
-        speechCtx.text, speechCtx.caption, ctx.paddockDir, ctx.channel,
-        ctx.uid, ctx.http, speech, replyTo = ctx.replyTo)
-      if prepared.isErr:
+      let prepared = await runSpeech(SpeechJob(kind: sjVoiceReply, text: speechCtx.text,
+        caption: speechCtx.caption, paddockDir: ctx.paddockDir, channel: ctx.channel,
+        uid: ctx.uid, replyTo: ctx.replyTo, settings: speech), ctx)
+      if not prepared.ok:
         return handledError(prepared.error)
       return NativeToolResult(
         handled: true,
         text: "Voice reply ready.",
         resultKind: trkOutput,
-        outbound: some(prepared.get()))
-    let saved = performSpeech(ctx.attachments, speechCtx.text, ctx.paddockDir, ctx.http,
-                              voice = (if speechCtx.voice.strip.len > 0: speechCtx.voice
-                                       else: speech.ttsVoice),
-                              format = speechCtx.format,
-                              apiKey = speech.ttsApiKey,
-                              endpoint = speech.ttsEndpoint,
-                              model = speech.ttsModel)
-    if saved.isErr:
+        outbound: some(prepared.outbound))
+    let saved = await runSpeech(SpeechJob(kind: sjSave, text: speechCtx.text,
+      paddockDir: ctx.paddockDir, voice: speechCtx.voice, format: speechCtx.format,
+      settings: speech), ctx)
+    if not saved.ok:
       return handledError(saved.error)
-    return handledOutcome("Audio saved: " & saved.get())
+    return handledOutcome("Audio saved: " & saved.saved)
   else:
     return NativeToolResult(handled: false)
 
