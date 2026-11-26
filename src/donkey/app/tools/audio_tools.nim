@@ -175,3 +175,55 @@ proc prepareVoiceReply*(attachments: AttachmentStorePort; text, caption, paddock
     mediaRoot: paddockDir,
     mediaDurationSec: estimateSpeechSeconds(text),
   ))
+
+# ── A speech tool call as plain data, for a worker thread ────────────────────
+
+type
+  SpeechJobKind* = enum
+    sjTranscribe   ## transcribe_audio
+    sjSave         ## text_to_speech, kept as a file
+    sjVoiceReply   ## text_to_speech as a voice note
+
+  SpeechJob* = object
+    ## No ref, no closure. `transportAllowlist` and `proxy` rebuild the
+    ## session's transport on the worker; the tools fill them from their
+    ## context, so a caller does not set them.
+    kind*:               SpeechJobKind
+    path*, language*, prompt*: string
+    text*, caption*, voice*, format*, paddockDir*, replyTo*: string
+    channel*:            ChannelKind
+    uid*:                UserId
+    settings*:           SpeechSettings
+    maxBytes*:           int
+    transportAllowlist*: seq[string]
+    proxy*:              string
+
+  SpeechOutput* = object
+    text*:     string            ## sjTranscribe: the transcript or "Error: …"
+    ok*:       bool
+    error*:    string
+    saved*:    string            ## sjSave: the path relative to the paddock
+    outbound*: OutboundMessage   ## sjVoiceReply: the voice note to send
+
+proc runSpeechJob*(job: SpeechJob; fs: FsRuntimePort; attachments: AttachmentStorePort;
+                   http: HttpRuntimePort): SpeechOutput {.gcsafe, raises: [].} =
+  ## The same operations the tools ran on the loop, on whatever thread this is.
+  let s = job.settings
+  case job.kind
+  of sjTranscribe:
+    let heard = performTranscribe(fs, job.path, http, language = job.language,
+      prompt = job.prompt, apiKey = s.sttApiKey, endpoint = s.sttEndpoint, model = s.sttModel,
+      maxBytes = (if job.maxBytes > 0: job.maxBytes else: MaxTranscriptionBytes))
+    let failed = heard.startsWith("Error:")
+    SpeechOutput(text: heard, ok: not failed, error: (if failed: heard else: ""))
+  of sjSave:
+    let saved = performSpeech(attachments, job.text, job.paddockDir, http,
+      voice = (if job.voice.strip.len > 0: job.voice else: s.ttsVoice), format = job.format,
+      apiKey = s.ttsApiKey, endpoint = s.ttsEndpoint, model = s.ttsModel)
+    if saved.isErr: SpeechOutput(error: saved.error)
+    else: SpeechOutput(ok: true, saved: saved.get)
+  of sjVoiceReply:
+    let prepared = prepareVoiceReply(attachments, job.text, job.caption, job.paddockDir,
+                                     job.channel, job.uid, http, s, replyTo = job.replyTo)
+    if prepared.isErr: SpeechOutput(error: prepared.error)
+    else: SpeechOutput(ok: true, outbound: prepared.get)
