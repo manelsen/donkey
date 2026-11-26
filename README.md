@@ -222,6 +222,13 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
   ./donkey ctl mcp login https://mcp.example.com/mcp --client-id my-app --client-secret-env MCP_EXAMPLE_SECRET
   ```
 
+  A server over stdio may ask to run your model during a tool call (MCP sampling). Every request is shown to the person whose call it is, who approves it this time, always for that server (the approval follows the server's command and arguments, not its name), or denies it. Approved, it runs through that person's model route without tools, at most `DONKEY_MCP_SAMPLING_MAX_TOKENS` tokens per request (4096) and `DONKEY_MCP_SAMPLING_DAILY_TOKENS` per server per day (50000); past the daily cap it is refused without asking. Approvals that stand are listed and revoked with:
+
+  ```bash
+  ./donkey ctl approval standing list <user-id>
+  ./donkey ctl approval standing revoke <user-id> <key>
+  ```
+
 ---
 
 ## 🌐 Supported Ecosystem

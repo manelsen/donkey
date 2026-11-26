@@ -117,7 +117,7 @@ proc runTests*() =
       check r.isOk and r.get.output.startsWith("refused:")
 
     test "with a handler the client offers sampling and answers the server's request":
-      let handler: ServerRequestHandler = proc(meth: string; params: JsonNode):
+      let handler: ServerRequestHandler = proc(meth: string; params: JsonNode; call: ToolCall):
           Future[Result[JsonNode, string]] {.async: (raises: []), gcsafe.} =
         if meth != "sampling/createMessage":
           return err("unsupported")

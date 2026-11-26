@@ -51,10 +51,11 @@ func parseToolResult*(callId: string; j: JsonNode): ToolResult =
 # ── The client ────────────────────────────────────────────────────────────────
 
 type
-  ServerRequestHandler* = proc(meth: string; params: JsonNode):
+  ServerRequestHandler* = proc(meth: string; params: JsonNode; call: ToolCall):
       Future[Result[JsonNode, string]] {.async: (raises: []), gcsafe.}
-    ## A request the server makes (sampling/createMessage): the JSON result,
-    ## or an error message sent back to the server.
+    ## A request the server makes (sampling/createMessage) during `call` (an
+    ## empty call outside one, e.g. the startup listing): the JSON result, or
+    ## an error message sent back to the server.
 
   McpClient* = ref object
     command*:   string
@@ -112,7 +113,7 @@ proc sendLine(c: McpClient; line: string): Future[Result[void, string]] {.async:
   except CatchableError as e:
     return err("Write to MCP stdin failed: " & e.msg)
 
-proc exchange(c: McpClient; id: int; line: string): Future[Result[JsonNode, string]]
+proc exchange(c: McpClient; id: int; line: string; call: ToolCall): Future[Result[JsonNode, string]]
     {.async: (raises: [CancelledError]).} =
   ## Sends one request and reads until its response, serving the server in
   ## between.
@@ -143,7 +144,7 @@ proc exchange(c: McpClient; id: int; line: string): Future[Result[JsonNode, stri
           if c.onServerRequest.isNil:
             Result[JsonNode, string].err("Method not found: " & msg{"method"}.getStr)
           else:
-            await c.onServerRequest(msg{"method"}.getStr, msg{"params"})
+            await c.onServerRequest(msg{"method"}.getStr, msg{"params"}, call)
         ? await c.sendLine(responseLine(msg{"id"}, answer))
       continue   ## a notification, or a request now answered
     if msg{"id"}.getInt(-1) != id:
@@ -155,11 +156,12 @@ proc exchange(c: McpClient; id: int; line: string): Future[Result[JsonNode, stri
       return err("MCP response without a result")
     return ok(msg{"result"})
 
-proc rpcUnlocked(c: McpClient; meth: string; params: JsonNode): Future[Result[JsonNode, string]]
+proc rpcUnlocked(c: McpClient; meth: string; params: JsonNode;
+                 call = ToolCall()): Future[Result[JsonNode, string]]
     {.async: (raises: [CancelledError]).} =
   let id = c.nextId
   inc c.nextId
-  let pending = c.exchange(id, buildRequest(id, meth, params))
+  let pending = c.exchange(id, buildRequest(id, meth, params), call)
   let inTime =
     try: await pending.withTimeout(chronos.milliseconds(c.timeoutMs))
     except CancelledError as e: raise e
@@ -184,7 +186,8 @@ proc initialize(c: McpClient): Future[Result[void, string]] {.async: (raises: [C
   c.initialized = true
   return ok()
 
-proc rpc(c: McpClient; meth: string; params: JsonNode): Future[Result[JsonNode, string]]
+proc rpc(c: McpClient; meth: string; params: JsonNode;
+         call = ToolCall()): Future[Result[JsonNode, string]]
     {.async: (raises: []).} =
   ## One exchange at a time per server.
   try:
@@ -193,7 +196,7 @@ proc rpc(c: McpClient; meth: string; params: JsonNode): Future[Result[JsonNode, 
     return err("MCP call cancelled")
   try:
     ? await c.initialize()
-    return await c.rpcUnlocked(meth, params)
+    return await c.rpcUnlocked(meth, params, call)
   except CancelledError:
     return err("MCP call cancelled")
   finally:
@@ -216,7 +219,7 @@ proc listToolsAsync*(c: McpClient): Future[Result[seq[ToolSchema], string]] {.as
   return ok(schemas)
 
 proc invokeAsync*(c: McpClient; call: ToolCall): Future[Result[ToolResult, string]] {.async: (raises: []).} =
-  let res = ? await c.rpc("tools/call", %* {"name": call.name, "arguments": call.input})
+  let res = ? await c.rpc("tools/call", %* {"name": call.name, "arguments": call.input}, call)
   try:
     return ok(parseToolResult(call.id, res))
   except CatchableError as e:

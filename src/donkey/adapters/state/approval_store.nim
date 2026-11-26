@@ -251,6 +251,13 @@ proc listPending*(store: ApprovalStore;
     pending.add(request)
   ok(pending)
 
+proc lookup*(store: ApprovalStore; id: string): Result[ApprovalRequest, string] {.raises: [].} =
+  let requests = ? store.load()
+  for request in requests:
+    if request.id == id:
+      return ok(request)
+  err("approval not found: " & id)
+
 proc toApprovalPort*(store: ApprovalStore): ApprovalStorePort =
   ApprovalStorePort(
     create: proc(userId: string; channel: string; toolName, summary: string;
@@ -263,4 +270,6 @@ proc toApprovalPort*(store: ApprovalStore): ApprovalStorePort =
       store.status(id),
     listPending: proc(userId: string): Result[seq[ApprovalRequest], string] {.gcsafe, raises: [].} =
       store.listPending(userId),
+    lookup: proc(id: string): Result[ApprovalRequest, string] {.gcsafe, raises: [].} =
+      store.lookup(id),
   )

@@ -22,6 +22,13 @@ proc runTests*() =
       check parseApprovalCallback("approval:abc:allow").isNone
       check parseApprovalCallback("other:abcdefgh:allow").isNone
 
+    test "the 'always' button has its own callback, distinct from allow":
+      check approvalAlwaysCallbackData("abcdefgh") == "approval:abcdefgh:always"
+      check parseAlwaysCallback("approval:abcdefgh:always").get == "abcdefgh"
+      check parseAlwaysCallback("approval:abcdefgh:allow").isNone
+      check parseAlwaysCallback("approval:abc:always").isNone
+      check parseApprovalCallback("approval:abcdefgh:always").isNone
+
     test "poll command is recognised":
       check isPollCommand("/poll")
       check isPollCommand("  /poll  ")
