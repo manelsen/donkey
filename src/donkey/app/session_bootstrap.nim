@@ -20,6 +20,8 @@ import ../domain/reply_context_pure
 import ../domain/channels/telegram_pure
 import ../domain/builtin_tools
 import ../domain/more_tools
+import ../domain/tools/github_pure
+import ../domain/tools/git_inspect_pure
 import ../domain/providers/media_pure
 import ../domain/reminder
 import ../ports/attachment_store
@@ -555,6 +557,7 @@ proc nativeSessionTools*(): seq[ToolDescription] {.gcsafe, raises: [].} =
     (HttpFetchToolName,     HttpFetchToolDescription,     HttpFetchToolSchema),
     (ArchiveExtractToolName, ArchiveExtractToolDescription, ArchiveExtractToolSchema),
     (ArchiveCreateToolName, ArchiveCreateToolDescription, ArchiveCreateToolSchema),
+    (GitInspectToolName,    GitInspectToolDescription,    GitInspectToolSchema),
     (ExecuteCodeToolName,   ExecuteCodeToolDescription,   ExecuteCodeToolSchema),
     (FetchToolName,         FetchToolDescription,         FetchToolSchema),
     (CalcToolName,          CalcToolDescription,          CalcToolSchema),
@@ -585,6 +588,9 @@ proc nativeSessionTools*(): seq[ToolDescription] {.gcsafe, raises: [].} =
     (CancelSubagentToolName, CancelSubagentToolDescription, CancelSubagentToolSchema),
   ]:
     result.add(ToolDescription(name: n, description: d, schemaJson: s))
+  if githubToken().len > 0:
+    result.add(ToolDescription(name: GithubToolName, description: GithubToolDescription,
+                               schemaJson: GithubToolSchema))
   if webSearchKey().len > 0:
     result.add(ToolDescription(
       name: WebSearchToolName,

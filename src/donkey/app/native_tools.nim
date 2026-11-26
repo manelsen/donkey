@@ -85,6 +85,8 @@ import ./sandbox
 import ./session_state
 import ./session_manager
 import ./approval_runtime
+import ./offloop_io
+import ./tools/github_git_tools
 import ./provider_executor
 
 const
@@ -577,6 +579,11 @@ proc executeWebNativeTool(tc: ToolCallRequest;
       return handledError(error)
     let rules = toolWebRules(ctx, WebSearchToolName)
     return handledOutcome(performWebSearch(searchCtx.query, searchCtx.count, ctx.braveApiKey, ctx.http, rules, ctx.webAllowlist))
+  of GithubToolName:
+    ## Off the loop, through the installed runner (app/offloop_io).
+    let read = await performGithub(j, githubToken(), offLoopIo())
+    if read.isErr: return handledError(read.error)
+    return handledText(read.get)
   else:
     return NativeToolResult(handled: false)
 
@@ -666,6 +673,14 @@ proc executeStructuredNativeTool(tc: ToolCallRequest;
       fallbackAllowlist = ctx.webAllowlist,
       policyLabel = HttpFetchToolName,
     ))
+  of GitInspectToolName:
+    let gitCtx = parseGitInspectContext(j).valueOr:
+      return handledError(error)
+    let repoDir = parsePathOnly(j, ctx.paddockDir, ctx.log, GitInspectToolName, ctx.fs).valueOr:
+      return handledError(error)
+    let shown = await performGitInspect(gitCtx, repoDir, offLoopIo())
+    if shown.isErr: return handledError(shown.error)
+    return handledText(shown.get)
   of ArchiveExtractToolName:
     let archivePath = j.getOrDefault("archive_path").getStr("")
     let destination = j.getOrDefault("destination").getStr("")

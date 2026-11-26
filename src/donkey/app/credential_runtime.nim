@@ -62,6 +62,10 @@ proc credentialSet*(name: string): bool {.gcsafe, raises: [].} =
   ## for status views that list what is configured (never the value).
   credentialValue(name).len > 0
 
+proc githubToken*(): string {.gcsafe, raises: [].} =
+  ## The token behind the github tool; "" when it is off.
+  credentialValue("GITHUB_TOKEN")
+
 proc webSearchKey*(): string {.gcsafe, raises: [].} =
   ## The Brave Search key behind the web_search tool; "" when it is off.
   credentialValue("BRAVE_API_KEY")

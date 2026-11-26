@@ -40,6 +40,7 @@ const
     "http_fetch",
     "archive_extract",
     "archive_create",
+    "git_inspect",
   ]
 
   CodeNativeTools* = [
@@ -49,6 +50,7 @@ const
   WebNativeTools* = [
     "fetch",
     "web_search",
+    "github",
   ]
 
   UtilityNativeTools* = [

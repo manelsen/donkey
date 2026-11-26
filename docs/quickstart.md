@@ -62,6 +62,7 @@ Your generated `donkey.env` will contain only the tokens and keys you supplied. 
 TELEGRAM_BOT_TOKEN=YOUR_BOT_TOKEN_HERE
 ZAI_CODING_API_KEY=YOUR_PROVIDER_KEY_HERE
 BRAVE_API_KEY=YOUR_BRAVE_SEARCH_KEY   # optional, enables web_search
+GITHUB_TOKEN=YOUR_GITHUB_TOKEN        # optional, enables the read-only github tool
 ```
 
 The example files are:
