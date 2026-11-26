@@ -9,6 +9,7 @@ import donkey/ports/channel_capability
 import donkey/adapters/channel/outbound_builder
 import donkey/adapters/channel/mattermost
 import donkey/adapters/channel/sms
+import donkey/adapters/channel/irc
 
 proc runTests*() =
   suite "mattermost capability":
@@ -39,6 +40,17 @@ proc runTests*() =
       var a = newSmsAdapter("", "", "", "")
       let r = smsOutboundPort(addr a).send(OutboundMessage(channel: ckSms, replyTo: "+1", text: "oi"))
       check r.isErr and "TWILIO" in r.error
+
+  suite "irc capability":
+
+    test "the registry says: send only; the port reaches the adapter":
+      let c = channelCapabilityRegistry()[ckIrc]
+      check c.send and not c.editMessage and not c.sendMedia
+      check $ckIrc == "irc"
+      check ircOutboundPort(nil).send(OutboundMessage(channel: ckIrc, text: "oi")).isErr
+      var a = newIrcAdapter(false, "", "")
+      let r = ircOutboundPort(addr a).send(OutboundMessage(channel: ckIrc, replyTo: "#x", text: "oi"))
+      check r.isErr and "IRC_SERVER" in r.error
 
 when isMainModule:
   runTests()

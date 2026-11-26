@@ -25,6 +25,7 @@ proc runTests*() =
       check ctxOf("""{"action":"diff","path":"r","file":"-p"}""").isErr
       check ctxOf("""{"action":"diff","path":"r","file":"../../etc/passwd"}""").isErr
       check ctxOf("""{"action":"diff","path":"r","file":"src/x.nim"}""").isOk
+      check ctxOf("""{"action":"diff","path":"r","file":"..\\..\\x"}""").isErr
 
     test "every command keeps the repository's config from running anything":
       let argv = gitArgv(ctxOf("""{"action":"status","path":"r"}""").get, "/p/r")

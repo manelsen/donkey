@@ -23,6 +23,7 @@ import line
 import teams
 import mattermost
 import sms
+import irc
 import cli_repl
 import whatsapp
 
@@ -189,6 +190,22 @@ proc smsOutboundPort*(a: ptr SmsAdapter): OutboundChannelPort =
     downloadFile: unsupportedDownloadFile,
   )
 
+proc ircOutboundPort*(a: ptr IrcAdapter): OutboundChannelPort =
+  ## Send only, or unsupported without an adapter.
+  OutboundChannelPort(
+    send: if a != nil:
+            proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
+              a[].send(msg)
+          else:
+            unsupportedSend,
+    sendReturnId: unsupportedSendReturnId,
+    editMessage: unsupportedEditMessage,
+    sendKeyboard: unsupportedSendKeyboard,
+    editKeyboard: unsupportedEditKeyboard,
+    setMessageReaction: unsupportedSetMessageReaction,
+    downloadFile: unsupportedDownloadFile,
+  )
+
 type TeamsPick* = proc(userId: UserId): ptr TeamsAdapter {.gcsafe.}
   ## The adapter of the Teams app a person last wrote to (teams_bots).
 
@@ -225,6 +242,7 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
                          teamsAdapter: ptr TeamsAdapter = nil;
                          mattermostAdapter: ptr MattermostAdapter = nil;
                          smsAdapter: ptr SmsAdapter = nil;
+                         ircAdapter: ptr IrcAdapter = nil;
                          tgPick: TelegramPick = nil;
                          dcPick: DiscordPick = nil;
                          waPick: WhatsAppPick = nil;
@@ -352,6 +370,7 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
   result.teams = teamsOutboundPort(teamsAdapter, teamsPick)
   result.mattermost = mattermostOutboundPort(mattermostAdapter)
   result.sms = smsOutboundPort(smsAdapter)
+  result.irc = ircOutboundPort(ircAdapter)
 
   # ── LINE — capability descriptor says: send only ──────────────────────────
   result.line = OutboundChannelPort(
