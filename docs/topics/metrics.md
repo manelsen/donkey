@@ -103,3 +103,16 @@ never delays an answer; a failure is a warning in the log.
 
 Traces are not replayable: they carry no content, by design, so a turn cannot
 be re-run from one.
+
+### Insights
+
+The traces summed into a report: turns, tokens in and out, the tools used most
+and how often each failed, providers, channels and outcomes; for one person,
+also the learned skills they loaded most.
+
+```sh
+donkey ctl insights --since 30d
+donkey ctl insights --since 7d --user <uuid>
+```
+
+It reads the trace files, so it covers what was traced (`DONKEY_TRACES=on`).

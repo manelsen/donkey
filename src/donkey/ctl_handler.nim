@@ -15,6 +15,7 @@ import config/environment
 import domain/memory/conversation_search_pure
 import domain/turn_trace_pure
 import domain/dead_letters_pure
+import domain/insights_pure
 import app/turn_traces
 import app/curator
 import app/learned_skills
@@ -381,6 +382,30 @@ proc ctlDeliveries*(home: string): int =
     echo "no failed deliveries"
   for l in letters.get:
     echo operatorLine(l)
+  0
+
+proc ctlInsights*(paddocksDir: string; args: seq[string]): int =
+  ## `ctl insights [--since …] [--user UUID]` (E7.8): the traces summed —
+  ## turns, tokens, tools and their failures, providers, channels, outcomes —
+  ## and, for one person, the learned skills loaded most.
+  let options = parseTraceArgs(args, getTime().toUnix * 1000)
+  if options.isErr:
+    echo options.error
+    echo "usage: donkey ctl insights [--since 7d|24h|YYYY-MM-DD] [--user UUID]"
+    return 1
+  let period = (if options.get.sinceMs > 0: "since " & $fromUnix(options.get.sinceMs div 1000).utc.format("yyyy-MM-dd")
+                else: "all kept traces") &
+               (if options.get.user.len > 0: ", " & options.get.user else: "")
+  echo formatInsights(aggregateInsights(
+    exportTraces(tracesDir(paddocksDir), options.get.sinceMs, options.get.user)), period)
+  if options.get.user.len > 0:
+    var skills = newLearnedSkills(newFsAdapter(), paddocksDir / options.get.user).list()
+    skills.sort(proc(a, b: LearnedSkill): int = cmp(b.usage.loads, a.usage.loads))
+    if skills.len > 0:
+      echo "Learned skills loaded most:"
+      for i, s in skills:
+        if i >= 5: break
+        echo "  " & s.doc.name & ": " & $s.usage.loads
   0
 
 proc ctlToolAddHttp*(home, registryPath: string; args: seq[string]): int =
@@ -923,6 +948,8 @@ proc dispatchCtl*(cfg: DonkeyConfig;
     return ctlToolAddHttp(cfg.home, registryPath, args[3 ..^ 1])
   if args[1] == "traces":
     return ctlTraces(cfg.paddocks, args[2 ..^ 1])
+  if args[1] == "insights":
+    return ctlInsights(cfg.paddocks, args[2 ..^ 1])
   if args[1] == "deliveries":
     return ctlDeliveries(cfg.home)
   if args[1] == "mcp" and args.len >= 4 and args[2] == "login":
