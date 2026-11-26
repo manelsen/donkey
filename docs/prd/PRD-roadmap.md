@@ -227,6 +227,14 @@ usuários e agendamentos, mas não deixa agir; a gestão é por `donkey ctl`.
 *Aceite geral:* cada ação feita pela TUI tem o mesmo efeito do `ctl`
 correspondente e é testada pela mesma função pura.
 
+*Feito.* E6.2 cuida dos agentes da instância (`{home}/agents`, as personas
+dos bots): `N` abre um formulário, `Enter` edita, `D` apaga, pela mesma
+operação de `manage_agents`. Os agentes de cada usuário continuam com o
+próprio usuário, pela ferramenta. E6.4 mostra, na seção de providers, as
+chamadas, a latência e o cooldown da janela recente do daemon. O estado de
+conexão de cada canal não está no status do daemon, e a seção de canais
+mostra os ativos.
+
 ---
 
 ## Ordem e dependências

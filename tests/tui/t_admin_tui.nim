@@ -16,6 +16,9 @@ import donkey/adapters/memory/dm_allowlist
 import donkey/ports/approval
 import donkey/core/security/approval
 import donkey/domain/message
+import donkey/tui/agent_form
+import donkey/ports/ipc
+import donkey/domain/agents/named_agent_pure
 
 proc runTests*() =
   suite "Admin TUI":
@@ -61,13 +64,10 @@ proc runTests*() =
       check "verbose" in names
       check "reasoning" in names
 
-    test "loadAgentItems populates agents":
+    test "loadAgentItems without a home lists no agent (no sample data)":
       var st = newAdminState()
       st.loadAgentItems()
-      check st.items.len == 3
-      let names = st.items.mapIt(it.name)
-      check "default" in names
-      check "coder" in names
+      check st.items.len == 0
 
     test "loadChannelItems populates channels":
       var st = newAdminState()
@@ -134,7 +134,7 @@ proc runTests*() =
 
       st.section = asAgents
       st.loadSection()
-      check st.items.len == 3
+      check st.items.len == 0   ## no home: no agents
 
       st.section = asChannels
       st.loadSection()
@@ -918,6 +918,63 @@ summary: Test user detail view.
       let cfg = adminHome("config")
       let st = newAdminState(cfg)
       check st.memory.paddocksDir == cfg.paddocks
+
+    test "the Agents section lists the instance's agents, the bots' personas":
+      let cfg = adminHome("agents")
+      createDir(cfg.home / "agents")
+      writeFile(cfg.home / "agents" / "suporte.toml",
+        "name = \"suporte\"\ndescription = \"Atende clientes\"\nprovider = \"openrouter\"\n")
+      var st = stateAt(cfg, asAgents)
+      check st.items.len == 1
+      check st.items[0].name == "suporte"
+      check "Atende clientes" in st.items[0].description
+      check "openrouter" in st.items[0].status
+
+    test "an agent typed in the form is created, edited and deleted like manage_agents does":
+      let cfg = adminHome("agents-crud")
+      var st = stateAt(cfg, asAgents)
+      var f = newAgentForm()
+      f.values = @["vendas", "Fecha negócios", "", ""]
+      check saveAgentForm(st, f).isOk
+      check fileExists(cfg.home / "agents" / "vendas.toml")
+      check st.items.len == 1
+      var e = editAgentForm(st.agentAt(0).get)
+      e.values[3] = "gpt-x"
+      check saveAgentForm(st, e).isOk
+      check "gpt-x" in readFile(cfg.home / "agents" / "vendas.toml")
+      var dup = newAgentForm()
+      dup.values = @["vendas", "outra", "", ""]
+      check saveAgentForm(st, dup).isErr      ## it exists: edit it instead
+      check applyAdminKey(st, akDelete).isOk
+      check st.items.len == 0
+      check not fileExists(cfg.home / "agents" / "vendas.toml")
+
+    test "Agents keys: D deletes; N and Enter open the form (not an action)":
+      check adminKeyFor(asAgents, vmList, 'D') == some(akDelete)
+      check adminKeyFor(asAgents, vmList, 'E') == none(AdminKey)
+
+    test "provider health: calls, errors and latency of the recent window; a cooldown first":
+      let m = @[ProviderMetric(providerName: "openrouter", calls: 10, okCalls: 8,
+                               errCalls: 2, avgLatencyMs: 1200)]
+      check providerHealthText("openrouter", m, @[]) == "8/10 ok · 1200 ms"
+      check providerHealthText("openrouter", m, @["openrouter (3m)"]) ==
+        "cooldown 3m · 8/10 ok · 1200 ms"
+      check providerHealthText("groq", m, @[]) == "no recent calls"
+      check providerHealthText("groq", m, @["groq (40s)"]) == "cooldown 40s"
+      check providerHealthText("open", m, @["openrouter (3m)"]) == "no recent calls"
+
+    test "the Providers section shows each active provider's health":
+      var st = newAdminState()
+      st.runtimeProviders = @["openrouter", "groq"]
+      st.runtimeProviderMetrics = @[ProviderMetric(providerName: "openrouter", calls: 4,
+                                                   okCalls: 4, avgLatencyMs: 900)]
+      st.runtimeCooldowns = @["groq (2m)"]
+      st.section = asProviders
+      st.loadSection()
+      check st.items.len == 2
+      check st.items[0].status == "4/4 ok · 900 ms"
+      check st.items[1].status == "cooldown 2m"
+      check not st.items[1].enabled          ## cooling down: not taking calls
 
     test "a section without actions says so":
       let cfg = adminHome("none")

@@ -15,6 +15,7 @@ import ../core/types
 import ../adapters/ipc/[types, client]
 import ../adapters/memory/md_file
 import admin_tui
+import agent_form
 import ../adapters/provider/model_catalog
 
 const
@@ -36,6 +37,7 @@ type
     width:     int
     height:    int
     admin:     AdminState  ## admin panel state
+    form:      Option[AgentForm]  ## an agent being typed: it takes every key
     memory:    MdFileAdapter
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -73,6 +75,8 @@ proc fetchData(st: var TuiState) =
 
   ## Wire IPC status into admin panel state.
   st.admin.runtimeProviders = st.status.providers
+  st.admin.runtimeProviderMetrics = st.status.recentProviderMetrics
+  st.admin.runtimeCooldowns = st.status.providerCooldowns
   st.admin.runtimeChannels = st.status.channels
   st.admin.runtimeSessionCount = st.status.sessionCount
   st.admin.memory = st.memory
@@ -322,8 +326,39 @@ proc drawAdmin(tb: var TerminalBuffer; st: TuiState; y0: int) =
     of asPairings: "[A] approve  [X] reject  [<- ->] section"
     of asApprovals: "pending: [A] approve  [X] deny  ·  standing: [D] revoke"
     of asTraces: "read-only  [<- ->] section"
+    of asAgents: "[N] new agent  [Enter] edit  [D] delete  [<- ->] section"
     else: "[Enter] toggle  [^ v] navigate  [<- ->] section"
   tb.write(2, height - 2, footerHint)
+proc drawAgentForm(tb: var TerminalBuffer; f: AgentForm) =
+  ## Over the admin panel: one line per field, the cursor on the current one.
+  let x = 4
+  var y = 5
+  tb.setForegroundColor(fgYellow)
+  tb.write(x, y, (if f.editing: "Editar agente " & f.values[0] else: "Novo agente"))
+  y += 2
+  for i, label in FieldLabels:
+    let mark = if i == f.field: "> " else: "  "
+    tb.setForegroundColor(if f.editing and i == 0: fgBlue
+                          elif i == f.field: fgWhite else: fgCyan)
+    let value = f.values[i] & (if i == f.field: "_" else: "")
+    let room = max(10, tb.width - x - label.len - 6)
+    tb.write(x, y, mark & label & ": " & value[max(0, value.len - room) .. ^1])
+    inc y
+  y += 1
+  if f.error.len > 0:
+    tb.setForegroundColor(fgRed)
+    tb.write(x, y, f.error)
+  tb.setForegroundColor(fgCyan)
+  tb.write(x, y + 1, "[Tab ^ v] campo  [Enter] salvar  [Esc] cancelar")
+  tb.setForegroundColor(fgWhite)
+
+func formKeyCode(key: Key): int =
+  ## illwill's printable keys are their ASCII codes; the arrows are not.
+  case key
+  of Key.Up: KeyUp
+  of Key.Down: KeyDown
+  else: ord(key)
+
 proc render(tb: var TerminalBuffer; st: TuiState) =
   tb.clear()
   drawHeader(tb, st)
@@ -335,7 +370,11 @@ proc render(tb: var TerminalBuffer; st: TuiState) =
   of pSessions: drawSessions(tb, st, y0)
   of pLogs:     drawLogs(tb, st, y0)
   of pStats:    drawStats(tb, st, y0)
-  of pAdmin:    drawAdmin(tb, st, y0)
+  of pAdmin:
+    if st.form.isSome:
+      drawAgentForm(tb, st.form.get)
+    else:
+      drawAdmin(tb, st, y0)
   drawFooter(tb, st)
   tb.display()
 
@@ -372,7 +411,28 @@ proc runTui*(sockPath: string; env: Environment; cfg: DonkeyConfig) =
 
     ## Input (non-blocking, 100ms timeout).
     let key = getKeyWithTimeout(100)
+    if st.form.isSome:
+      if key != Key.None:
+        var f = st.form.get
+        case f.handleKey(formKeyCode(key))
+        of feCancel:
+          st.form = none(AgentForm)
+        of feSubmit:
+          let saved = saveAgentForm(st.admin, f)
+          if saved.isOk:
+            st.admin.showToast(saved.get)
+            st.form = none(AgentForm)
+          else:
+            f.error = saved.error
+            st.form = some(f)
+        else:
+          st.form = some(f)
+      render(tb, st)
+      continue
     case key
+    of Key.N, Key.ShiftN:
+      if st.panel == pAdmin and st.admin.section == asAgents:
+        st.form = some(newAgentForm())
     of Key.Q:
       break
     of Key.Escape:
@@ -433,11 +493,14 @@ proc runTui*(sockPath: string; env: Environment; cfg: DonkeyConfig) =
         if st.admin.viewMode == vmDetail and st.admin.selectedUserId.isSome:
           st.admin.confirmMode = cmDelete
       elif key == Key.Enter and st.panel == pAdmin:
-        if st.admin.section == asUsers and st.admin.viewMode == vmList and
+        if st.admin.section == asAgents:
+          let a = st.admin.agentAt(st.admin.selectedIndex)
+          if a.isSome: st.form = some(editAgentForm(a.get))
+        elif st.admin.section == asUsers and st.admin.viewMode == vmList and
             st.admin.items.len > 0 and st.admin.selectedIndex < st.admin.items.len:
           st.admin.selectedUserId = some(UserId(st.admin.items[st.admin.selectedIndex].name))
           st.admin.viewMode = vmDetail
-        elif st.admin.section notin {asUsers, asSchedules, asPairings, asApprovals, asTraces} and
+        elif st.admin.section notin {asUsers, asSchedules, asPairings, asApprovals, asTraces, asAgents} and
              st.admin.items.len > 0 and st.admin.selectedIndex < st.admin.items.len:
           st.admin.items[st.admin.selectedIndex].enabled = not st.admin.items[st.admin.selectedIndex].enabled
     else:
