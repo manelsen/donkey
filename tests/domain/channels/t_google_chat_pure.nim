@@ -110,5 +110,35 @@ proc runTests*() =
     test "a long reply is split under the message limit":
       check splitForChat("a".repeat(ChatTextChars + 1)).len == 2
 
+proc withAttachments(attachments: JsonNode; text = ""): string =
+  var j = parseJson(event(text, ""))
+  j["message"]["attachment"] = attachments
+  $j
+
+proc runMediaTests*() =
+  suite "google chat — attachments (E9.2)":
+    let uploaded = %* [{"name": "spaces/S1/messages/M1/attachments/A1",
+      "contentName": "foto.png", "contentType": "image/png", "source": "UPLOADED_CONTENT",
+      "attachmentDataRef": {"resourceName": "AbC-123_xyz="}}]
+
+    test "an uploaded file comes with the name to download it by":
+      let e = parseChatEvent(withAttachments(uploaded)).get
+      check e.attachments == @[ChatAttachment(resourceName: "AbC-123_xyz=", name: "foto.png",
+                                              mimeType: "image/png")]
+      check e.isTurn   ## a file with no text is still a turn
+
+    test "a Drive file has no data to download: named only":
+      let e = parseChatEvent(withAttachments(%* [{"contentName": "plano.gdoc",
+        "contentType": "application/vnd.google-apps.document", "source": "DRIVE_FILE",
+        "driveDataRef": {"driveFileId": "1x"}}], "veja")).get
+      check e.attachments == @[ChatAttachment(name: "plano.gdoc",
+        mimeType: "application/vnd.google-apps.document", drive: true)]
+
+    test "only a well-formed resource name reaches the media URL":
+      check mediaUrl("AbC-123_xyz=").get == "https://chat.googleapis.com/v1/media/AbC-123_xyz=?alt=media"
+      check mediaUrl("../../v1/spaces").isErr
+      check mediaUrl("").isErr
+
 when isMainModule:
   runTests()
+  runMediaTests()

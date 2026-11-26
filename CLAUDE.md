@@ -242,6 +242,7 @@ Estas regras agora são enforced por `scripts/check_boundaries.sh` e `tests/arch
 
 - `core` só contém tipos, parsers, reducers, deciders e helpers puros
 - `core` não importa `adapters/*`, `chronos`, `chronos/asyncsync`, `osproc`, `httpclient` nem o parser de TOML (`config/toml`)
+- `core` não grava em disco (`writeFile`, `createDir`, `open`…): a escrita fica em `adapters/filesystem` (verificado por `tests/architecture/t_app_raw_io.nim`)
 - `ports` definem capacidades estáveis; não importam `adapters/*` nem `app/*`
 - `app` é shell de casos de uso: lifecycle, actors, queues, streaming, polling, wiring
 - `adapters` traduzem I/O externo para `ports`; não carregam semântica cross-channel ou decisão de negócio

@@ -101,5 +101,28 @@ proc runTests*() =
         checkpoint("lower RawIoBudget to " & $sites.len)
       check sites.len == RawIoBudget
 
+const DiskWriteCalls = ["writeFile", "createDir", "existsOrCreateDir", "removeFile",
+                        "removeDir", "copyFile", "copyDir", "moveFile", "moveDir",
+                        "setFilePermissions", "open"]
+
+proc runCoreTests*() =
+  suite "the core writes nothing to disk (audit of 26/11, finding 4)":
+    test "no file or directory is written from src/donkey/core":
+      ## `core` is pure: the boundary script only looks at imports, so a
+      ## `writeFile` there passed. Writing belongs to adapters/filesystem.
+      var sites: seq[string]
+      for path in walkDirRec("src/donkey/core"):
+        if not path.endsWith(".nim"): continue
+        let src = readFile(path)
+        let lines = src.splitLines()
+        for i in rawIoLines(codeOnly(src)):
+          for name in DiskWriteCalls:
+            if name & "(" in lines[i] or name & " (" in lines[i]:
+              sites.add path & ":" & $(i + 1) & "  " & lines[i].strip
+              break
+      for site in sites: checkpoint(site)
+      check sites.len == 0
+
 when isMainModule:
   runTests()
+  runCoreTests()
