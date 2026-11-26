@@ -27,10 +27,11 @@ proc revokeAll(userId: UserId): AuthVerdict {.gcsafe, raises: [].} = avRevoked
 
 proc runTests*() =
   suite "daemon status":
-    test "active channels are named in a fixed order":
-      check activeChannelNames(ActiveChannels(qq: true, telegram: true, slack: true)) ==
-        @["telegram", "slack", "qq"]
-      check activeChannelNames(ActiveChannels()).len == 0
+    test "active channels are named in the channel order, any of them":
+      check activeChannelNames({ckQQ, ckTelegram, ckSlack}) == @["telegram", "qq", "slack"]
+      check activeChannelNames({ckWhatsApp, ckTeams, ckMattermost, ckSms, ckIrc, ckGoogleChat}) ==
+        @["whatsapp", "teams", "mattermost", "sms", "irc", "google-chat"]
+      check activeChannelNames({}).len == 0
 
     test "the snapshot carries sessions, channels, tools and route health":
       var sm: SessionManager
@@ -40,7 +41,7 @@ proc runTests*() =
       let health = newRouteHealth(RouteHealthStore())
       health.recordChoice(ProviderSelection(providerName: "openrouter", modelName: "a"))
       let st = daemonStatus(sm, DaemonStatusInputs(
-        channels: ActiveChannels(telegram: true), health: health,
+        channels: {ckTelegram}, health: health,
         toolsCount: 7, uptimeSec: 42, providers: @["openrouter"],
         memoryBackend: "md"))
       check st.sessionCount == 1
@@ -51,6 +52,17 @@ proc runTests*() =
       check st.uptimeSec == 42
       check st.routeCounts[0].route == "openrouter/a"
       check st.memoryBackend == "md"
+
+    test "every provider with recent calls is in the snapshot, not only the busiest five":
+      var sm: SessionManager
+      sm.init()
+      let health = newRouteHealth(RouteHealthStore())
+      for name in ["openrouter", "anthropic", "openai", "groq", "gemini", "mistral", "deepseek"]:
+        let sel = ProviderSelection(providerName: name, modelName: "m")
+        health.recordChoice(sel)
+        health.recordResult(sel, 100, ok = true)
+      let st = daemonStatus(sm, DaemonStatusInputs(health: health))
+      check st.recentProviderMetrics.len == 7
 
   suite "access policy":
     proc notRevoked(u: UserId): Result[bool, string] {.gcsafe, raises: [].} = ok(false)
