@@ -172,6 +172,19 @@ proc runTests*() =
       let again = waitFor handler("sampling/createMessage", request(maxTokens = 1_000), call)
       check again.isErr and "daily" in again.error
 
+    test "a request with no channel to ask on reserves nothing":
+      fresh("nochannel")
+      defer: resetApprovalService()
+      let outbox = newAsyncQueue[OutboundMessage]()
+      let m = Model()
+      let handler = samplingHandler("fs", serverIdentity("npx", @["fs"]),
+                                    deps(m, outbox, cap = 1_500))
+      let lost = ToolCall(id: "c9", name: "x", userId: "u1", channel: "pigeon")
+      check (waitFor handler("sampling/createMessage", request(maxTokens = 1_000), lost)).isErr
+      let person = press(outbox, "allow")
+      check (waitFor handler("sampling/createMessage", request(maxTokens = 1_000), call)).isOk
+      discard waitFor person
+
     test "other requests from the server are not supported":
       fresh("other")
       defer: resetApprovalService()

@@ -49,6 +49,9 @@ proc samplingHandler*(serverName, identity: string; deps: SamplingDeps): Samplin
       return err("sampling is only possible during a person's tool call")
     let req = parseSamplingRequest(params).valueOr:
       return err(error)
+    var channel = ckTelegram
+    if not parseChannelKindName(call.channel, channel):
+      return err("no channel to ask the person on")
     let started = epochMs()
     deps.budget.dailyCap = deps.dailyTokenCap
     ## What may be spent is the limit after capping; it is reserved now, so
@@ -61,9 +64,6 @@ proc samplingHandler*(serverName, identity: string; deps: SamplingDeps): Samplin
     deps.budget[].spend(identity, reserved, started)
     template giveBack() =
       deps.budget[].spend(identity, -reserved, started)
-    var channel = ckTelegram
-    if not parseChannelKindName(call.channel, channel):
-      return err("no channel to ask the person on")
     let decision =
       try:
         await requestStandingApproval(currentApprovalService(), UserId(call.userId),
