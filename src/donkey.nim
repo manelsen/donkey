@@ -80,6 +80,8 @@ import donkey/adapters/channel/sms
 import donkey/adapters/channel/sms_runtime
 import donkey/adapters/channel/irc
 import donkey/adapters/channel/irc_runtime
+import donkey/adapters/channel/google_chat
+import donkey/adapters/channel/google_chat_runtime
 import donkey/adapters/channel/cli_repl
 import donkey/adapters/webhook/webhook_receiver
 import donkey/domain/channels/line_policy
@@ -253,6 +255,8 @@ type DaemonEnv = object
   twilioWebhookUrl: string  ## TWILIO_WEBHOOK_URL: the exact URL Twilio calls
   irc: IrcSettings          ## IRC_SERVER, IRC_NICK, IRC_PASSWORD, IRC_CHANNELS, IRC_REALNAME
   ircProblem: string        ## why IRC_SERVER could not be read
+  googleChatProjectNumber: string  ## GOOGLE_CHAT_PROJECT_NUMBER: the token audience
+  googleChatServiceAccount: string ## GOOGLE_CHAT_SERVICE_ACCOUNT: the key's JSON (vault)
 
 type DaemonAdapters = object
   tg: TelegramAdapter
@@ -276,6 +280,7 @@ type DaemonAdapters = object
   mm: MattermostAdapter
   sms: SmsAdapter
   irc: IrcAdapter
+  gchat: GoogleChatAdapter
   mx: MatrixAdapter
   em: EmailAdapter
   wa: WhatsAppAdapter
@@ -321,7 +326,7 @@ proc buildRuntimeOutboundPorts(adapters: var DaemonAdapters): OutboundChannelPor
     addr adapters.em, addr adapters.sl, addr adapters.dt, addr adapters.wa,
     addr adapters.cli, signalPtr, addr adapters.ln, addr adapters.teams,
     mattermostAdapter = addr adapters.mm, smsAdapter = addr adapters.sms,
-    ircAdapter = addr adapters.irc,
+    ircAdapter = addr adapters.irc, googleChatAdapter = addr adapters.gchat,
     tgPick = telegramPick(adapters), dcPick = discordPick(adapters),
     waPick = whatsappPick(adapters), teamsPick = teamsPick(adapters))
 
@@ -686,6 +691,8 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
   result.twilioAuthToken = cfg.env.get("TWILIO_AUTH_TOKEN").strip()
   result.twilioFromNumber = cfg.env.get("TWILIO_FROM_NUMBER").strip()
   result.twilioWebhookUrl = cfg.env.get("TWILIO_WEBHOOK_URL").strip()
+  result.googleChatProjectNumber = cfg.env.get("GOOGLE_CHAT_PROJECT_NUMBER").strip()
+  result.googleChatServiceAccount = cfg.env.get("GOOGLE_CHAT_SERVICE_ACCOUNT")
   let ircServer = cfg.env.get("IRC_SERVER").strip()
   if ircServer.len > 0:
     let parsed = parseIrcServer(ircServer)
@@ -761,6 +768,8 @@ proc initDaemonAdapters(cfg: DonkeyConfig; env: DaemonEnv): DaemonAdapters =
     env.teamsTenantId, env.identityPath,
     cfg.home / "state" / "teams_conversations.json",
     serviceHosts = env.teamsServiceHosts)
+  result.gchat = newGoogleChatAdapter(env.googleChatServiceAccount, env.identityPath,
+    cfg.home / "state" / "google_chat_spaces.json")
   result.irc = newIrcAdapter(env.irc.host.len > 0 and env.irc.nick.len > 0,
     env.identityPath, cfg.home / "state" / "irc_nicks.json")
   result.sms = newSmsAdapter(env.twilioAccountSid, env.twilioAuthToken,
@@ -1035,6 +1044,7 @@ proc startOptionalWebhookReceiver(env: DaemonEnv; qqOneBot: bool; log: Logger;
     teamsApps: teamsApps,
     twilioAuthToken: env.twilioAuthToken,
     twilioWebhookUrl: env.twilioWebhookUrl,
+    googleChatProjectNumber: env.googleChatProjectNumber,
     tlsCertFile: env.webhookTlsCert,
     tlsKeyFile: env.webhookTlsKey,
   )
@@ -1358,6 +1368,7 @@ func outboundPortForChannel(ports: OutboundChannelPorts;
   of ckMattermost: ports.mattermost
   of ckSms: ports.sms
   of ckIrc: ports.irc
+  of ckGoogleChat: ports.googleChat
 
 proc makeCompleteBuilder(): proc(preferencesMd: string): CompleteFn {.gcsafe.} =
   result = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
@@ -1738,6 +1749,17 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
           err("Mattermost: outbox full, /continue reply dropped")
       drainMattermostEvents(ctx.adapters.mm, ctx.runtime.sm, fallback,
                             enqueueMattermostReply, log) > 0,
+    drainGoogleChat = proc(): bool =
+      if ctx.env.googleChatProjectNumber.len == 0:
+        return false
+      let enqueueChatReply = proc(msg: OutboundMessage): Result[void, string] {.gcsafe, raises: [].} =
+        try:
+          ctx.runtime.globalOutbox.putNoWait(msg)
+          ok()
+        except AsyncQueueFullError:
+          err("Google Chat: outbox full, /continue reply dropped")
+      drainGoogleChatEvents(ctx.adapters.gchat, ctx.runtime.sm, fallback,
+                            enqueueChatReply, log) > 0,
     drainIrc = proc(): bool =
       if ctx.env.irc.host.len == 0:
         return false
@@ -2197,8 +2219,10 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     ## Teams activities were answered 200 when queued: the same holds.
     if drainer.drainTeams():
       await sleepAsync(ctimer.milliseconds(500))
-    ## So were SMS messages.
-    if drainer.drainSms():
+    ## So were SMS messages and Google Chat events.
+    let smsDrained = drainer.drainSms()          ## both run: no short circuit
+    let chatDrained = drainer.drainGoogleChat()
+    if smsDrained or chatDrained:
       await sleepAsync(ctimer.milliseconds(500))
     ## Stop ingress first, then let already-admitted turns publish their replies.
     ## Connections accepted before the stop may have enqueued Feishu events;
