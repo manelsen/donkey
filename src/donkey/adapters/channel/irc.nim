@@ -267,7 +267,7 @@ proc send*(a: IrcAdapter; msg: OutboundMessage): Result[void, string] =
     target = a.state.nicks.getOrDefault(account)
     if target.len == 0:
       return err("IRC: no nick known for account " & account)
-  if target.contains({' ', '\r', '\n', '\0', ','}):
+  if target.contains({' ', '\r', '\n', '\0', ',', ':'}) or target.startsWith("@"):
     return err("IRC: not a target: " & target)
   for line in privmsgLines(target, msg.text):
     if not pushOutLine(line):
