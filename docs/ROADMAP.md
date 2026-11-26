@@ -126,12 +126,13 @@ comandos destrutivos.
 | E7.7 Jornada | `ctl skill learned` e o detalhe da pessoa na TUI | **Feito** (#226) |
 | E7.8 Insights | `donkey ctl insights`: turnos, tokens, ferramentas e falhas, providers, skills mais carregadas | **Feito** (#227); correções das revisões em #228 |
 
-## 6. Quarta rodada (proposta em 26/11; decisões de E9 a E12 tomadas)
+## 6. Quarta rodada (proposta em 26/11; decisões de E9 a E13 quase todas tomadas)
 
 As seis candidatas do comparativo, épicos E8 a E13 no PRD, renumeradas em
 26/11 (a escrita no GitHub subiu para E11, a supervisão para E12, os canais
 restantes foram para o fim). E8 está feito; de E9 a E12 as decisões estão
-tomadas; E13 ainda pede a do A2A.
+tomadas; no E13, o A2A entra, e falta decidir se o Donkey também chama
+agentes A2A.
 
 | Épico | Frente | O que entrega | Decisões pendentes |
 |---|---|---|---|
@@ -140,7 +141,7 @@ tomadas; E13 ainda pede a do A2A.
 | E10 | Interface para editores (ACP) | `donkey acp`: sessões, streaming, ferramentas e aprovações no Zed e afins, pela IPC do daemon; o editor entra por pareamento | Decididas: pareamento; memória compartilhada com os outros canais |
 | E11 | Escrita no GitHub | Abrir e fechar issues, comentar, rotular, com o token de cada pessoa; política por repositório (`allow`, `ask`, `deny` por ação) | Decididas: política por repositório; token da pessoa |
 | E12 | Supervisão de adapters | À maneira do OTP: árvore de supervisão, `one_for_one`, tipos de filho, intensidade de reinícios e escalada; fontes de `Defect` viram erro como valor; canais de socket como processo filho | Decidida: inspirar-se no OTP |
-| E13 | Canais restantes | ntfy, SimpleX, BlueBubbles (iMessage), A2A | A2A nesta rodada; cliente A2A |
+| E13 | Canais restantes | ntfy, SimpleX, BlueBubbles (iMessage), A2A | Decidida: A2A entra. Pendente: cliente A2A |
 
 ## 7. Decidido não fazer
 

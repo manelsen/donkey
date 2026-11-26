@@ -560,8 +560,8 @@ relevantes para equipes pequenas.
 *Aceite geral:* cada canal com servidor falso nos testes, documentação em
 `docs/topics/channels.md` e estado de conexão no status.
 
-*Decisões a tomar:* se A2A entra nesta rodada (é o maior e o menos pedido);
-se o Donkey também chama agentes A2A (cliente) ou só os atende.
+*Decisão (26/11):* A2A entra nesta rodada. *A tomar:* se o Donkey também
+chama agentes A2A (cliente) ou só os atende.
 
 ---
 
