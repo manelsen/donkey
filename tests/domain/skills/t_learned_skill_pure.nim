@@ -102,7 +102,7 @@ proc runTests*() =
       check "more skills" in idx
 
     test "a long description is cut at a character, never inside one":
-      let idx = skillsIndex(@[SkillDoc(name: "x", description: "ç".repeat(300))])
+      let idx = skillsIndex(@[SkillDoc(name: "x", description: "a" & "ç".repeat(300))])   ## odd offset: a byte cut would split a "ç"
       check validateUtf8(idx) == -1
 
     test "skill_manage: each action and what it needs":
