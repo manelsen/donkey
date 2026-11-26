@@ -16,6 +16,7 @@ import ../adapters/ipc/[types, client]
 import ../adapters/memory/md_file
 import admin_tui
 import agent_form
+import admin_keys
 import ../adapters/provider/model_catalog
 
 const
@@ -450,7 +451,7 @@ proc runTui*(sockPath: string; env: Environment; cfg: DonkeyConfig) =
       st.panel = Panel((ord(st.panel) + 1) mod (ord(Panel.high) + 1))
       if st.panel == pAdmin:
         st.admin.loadSection()
-    of Key.R:
+    of Key.R, Key.ShiftR:
       fetchData(st)
       st.lastFetch = epochTime()
       lastRefresh  = epochTime()
@@ -472,13 +473,11 @@ proc runTui*(sockPath: string; env: Environment; cfg: DonkeyConfig) =
       if st.panel == pAdmin:
         if st.admin.selectedIndex < st.admin.items.high:
           inc st.admin.selectedIndex
-    of Key.Enter, Key.D, Key.X, Key.A:
-      let ch =
-        case key
-        of Key.Enter: 'E'
-        of Key.D: 'D'
-        of Key.X: 'X'
-        else: 'A'
+    of Key.Enter, Key.D, Key.X, Key.A, Key.ShiftD, Key.ShiftX, Key.ShiftA:
+      ## With or without Shift: the footer writes the letters in capitals.
+      ## Every key of this branch has an action letter; one added here
+      ## without one in actionChar fails loudly instead of acting as Enter.
+      let ch = actionChar(key).get
       let action =
         if st.panel == pAdmin: adminKeyFor(st.admin.section, st.admin.viewMode, ch)
         else: none(AdminKey)
@@ -486,13 +485,13 @@ proc runTui*(sockPath: string; env: Environment; cfg: DonkeyConfig) =
         ## The same operation as its `ctl` command (admin_tui.applyAdminKey).
         let done = applyAdminKey(st.admin, action.get)
         if done.isOk: st.admin.showToast(done.get) else: st.admin.showToast(done.error, tkError)
-      elif key == Key.A and st.panel != pAdmin:
+      elif ch == 'A' and st.panel != pAdmin:
         st.panel = pAdmin
         st.admin.loadSection()
-      elif key == Key.D and st.panel == pAdmin:
+      elif ch == 'D' and st.panel == pAdmin:
         if st.admin.viewMode == vmDetail and st.admin.selectedUserId.isSome:
           st.admin.confirmMode = cmDelete
-      elif key == Key.Enter and st.panel == pAdmin:
+      elif ch == 'E' and st.panel == pAdmin:
         if st.admin.section == asAgents:
           let a = st.admin.agentAt(st.admin.selectedIndex)
           if a.isSome: st.form = some(editAgentForm(a.get))
