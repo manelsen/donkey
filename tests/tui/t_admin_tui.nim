@@ -887,6 +887,38 @@ summary: Test user detail view.
       check "calc" in st.items[1].description
       check applyAdminKey(st, akDelete).isErr
 
+    test "the dashboard's keys map to actions, keeping what they already did":
+      ## Users: Enter opens the detail; in the detail Enter revokes/restores
+      ## and D stays the delete confirmation (not an action here).
+      check adminKeyFor(asUsers, vmList, 'E') == none(AdminKey)
+      check adminKeyFor(asUsers, vmDetail, 'E') == some(akToggle)
+      check adminKeyFor(asUsers, vmDetail, 'D') == none(AdminKey)
+      check adminKeyFor(asSchedules, vmList, 'E') == some(akToggle)
+      check adminKeyFor(asSchedules, vmList, 'D') == some(akDelete)
+      check adminKeyFor(asPairings, vmList, 'A') == some(akApprove)
+      check adminKeyFor(asPairings, vmList, 'X') == some(akReject)
+      check adminKeyFor(asApprovals, vmList, 'D') == some(akDelete)
+      check adminKeyFor(asConfig, vmList, 'E') == none(AdminKey)
+      check adminKeyFor(asTraces, vmList, 'D') == none(AdminKey)
+
+    test "in the detail view the action is on the person shown":
+      let cfg = adminHome("detail")
+      createDir(cfg.paddocks / "u-1")
+      writeFile(cfg.paddocks / "u-1" / "USER.md", "# User\n**Access:** active\n")
+      createDir(cfg.paddocks / "u-2")
+      writeFile(cfg.paddocks / "u-2" / "USER.md", "# User\n**Access:** active\n")
+      var st = stateAt(cfg, asUsers)
+      st.selectedIndex = 0
+      st.viewMode = vmDetail
+      st.selectedUserId = some(UserId("u-2"))
+      check "u-2" in applyAdminKey(st, akToggle).get
+      check not dmAllowlistOf(cfg.paddocks).isAllowed(UserId("u-2")).get
+
+    test "an admin state built from the configuration reads its home and paddocks":
+      let cfg = adminHome("config")
+      let st = newAdminState(cfg)
+      check st.memory.paddocksDir == cfg.paddocks
+
     test "a section without actions says so":
       let cfg = adminHome("none")
       var st = stateAt(cfg, asProviders)

@@ -277,6 +277,7 @@ const
 
 proc newAdminState*(cfg: DonkeyConfig = defaultConfig("")): AdminState =
   AdminState(
+    memory: MdFileAdapter(paddocksDir: cfg.paddocks),
     section: asConfig,
     selectedIndex: 0,
     items: @[],
@@ -540,9 +541,34 @@ type
     akReject    ## X
     akDelete    ## D
 
+func adminKeyFor*(section: AdminSection; view: ViewMode; key: char): Option[AdminKey] =
+  ## The action a key means in the dashboard's admin panel ('E' is Enter),
+  ## keeping what keys already did there: on Users, Enter opens the detail
+  ## and D in the detail is the delete confirmation.
+  case section
+  of asUsers:
+    if view == vmDetail and key == 'E': some(akToggle) else: none(AdminKey)
+  of asSchedules:
+    case key
+    of 'E': some(akToggle)
+    of 'D': some(akDelete)
+    else: none(AdminKey)
+  of asPairings, asApprovals:
+    case key
+    of 'A': some(akApprove)
+    of 'X': some(akReject)
+    of 'D': some(akDelete)
+    else: none(AdminKey)
+  else: none(AdminKey)
+
 proc applyAdminKey*(st: var AdminState; key: AdminKey): Result[string, string] =
   ## One action on the selected item, through the same operation its `ctl`
   ## command runs (admin_ops, the stores); the section is reloaded after.
+  ## In a person's detail view the action is on that person.
+  if st.section == asUsers and st.viewMode == vmDetail and st.selectedUserId.isSome:
+    for i, it in st.items:
+      if it.name == $st.selectedUserId.get:
+        st.selectedIndex = i
   if st.selectedIndex < 0 or st.selectedIndex >= st.items.len:
     return err("nothing selected")
   let item = st.items[st.selectedIndex]

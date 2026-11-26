@@ -2211,7 +2211,7 @@ proc main =
   cmdReg.register(CommandEntry(
     name: "tui", minArgs: 1,
     handler: proc(a: seq[string]): int =
-      dispatchTui(cfg.home / SockFileName, cfg.env),
+      dispatchTui(cfg.home / SockFileName, cfg.env, cfg),
     context: ccConfigLoaded, description: "Open live TUI dashboard"))
   cmdReg.register(CommandEntry(
     name: "doctor", minArgs: 1,
