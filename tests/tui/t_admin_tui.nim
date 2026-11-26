@@ -9,6 +9,13 @@ import donkey/adapters/memory/md_file
 import donkey/adapters/state/schedule_store
 import donkey/domain/automation/schedule_pure
 import donkey/core/pipeops
+import donkey/adapters/state/pairing_store
+import donkey/adapters/state/approval_store
+import donkey/adapters/state/standing_approvals
+import donkey/adapters/memory/dm_allowlist
+import donkey/ports/approval
+import donkey/core/security/approval
+import donkey/domain/message
 
 proc runTests*() =
   suite "Admin TUI":
@@ -24,7 +31,7 @@ proc runTests*() =
 
     test "sectionLabels returns all labels":
       let labels = sectionLabels()
-      check labels.len == 9
+      check labels.len == 12
       check "Config" in labels.join
       check "Agents" in labels.join
       check "Channels" in labels.join
@@ -759,7 +766,7 @@ summary: Test user detail view.
 
     test "sectionCount matches AdminSection count":
       let count = AdminSection.high.ord + 1
-      check count == 9  # Config, Agents, Channels, Providers, Models, Hooks, Plugins, Users, Schedules
+      check count == 12  # … Users, Schedules, Pairings, Approvals, Traces
 
   suite "Admin TUI — schedules":
     test "the schedules section lists the store, read-only":
@@ -789,6 +796,94 @@ summary: Test user detail view.
       st.config.home = getTempDir() / "donkey_tui_no_schedules"
       st.loadScheduleItems(nowMs = 0)
       check st.items.len == 0
+
+
+  suite "Admin TUI — actions (E6)":
+
+    proc adminHome(tag: string): DonkeyConfig =
+      let dir = getTempDir() / ("donkey_tui_actions_" & tag)
+      removeDir(dir)
+      createDir(dir / "paddocks")
+      createDir(dir / "state")
+      result = defaultConfig(dir)
+      result.paddocks = dir / "paddocks"
+
+    proc stateAt(cfg: DonkeyConfig; section: AdminSection): AdminState =
+      result = newAdminState(cfg)
+      result.memory = MdFileAdapter(paddocksDir: cfg.paddocks)
+      result.section = section
+      result.loadSection()
+
+    test "Enter on a person revokes them, and again restores them":
+      let cfg = adminHome("users")
+      createDir(cfg.paddocks / "u-1")
+      writeFile(cfg.paddocks / "u-1" / "USER.md", "# User\n**Access:** active\n")
+      var st = stateAt(cfg, asUsers)
+      check st.items.len == 1
+      check applyAdminKey(st, akToggle).get.startsWith("Revoked")
+      check st.items[0].status == "revoked"
+      check not dmAllowlistOf(cfg.paddocks).isAllowed(UserId("u-1")).get
+      check applyAdminKey(st, akToggle).get.startsWith("Restored")
+
+    test "a pairing is approved with A and rejected with X":
+      let cfg = adminHome("pairings")
+      let store = newPairingStore(cfg.home / "state" / "pairings.json")
+      check store.requestPairing(ckTelegram, "42").isOk
+      check store.requestPairing(ckDiscord, "77").isOk
+      var st = stateAt(cfg, asPairings)
+      check st.items.len == 2
+      check "Paired" in applyAdminKey(st, akApprove).get
+      check st.items.len == 1
+      check applyAdminKey(st, akReject).isOk
+      check st.items.len == 0
+      check applyAdminKey(st, akApprove).isErr   ## nothing selected
+
+    test "Enter pauses and resumes a schedule, D removes it":
+      let cfg = adminHome("schedules")
+      let store = newScheduleStoreRef(cfg.home / "state")
+      check store.upsert(ScheduleRecord(spec: ScheduleSpec(id: "news", cronExpr: "@daily",
+        userId: "u-1", channel: "telegram", payload: "x", enabled: true, createdAtMs: 0))).isOk
+      var st = stateAt(cfg, asSchedules)
+      check applyAdminKey(st, akToggle).isOk
+      check not st.items[0].enabled
+      check applyAdminKey(st, akToggle).isOk
+      check st.items[0].enabled
+      check applyAdminKey(st, akDelete).isOk
+      check st.items.len == 0
+
+    test "pending approvals are decided, standing ones revoked":
+      let cfg = adminHome("approvals")
+      let approvals = newApprovalStore(cfg.home / "state" / "approvals.json")
+      let request = approvals.create("u-1", "telegram", "bash", "rm x", 60_000).get
+      let standing = newStandingApprovals(cfg.home / "state" / StandingApprovalsFile).toStandingPort()
+      check standing.grant("u-1", "sampling:abc").isOk
+      var st = stateAt(cfg, asApprovals)
+      check st.items.len == 2
+      st.selectedIndex = 0   ## pending come first
+      check applyAdminKey(st, akApprove).isOk
+      check approvals.status(request.id).get == apsApproved
+      check st.items.len == 1 and st.items[0].status == "standing"
+      check applyAdminKey(st, akDelete).isOk
+      check st.items.len == 0
+      check not newStandingApprovals(cfg.home / "state" / StandingApprovalsFile).toStandingPort().has("u-1", "sampling:abc")
+
+    test "traces are listed, newest first, and cannot be changed":
+      let cfg = adminHome("traces")
+      createDir(cfg.home / "state" / "traces")
+      writeFile(cfg.home / "state" / "traces" / "2027-01-15.jsonl",
+        """{"ts":1800000000000,"user":"u-1","channel":"telegram","kind":"user","outcome":"ok","tools":[{"name":"calc","outcome":"output"}],"duration_ms":1200}""" & "\n" &
+        """{"ts":1800000100000,"user":"u-2","channel":"teams","kind":"user","outcome":"provider_error","tools":[],"duration_ms":300}""" & "\n")
+      var st = stateAt(cfg, asTraces)
+      check st.items.len == 2
+      check "u-2" in st.items[0].name
+      check st.items[0].status == "provider_error"
+      check "calc" in st.items[1].description
+      check applyAdminKey(st, akDelete).isErr
+
+    test "a section without actions says so":
+      let cfg = adminHome("none")
+      var st = stateAt(cfg, asProviders)
+      check applyAdminKey(st, akDelete).isErr
 
 when isMainModule:
   runTests()

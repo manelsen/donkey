@@ -20,9 +20,8 @@ import config/clawhub_registry
 import config/dotenv
 import config/loader
 import adapters/memory/md_file
-import adapters/memory/dm_allowlist
-import adapters/identity/identity_resolver
 import adapters/state/pairing_store
+import admin_ops
 import adapters/state/approval_store
 import adapters/state/standing_approvals
 import ports/approval
@@ -80,22 +79,11 @@ proc ctlUserEdit*(memory: MdFileAdapter;
   ok()
 
 proc ctlUserRevoke*(memory: MdFileAdapter; uuid: string; revoked: bool): Result[void, string] =
-  let userId = UserId(uuid)
-  # Allowlist first: a failure must not leave Access changed without the
-  # corresponding allowlist entry.
-  let allowlistResult =
-    if revoked: dmAllowlistOf(memory.paddocksDir).disallow(userId)
-    else: dmAllowlistOf(memory.paddocksDir).allow(userId)
-  if allowlistResult.isErr:
-    echo "Error: " & allowlistResult.error
-    return err(allowlistResult.error)
-  if memory.hasProfile(userId):
-    let updated = memory.updateUserField(
-      userId, "Access", if revoked: "revoked" else: "active")
-    if updated.isErr:
-      echo "Error: " & updated.error
-      return err(updated.error)
-  echo (if revoked: "Revoked " else: "Restored ") & uuid
+  let done = setUserAccess(memory, uuid, revoked)
+  if done.isErr:
+    echo "Error: " & done.error
+    return err(done.error)
+  echo done.get
   ok()
 
 # ── ctl pairing commands ───────────────────────────────────────────────────────
@@ -117,30 +105,13 @@ proc ctlPairList*(store: PairingStore): Result[void, string] =
 
 proc ctlPairApprove*(cfg: DonkeyConfig; memory: MdFileAdapter;
                      store: PairingStore; code: string): Result[void, string] =
-  var requests = ? store.load()
-  let idx = findIndexByCode(requests, code.strip)
-  if idx < 0:
-    return err("pairing request not found or expired: " & code)
-  let request = requests[idx]
-  let resolver = newIdentityResolver(cfg.home / "identities.tsv")
-  let userId = resolver.resolve(request.channel, request.rawId)
-  ? dmAllowlistOf(memory.paddocksDir).allow(userId)
-  requests.delete(idx)
-  let saved = store.save(requests)
-  if saved.isErr:
-    echo "Access granted to " & $request.channel & " " & request.rawId &
-         " -> " & $userId & ", but removing the pending request failed: " &
-         saved.error & ". Run `donkey ctl pair reject " & request.code &
-         "` to clean it up."
-    return err("access granted; pending request cleanup failed")
-  echo "Paired " & $request.channel & " " & request.rawId & " -> " & $userId
+  let done = ? approvePairing(cfg, memory, store, code)
+  echo done
   ok()
 
 proc ctlPairReject*(store: PairingStore; code: string): Result[void, string] =
-  let removed = ? store.removeByCode(code.strip)
-  if not removed:
-    return err("pairing request not found or expired: " & code)
-  echo "Pairing request " & code & " rejected."
+  let done = ? rejectPairing(store, code)
+  echo done
   ok()
 
 # ── ctl approval commands ──────────────────────────────────────────────────────
