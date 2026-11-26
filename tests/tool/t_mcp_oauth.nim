@@ -4,6 +4,7 @@
 ## (RFC 8707). The PKCE value is RFC 7636's own example (Appendix B).
 
 import std/[base64, json, os, posix, sequtils, strutils, unittest, uri]
+import chronos
 import donkey/adapters/tool/mcp_http_client
 import donkey/adapters/tool/mcp_oauth
 import donkey/core/pipeops
@@ -346,7 +347,7 @@ proc runTests*() =
         tokens: OAuthTokens(accessToken: "revoked", refreshToken: "rt", expiresAt: 99999)))
       var c = newMcpHttpClient(Server, http = fakePort(f),
         tokenFn = mcpTokenSource(StoreDir, Server, fakePort(f), clock = proc(): int64 = 1000))
-      let tools = c.listTools()
+      let tools = waitFor c.listToolsAsync()
       check tools.isOk
       check f.tokenCalls == 1
 

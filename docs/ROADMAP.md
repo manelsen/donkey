@@ -33,7 +33,7 @@
 | 2 | Canal Microsoft Teams | Canal novo, antes do resto (há usuária em Teams). **Feito** (texto; anexos e cartões depois) | Canais (~0,5) | E2 |
 | 3 | Multi-bot | Vários bots por canal numa instância; só a fachada (token, nome, persona, modelo); usuários, memória e sessões são os da instância. Telegram, Discord, WhatsApp e Teams. **Feito** (persona do operador em `{home}/agents/`; o bot que responde é o último com que a pessoa falou) | Multiagente (~1) | E3 |
 | 4 | Kanban mínimo | Quadro de tarefas sem UI: ferramenta, comando e atribuição a agentes nomeados. **Feito** (`manage_tasks`, `/tasks`; tarefa de agente com prazo vira turno dele no dia) | Ferramentas (~1,5–2) | E4 |
-| 5 | MCP sampling | Permitido com aprovação a cada pedido, e aprovação permanente por servidor como opção. **Feito** para servidores stdio (o cliente MCP agora é assíncrono); HTTP e skills Deno ainda síncronos | Extensibilidade (~0,5) | E5 |
+| 5 | MCP sampling | Permitido com aprovação a cada pedido, e aprovação permanente por servidor como opção. **Feito** para servidores stdio; nenhuma chamada de ferramenta segura mais o laço (MCP stdio e HTTP e skills Deno são assíncronos) | Extensibilidade (~0,5) | E5 |
 | 6 | Gestão pela TUI | Ampliar a TUI existente com ações de gestão; nada de UI web. **Feito em parte**: usuários, pareamentos, agendamentos, aprovações (pendentes e permanentes) e traços; faltam criar e editar agentes (pede entrada de texto na TUI) e a saúde dos providers e conexões | Interfaces (~1,5) | E6 |
 
 Ganho somado estimado: ~6 pontos, para ~84%.

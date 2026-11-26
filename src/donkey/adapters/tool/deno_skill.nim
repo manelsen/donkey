@@ -1,21 +1,13 @@
-## DenoSkillAdapter — ToolPort wrapper for Deno-based skills (Clawhub/custom).
+## deno_skill — a Deno skill (Clawhub or custom) as an MCP server in a
+## sandboxed subprocess: `deno run <permissions> <script>`, driven by the
+## asynchronous stdio client (mcp_client) like any MCP server.
 ##
-## Skills are TypeScript/JS files executed via `deno run` with explicit
-## --allow-* permission flags. Communicates via MCP JSON-RPC over stdin/stdout,
-## identical to McpClientAdapter — Deno skills are just MCP servers in a Deno
-## subprocess.
-##
-## Threat model: Deno sandbox enforces OS-level boundaries. See CLAUDE.md
-## "Threat model — Skills de terceiros" for the full analysis.
+## Threat model: Deno's --allow-* flags enforce OS-level boundaries. See
+## CLAUDE.md "Threat model — Skills de terceiros" for the full analysis.
 
-import ./mcp_sync_client
-export mcp_sync_client
-
-type
-  DenoSkillAdapter* = McpClientAdapter
+import ./mcp_client
+export mcp_client
 
 proc newDenoSkillAdapter*(script: string;
-                           permissions: seq[string] = @[]): DenoSkillAdapter =
-  ## Builds an McpClientAdapter that runs `deno run <permissions> <script>`.
-  let args = permissions & @[script]
-  newMcpClient("deno", @["run"] & args)
+                          permissions: seq[string] = @[]): McpClient =
+  newMcpClient("deno", @["run"] & permissions & @[script])

@@ -7,6 +7,7 @@
 ## transport is an injected `HttpRuntimePort` scripted per request.
 
 import std/[json, strutils, unittest]
+import chronos
 import donkey/adapters/tool/mcp_http_client
 import donkey/core/pipeops
 import donkey/domain/tools/mcp_http_pure
@@ -94,7 +95,7 @@ proc runTests*() =
         "\"description\":\"d\",\"inputSchema\":{\"type\":\"object\"}}]}}\n\n")])
       var c = newMcpHttpClient("https://mcp.example.test/mcp", bearer = "tok",
                                http = scriptedPort(s))
-      let tools = c.listTools()
+      let tools = waitFor c.listToolsAsync()
       check tools.isOk
       check tools.get.len == 1 and tools.get[0].name == "echo"
       check s.sent[0].body["method"].getStr == "initialize"
@@ -111,7 +112,7 @@ proc runTests*() =
       let s = Script(replies: initReplies() & @[json(
         """{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"oi"}],"isError":false}}""")])
       var c = newMcpHttpClient("https://mcp.example.test/mcp", http = scriptedPort(s))
-      let r = c.invoke(ToolCall(id: "c1", name: "echo", input: %* {"x": 1}))
+      let r = waitFor c.invokeAsync(ToolCall(id: "c1", name: "echo", input: %* {"x": 1}))
       check r.isOk and r.get.output == "oi" and r.get.callId == "c1"
       check s.sent[2].body["params"] == %* {"name": "echo", "arguments": {"x": 1}}
 
@@ -120,16 +121,72 @@ proc runTests*() =
         @[HttpResponse(status: 404, body: "")] & initReplies("s-2", id = 3) &
         @[json("""{"jsonrpc":"2.0","id":4,"result":{"tools":[]}}""")])
       var c = newMcpHttpClient("https://mcp.example.test/mcp", http = scriptedPort(s))
-      let r = c.listTools()
+      let r = waitFor c.listToolsAsync()
       check r.isOk
       check s.sent[^1].headers.headerOf("Mcp-Session-Id") == "s-2"
 
     test "a refused token is reported, not retried":
       let s = Script(replies: @[HttpResponse(status: 401, body: "")])
       var c = newMcpHttpClient("https://mcp.example.test/mcp", http = scriptedPort(s))
-      let r = c.listTools()
+      let r = waitFor c.listToolsAsync()
       check r.isErr and "unauthorized" in r.error.toLowerAscii
       check s.sent.len == 1
+
+
+  suite "mcp http client — off the loop (E5 follow-up)":
+
+    test "the loop keeps running while a request is in flight":
+      let slow: McpHttpPost = proc(url, body: string; headers: seq[HttpHeader]):
+          Future[Result[HttpResponse, string]] {.async: (raises: []), gcsafe.} =
+        try: await sleepAsync(chronos.milliseconds(300))
+        except CancelledError: return err("cancelled")
+        try:
+          let msg = parseJson(body)
+          let id = msg{"id"}.getInt(0)
+          if id == 0: return ok(Accepted)
+          if msg{"method"}.getStr == "initialize":
+            return ok(initReplies(id = id)[0])
+          return ok(json("""{"jsonrpc":"2.0","id":""" & $id & ""","result":{"tools":[]}}"""))
+        except CatchableError as e: return err(e.msg)
+      var c = newMcpHttpClient("https://mcp.example.test/mcp", postAsync = slow)
+      var ticks = 0
+      proc ticker() {.async.} =
+        for _ in 0 ..< 30:
+          await sleepAsync(chronos.milliseconds(25))
+          inc ticks
+      let ticking = ticker()
+      check (waitFor c.listToolsAsync()).isOk
+      waitFor ticking
+      check ticks == 30
+
+    test "two sessions' calls on one client do not mix, nor start two sessions":
+      var inits = 0
+      let server: McpHttpPost = proc(url, body: string; headers: seq[HttpHeader]):
+          Future[Result[HttpResponse, string]] {.async: (raises: []), gcsafe.} =
+        try: await sleepAsync(chronos.milliseconds(20))
+        except CancelledError: return err("cancelled")
+        try:
+          let msg = parseJson(body)
+          let id = msg{"id"}.getInt(0)
+          if id == 0: return ok(Accepted)
+          if msg{"method"}.getStr == "initialize":
+            {.cast(gcsafe).}: inc inits
+            return ok(initReplies(id = id)[0])
+          let who = msg{"params"}{"arguments"}{"who"}.getStr
+          return ok(json("""{"jsonrpc":"2.0","id":""" & $id &
+            ""","result":{"content":[{"type":"text","text":"""" & who & """"}]}}"""))
+        except CatchableError as e: return err(e.msg)
+      var c = newMcpHttpClient("https://mcp.example.test/mcp", postAsync = server)
+      let a = c.invokeAsync(ToolCall(id: "a", name: "echo", input: %* {"who": "a"}))
+      let b = c.invokeAsync(ToolCall(id: "b", name: "echo", input: %* {"who": "b"}))
+      check (waitFor a).get.output == "a"
+      check (waitFor b).get.output == "b"
+      check inits == 1
+
+    test "the job sent to a worker carries only data and answers an error, not a hang":
+      let r = mcpHttpPostJob(McpHttpPostJob(url: "https://127.0.0.1:9/mcp", body: "{}",
+                                            headers: @[], timeoutSec: 2))
+      check r.isErr
 
 when isMainModule:
   runTests()
