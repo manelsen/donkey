@@ -560,6 +560,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   ## conversation stay shared (the message keeps its `@name` in the history).
   var routeProvider = ""
   var routeModel = ""
+  var routeStrict = false   ## the agent's provider is the only route (finding 2)
   var turnStreamFactory = streamFactory
   ## A message that came through one of the `[[bots]]` is answered with that
   ## bot's persona (an agent in {home}/agents), unless it names an agent.
@@ -582,6 +583,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
       systemBase = namedAgentSystem(agent, loaded.notes, toolsSuffix)
       routeProvider = agent.provider
       routeModel = agent.model
+      routeStrict = agent.providerIsStrict
       if agent.provider.len > 0 and result.streamRouting.route == nil:
         ## Without a stream route the session's stream is the user's default
         ## provider: the agent's own model is reached through routing,
@@ -692,6 +694,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
     suppressProgress, result.debugMode, result.showReasoning, log,
     asyncCompleteFn, bridgeToken = msg.bridgeToken,
     providerOverride = routeProvider, modelOverride = routeModel,
+    providerStrict = routeStrict,
     streamRoute = result.streamRouting.route,
     providerRuntime = result.streamRouting.runtime)
   let turnEndedMs = epochMs()

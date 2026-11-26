@@ -26,6 +26,8 @@ type
     description*: string
     provider*:    string   ## "" = the user's routing
     model*:       string   ## "" = the provider's default
+    strict*:      bool     ## `strict_provider`, when the file sets it
+    strictSet*:   bool
 
   AgentMention* = object
     name*: string   ## lower case
@@ -67,6 +69,18 @@ func unquote(raw: string): Result[string, string] =
       inc i
   ok(output)
 
+const LocalProviders* = ["ollama"]
+  ## Inference on the operator's own host: whoever picks one wants the data
+  ## to stay there.
+
+func providerIsStrict*(a: NamedAgent): bool =
+  ## Whether the agent's provider is the only route (audit of 26/11, finding
+  ## 2). A preference otherwise: when it fails, the person's routing answers.
+  ## Strict by default for a local provider; the file decides with
+  ## `strict_provider = true|false`.
+  if a.provider.len == 0: return false
+  if a.strictSet: a.strict else: a.provider in LocalProviders
+
 func parseAgentFile*(text: string): Result[NamedAgent, string] =
   var agent = NamedAgent()
   for raw in text.splitLines:
@@ -75,6 +89,13 @@ func parseAgentFile*(text: string): Result[NamedAgent, string] =
     let eq = line.find('=')
     if eq <= 0: return err("not a `key = \"value\"` line: " & line)
     let key = line[0 ..< eq].strip
+    if key == "strict_provider":
+      let flag = line[eq + 1 .. ^1].strip
+      if flag notin ["true", "false"]:
+        return err("strict_provider must be true or false: " & flag)
+      agent.strict = flag == "true"
+      agent.strictSet = true
+      continue
     let value = ? unquote(line[eq + 1 .. ^1])
     case key
     of "name": agent.name = value
@@ -95,6 +116,8 @@ func renderAgentFile*(a: NamedAgent): string =
     result.add("provider = " & tomlBasic(a.provider) & "\n")
   if a.model.len > 0:
     result.add("model = " & tomlBasic(a.model) & "\n")
+  if a.strictSet:
+    result.add("strict_provider = " & (if a.strict: "true" else: "false") & "\n")
 
 func agentMention*(text: string): Option[AgentMention] =
   ## `@name` as the first word calls that agent; the name ends at the first
