@@ -8,7 +8,7 @@
 ## than DONKEY_TRACES_DAYS (14 by default). Through the fs port, like every
 ## file the app layer writes.
 
-import std/[os, strutils]
+import std/[algorithm, json, os, strutils]
 import ../config/environment
 import ../core/pipeops
 import ../domain/turn_trace_pure
@@ -48,3 +48,21 @@ proc appendTurnTrace*(fs: FsRuntimePort; dir: string; trace: TurnTrace;
   for old in expiredTraceFiles(names, nowMs, days):
     discard fs.remove(dir / old, false)
   ok()
+
+proc traceLines*(fs: FsRuntimePort; paddocksDir: string; sinceMs: int64;
+                 userId = ""): seq[string] =
+  ## The kept trace lines since `sinceMs`, oldest file first; one person's
+  ## when `userId` is given. A broken line is skipped.
+  var files: seq[string]
+  for e in fs.listDir(tracesDir(paddocksDir)).get(@[]):
+    if e.path.endsWith(".jsonl"): files.add e.path
+  files.sort()
+  for f in files:
+    for raw in fs.readFile(f).get("").splitLines:
+      if raw.strip.len == 0: continue
+      try:
+        let j = parseJson(raw)
+        if (userId.len == 0 or j{"user"}.getStr == userId) and
+            j{"ts"}.getBiggestInt >= sinceMs:
+          result.add raw
+      except CatchableError: discard

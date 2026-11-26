@@ -307,5 +307,31 @@ proc runTests*() =
       check r.isErr
       check "no runtime" in r.error
 
+proc runPromptCacheTests*() =
+  suite "doctor — prompt cache (E8.4)":
+    proc tracesWith(provider: string; cacheRead: int): string =
+      let home = getTempDir() / "donkey_doctor_cache_" & provider
+      removeDir(home)
+      createDir(home / "state" / "traces")
+      var body = ""
+      for i in 0 ..< 6:
+        body.add """{"ts":""" & $(2_000_000_000_000'i64 + i) & ""","user":"u","provider":"""" &
+          provider & """","tokens":{"input":5000,"output":5,"cache_read":""" & $cacheRead &
+          ""","cache_write":0},"outcome":"ok"}""" & "\n"
+      writeFile(home / "state" / "traces" / "2033-05-18.jsonl", body)
+      home / "paddocks"
+
+    test "a provider whose large prompts never hit the cache is a warning":
+      let r = checkPromptCache(newFsAdapter(), tracesWith("anthropic", 0), sinceMs = 0)
+      check r.status == dsWarn and "anthropic" in r.detail
+
+    test "a provider that reads from the cache passes":
+      check checkPromptCache(newFsAdapter(), tracesWith("openrouter", 3000), sinceMs = 0).status == dsOk
+
+    test "no traces passes, saying why it cannot tell":
+      let r = checkPromptCache(newFsAdapter(), getTempDir() / "donkey_doctor_none" / "paddocks", 0)
+      check r.status == dsOk and "DONKEY_TRACES" in r.detail
+
 when isMainModule:
   runTests()
+  runPromptCacheTests()

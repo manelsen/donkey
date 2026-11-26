@@ -18,7 +18,9 @@ import ../core/diagnostics
 import ../config/environment
 import ../config/types
 import ../domain/providers/descriptors
+import ../domain/insights_pure
 import ./credential_runtime
+import ./turn_traces
 import ./sandbox
 import ../ports/fs
 import ../ports/process
@@ -216,6 +218,24 @@ const AuxKeyChecks = [
   ("Brave Search",   "BRAVE_API_KEY"),
 ]
 
+proc checkPromptCache*(fs: FsRuntimePort; paddocksDir: string;
+                       sinceMs: int64): DiagResult =
+  ## E8.4: a provider whose large prompts never read from the prompt cache,
+  ## from the kept traces. Advisory: the provider may not cache at all.
+  const name = "Prompt cache"
+  let lines = traceLines(fs, paddocksDir, sinceMs)
+  if lines.len == 0:
+    return DiagResult(name: name, status: dsOk,
+                      detail: "no traces to judge (DONKEY_TRACES=on keeps them)")
+  let silent = aggregateInsights(lines).cacheSilent
+  if silent.len == 0:
+    return DiagResult(name: name, status: dsOk, detail: "every provider with large prompts read from it")
+  var parts: seq[string]
+  for (provider, n) in silent: parts.add provider & " (" & $n & " large prompts)"
+  DiagResult(name: name, status: dsWarn,
+    detail: "never hit: " & parts.join(", ") & "; the provider may not cache, " &
+            "or the prompt's beginning changes between requests")
+
 proc runDoctorChecks*(process: ProcessRuntimePort; fs: FsRuntimePort;
                       cfg: DonkeyConfig; devMode = false): seq[DiagResult] =
   ## Runs all dependency checks and returns the result list.
@@ -248,6 +268,8 @@ proc runDoctorChecks*(process: ProcessRuntimePort; fs: FsRuntimePort;
       check = checkProviderRow(cfg.env, row)
       probed.add((primary, check))
     result.add check |> markWarn
+  if cfg.paddocks.len > 0:
+    result.add checkPromptCache(fs, cfg.paddocks, epochMs() - 7 * 86_400_000'i64)
 
 proc printDoctorReport*(results: seq[DiagResult]) =
   ## Prints a formatted report to stdout.

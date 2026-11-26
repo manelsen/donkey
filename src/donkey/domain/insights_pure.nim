@@ -17,6 +17,7 @@ type
     turns*, inputTokens*, outputTokens*: int
     cacheReadTokens*, cacheWriteTokens*: int
     cacheByProvider*: seq[(string, int, int)]   ## provider, input, read from cache
+    cacheSilent*: seq[(string, int)]  ## providers whose large prompts never hit the cache (E8.4)
     tools*:     seq[ToolUse]
     providers*: seq[(string, int)]
     channels*:  seq[(string, int)]
@@ -27,10 +28,15 @@ func ranked(t: CountTable[string]): seq[(string, int)] =
   result.sort(proc(a, b: (string, int)): int =
     if a[1] != b[1]: cmp(b[1], a[1]) else: cmp(a[0], b[0]))
 
+const
+  CacheMinPrompt* = 2048   ## a prompt this large clears every provider's minimum
+  CacheMinTurns* = 5       ## turns before a provider that never reads is flagged
+
 proc aggregateInsights*(lines: seq[string]): Insights =
   var providers, channels, outcomes: CountTable[string]
   var calls, failures: CountTable[string]
   var provIn, provRead: CountTable[string]
+  var largeTurns, largeHits: CountTable[string]   ## E8.4, lines that report the cache
   for raw in lines:
     let j =
       try: parseJson(raw)
@@ -47,6 +53,9 @@ proc aggregateInsights*(lines: seq[string]): Insights =
       providers.inc provider
       provIn.inc(provider, j{"tokens"}{"input"}.getInt)
       provRead.inc(provider, read)
+      if j{"tokens"}.hasKey("cache_read") and j{"tokens"}{"input"}.getInt >= CacheMinPrompt:
+        largeTurns.inc provider
+        if read > 0: largeHits.inc provider
     let channel = j{"channel"}.getStr
     if channel.len > 0: channels.inc channel
     let outcome = j{"outcome"}.getStr
@@ -61,6 +70,9 @@ proc aggregateInsights*(lines: seq[string]): Insights =
   result.providers = ranked(providers)
   result.channels = ranked(channels)
   result.outcomes = ranked(outcomes)
+  for (name, n) in ranked(largeTurns):
+    if n >= CacheMinTurns and largeHits.getOrDefault(name) == 0:
+      result.cacheSilent.add (name, n)
   for (name, input) in ranked(provIn):
     result.cacheByProvider.add (name, input, provRead.getOrDefault(name))
 
@@ -82,6 +94,10 @@ func formatInsights*(r: Insights; period: string; toolLimit = 10): string =
     for (name, input, read) in r.cacheByProvider:
       if input > 0: parts.add name & " " & $(read * 100 div input) & "%"
     if parts.len > 0: lines.add "  by provider: " & parts.join(", ")
+  for (name, n) in r.cacheSilent:
+    lines.add "Prompt cache never hit — " & name & ": " & $n & " large prompts, " &
+      "none read from the cache (the provider may not cache, or the prompt's " &
+      "beginning changes between requests)."
   if r.tools.len > 0:
     lines.add "Tools:"
     for i, t in r.tools:
