@@ -90,7 +90,8 @@ proc refreshBotKeys*(fetch: KeyFetch; nowMs: int64;
     let sinceAttempt = nowMs - gKeysAttemptMs
     due =
       if empty: gKeysAttemptMs == 0 or sinceAttempt >= MissingKeysRetryMs
-      elif nowMs - gKeysFetchedMs > KeysMaxAgeMs: true
+      elif nowMs - gKeysFetchedMs > KeysMaxAgeMs:
+        sinceAttempt >= MissingKeysRetryMs   ## stale: spaced too, or a failing fetch runs on every request
       elif unknownKey: sinceAttempt >= UnknownKeyRetryMs
       else: false
     if due:

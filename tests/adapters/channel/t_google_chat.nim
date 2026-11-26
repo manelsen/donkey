@@ -64,6 +64,24 @@ proc runTests*() =
       check a.send(OutboundMessage(channel: ckGoogleChat, text: "x",
                                    replyTo: "https://evil.example/x")).isErr
 
+    test "a refused token (401) is dropped and the post tried once more with a new one":
+      var posts = 0
+      var tokens = 0
+      let http = HttpRuntimePort(post: proc(url, body: string;
+          headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+        {.cast(gcsafe).}:
+          if url.startsWith("https://oauth2.googleapis.com/"):
+            inc tokens
+            return ok(HttpResponse(status: 200, body: """{"access_token":"t""" & $tokens & """","expires_in":3600}"""))
+          inc posts
+          return ok(HttpResponse(status: (if posts == 1: 401 else: 200), body: "{}")))
+      let dir = getTempDir() / "donkey_gchat_401"
+      removeDir(dir); createDir(dir)
+      let a = newGoogleChatAdapter(serviceAccountJson(), dir / "ids.tsv", dir / "s.json",
+                                   http = http, clock = proc(): int64 {.gcsafe.} = 1_800_000_000_000)
+      check a.send(OutboundMessage(channel: ckGoogleChat, text: "x", replyTo: "spaces/S1")).isOk
+      check tokens == 2 and posts == 2
+
     test "no account, a broken one, media, or a refused post are errors":
       check newAdapter(Sent(), account = "").send(
         OutboundMessage(channel: ckGoogleChat, text: "x", replyTo: "spaces/S1")).error.contains("GOOGLE_CHAT_SERVICE_ACCOUNT")

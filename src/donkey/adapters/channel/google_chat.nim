@@ -83,7 +83,8 @@ proc refreshChatKeys*(fetch: ChatKeyFetch; nowMs: int64;
     let sinceAttempt = nowMs - gChatKeysAttemptMs
     due =
       if empty: gChatKeysAttemptMs == 0 or sinceAttempt >= MissingKeysRetryMs
-      elif nowMs - gChatKeysFetchedMs > KeysMaxAgeMs: true
+      elif nowMs - gChatKeysFetchedMs > KeysMaxAgeMs:
+        sinceAttempt >= MissingKeysRetryMs   ## stale: spaced too, or a failing fetch runs on every request
       elif unknownKey: sinceAttempt >= UnknownKeyRetryMs
       else: false
     if due:
@@ -225,10 +226,16 @@ proc send*(a: GoogleChatAdapter; msg: OutboundMessage): Result[void, string] =
       return err("Google Chat: no space known for user " & $msg.userId)
   if not validTarget(target):
     return err("Google Chat: not a space: " & target)
-  let token = ? a.accessToken()
+  var token = ? a.accessToken()
   for piece in splitForChat(msg.text):
-    let resp = ? a.http.post(messagesUrl(target), messageBody(target, piece),
+    var resp = ? a.http.post(messagesUrl(target), messageBody(target, piece),
       @[("Content-Type", "application/json"), ("Authorization", "Bearer " & token)])
+    if resp.status == 401:
+      ## Revoked or expired early: a new token, once.
+      a.state.token = AccessToken()
+      token = ? a.accessToken()
+      resp = ? a.http.post(messagesUrl(target), messageBody(target, piece),
+        @[("Content-Type", "application/json"), ("Authorization", "Bearer " & token)])
     if resp.status notin 200 .. 299:
       return err("Google Chat: send status " & $resp.status)
   ok()

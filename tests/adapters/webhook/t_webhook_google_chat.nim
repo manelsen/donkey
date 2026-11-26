@@ -51,6 +51,22 @@ proc runTests*() =
         "aud": "123456789", "iat": now, "exp": now + 300}, kid = "other"))).status == 401
       check drain() == 0
 
+    test "stale keys whose refresh fails are not fetched again on every request":
+      var calls = 0
+      let failing: ChatKeyFetch = proc(): Result[string, string] {.gcsafe.} =
+        {.cast(gcsafe).}: inc calls
+        err("offline")
+      let day = 24 * 3_600_000'i64
+      resetChatKeys()
+      seedChatKeys(TestJwks, 1_000)
+      discard refreshChatKeys(failing, 1_000 + day + 1)
+      discard refreshChatKeys(failing, 1_000 + day + 2)
+      discard refreshChatKeys(failing, 1_000 + day + 3)
+      check calls == 1
+      discard refreshChatKeys(failing, 1_000 + day + 31_000)
+      check calls == 2
+      check currentChatKeys().len == 1   ## the old keys are kept meanwhile
+
     test "the route is closed without a project number; only POST":
       check handleWebhookRequest(WebhookConfig(), request(good())).status == 404
       check handleWebhookRequest(cfg, request(good(), httpMethod = "GET")).status == 405
