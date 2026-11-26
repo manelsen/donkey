@@ -55,18 +55,24 @@ O que cada frente deixou de fora ao ser implementada. Nenhum está agendado.
 | Skill novo de usuário | E5 | as ferramentas aparecem a partir da mensagem seguinte (listagem em segundo plano) |
 | Renovação de token OAuth do MCP por HTTP | E5 | ainda roda no laço (rara, com prazo próprio) |
 
-## 4. Candidatas para a próxima rodada
+## 4. Segunda rodada (aprovada em 25/11)
 
-Do comparativo de 25/11, em ordem de ganho estimado. Nenhuma está decidida.
+Do comparativo de 25/11, em ordem de ganho estimado, seguidas dos itens
+abertos do §3.
 
 | Ordem | Frente | Ganho potencial | Referência |
 |---:|---|---:|---|
-| 1 | API compatível com OpenAI no gateway | ~0,8 | Hermes `api_server_openai_routes` |
-| 2 | Canais: Mattermost, Google Chat, IRC, SMS | ~0,7 | Hermes `plugins/platforms` |
-| 3 | Ferramentas: GitHub e git nativos, OCR | ~0,5 | Pincer `tools/github`, `git_inspect`, `media` |
-| 4 | Observabilidade: OpenTelemetry e replay de traço | ~0,5 | Pincer `trace_replay`, PromEx |
-| 5 | Fila de mensagens mortas para envio e ferramenta | ~0,3 | Pincer `dead_letter_queue` |
-| 6 | Guarda fail-closed de skills no `saveSkillEntry` | qualitativo | Pincer `skills/guard`; threat model do `CLAUDE.md` |
+| 1 | Canais: Mattermost, Google Chat, IRC, SMS | ~0,7 | Hermes `plugins/platforms` |
+| 2 | Ferramentas: GitHub e git nativos | ~0,5 | Pincer `tools/github`, `git_inspect` |
+| 3 | Observabilidade: OpenTelemetry e replay de traço | ~0,5 | Pincer `trace_replay`, PromEx |
+| 4 | Fila de mensagens mortas para envio e ferramenta | ~0,3 | Pincer `dead_letter_queue` |
+
+Saíram da lista ao conferir o código: a API compatível com OpenAI já existe
+(`/v1/chat/completions` com streaming e `/v1/models` no gateway); a guarda de
+skills também (`saveSkillEntry` recusa permissões perigosas e a carga
+revalida; a guarda do Pincer analisa o texto de um `SKILL.md`, e o skill do
+Donkey é código num sandbox do Deno, onde essa análise vale pouco); OCR é
+coberto por `inspect_image`, que usa um modelo com visão.
 
 ## 5. Decidido não fazer
 
