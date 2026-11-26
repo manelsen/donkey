@@ -122,6 +122,37 @@ proc toJson(msg: ChatMessage): JsonNode =
 
   %* {"role": msg.role, "content": msg.text}
 
+func promptCache*(a: AnthropicAdapter): bool =
+  ## Cache markers only on Anthropic's own API: a compatible endpoint (Z.ai)
+  ## may not take them.
+  a.endpoint.len == 0 and (a.baseUrl.len == 0 or
+    a.baseUrl.strip(chars = {'/'}) == AnthropicDefaultBaseUrl)
+
+const CacheMarker = """{"type":"ephemeral"}"""   ## 5 minutes (decided 26/11)
+
+proc markLastBlock(msg: JsonNode) =
+  ## The moving marker: the conversation up to here is read from the cache
+  ## by the next request (the next tool round or the next turn).
+  let content = msg{"content"}
+  if content.isNil: return
+  if content.kind == JString:
+    if content.getStr.len == 0: return
+    msg["content"] = %* [{"type": "text", "text": content.getStr,
+                          "cache_control": parseJson(CacheMarker)}]
+  elif content.kind == JArray and content.len > 0:
+    content[content.len - 1]["cache_control"] = parseJson(CacheMarker)
+
+proc withCacheMarkers(body: JsonNode) =
+  ## E8.2: two of the four markers. One closes the stable prefix (tools and
+  ## system, the same bytes for the whole session since E8.1); the other
+  ## moves with the conversation's last block.
+  if body.hasKey("system") and body["system"].kind == JString:
+    body["system"] = %* [{"type": "text", "text": body["system"].getStr,
+                          "cache_control": parseJson(CacheMarker)}]
+  let messages = body{"messages"}
+  if not messages.isNil and messages.len > 0:
+    markLastBlock(messages[messages.len - 1])
+
 proc buildBody*(a: AnthropicAdapter; req: CompletionRequest): JsonNode =
   ## Exported for unit testing.
   ## system is top-level; messages array contains only user/assistant turns.
@@ -154,6 +185,8 @@ proc buildBody*(a: AnthropicAdapter; req: CompletionRequest): JsonNode =
         "input_schema": schema,
       })
     result["tools"] = toolsArr
+  if a.promptCache:
+    withCacheMarkers(result)
 
 proc buildStreamBody*(a: AnthropicAdapter; req: CompletionRequest): JsonNode =
   result = a.buildBody(req)

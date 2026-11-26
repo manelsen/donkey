@@ -19,6 +19,16 @@ proc runTests*() =
       check not body.hasKey("toolConfig")
       check not body.hasKey("inferenceConfig")
 
+    test "a Claude model: cache points after the system and the last message (E8.2)":
+      check bedrockCaches("anthropic.claude-sonnet-5-5")
+      check bedrockCaches("us.anthropic.claude-opus-5-5")
+      check not bedrockCaches("meta.llama4-maverick-17b-instruct-v1:0")
+      let body = converseBody(CompletionRequest(system: "seja breve",
+        messages: @[ChatMessage(role: roleUser, text: "oi")]), cache = true)
+      check body["system"] == %* [{"text": "seja breve"}, {"cachePoint": {"type": "default"}}]
+      check body["messages"] == %* [{"role": "user", "content": [{"text": "oi"},
+                                                               {"cachePoint": {"type": "default"}}]}]
+
     test "maxTokens goes in inferenceConfig":
       let body = converseBody(CompletionRequest(maxTokens: 512,
         messages: @[ChatMessage(role: roleUser, text: "oi")]))

@@ -73,8 +73,15 @@ proc blocksOf(msg: ChatMessage; withTools: bool): seq[JsonNode] =
 func converseRole(msg: ChatMessage): string =
   if msg.role == roleAssistant: "assistant" else: "user"
 
-proc converseBody*(req: CompletionRequest): JsonNode =
+func bedrockCaches*(modelId: string): bool =
+  ## Prompt cache points (E8.2) only for Claude: another model may refuse
+  ## the block.
+  "anthropic." in modelId or "claude" in modelId
+
+proc converseBody*(req: CompletionRequest; cache = false): JsonNode =
   ## (A proc only because `parseJson` is not a `func`; no I/O.)
+  ## With `cache`, two cache points: after the stable system prompt, and at
+  ## the end of the last message, moving with the conversation.
   result = newJObject()
   if req.system.len > 0:
     result["system"] = %* [{"text": req.system}]
@@ -95,6 +102,11 @@ proc converseBody*(req: CompletionRequest): JsonNode =
       var content = newJArray()
       for b in blocks: content.add(b)
       messages.add(%* {"role": role, "content": content})
+  if cache:
+    if result.hasKey("system"):
+      result["system"].add(%* {"cachePoint": {"type": "default"}})
+    if messages.len > 0:
+      messages[messages.len - 1]["content"].add(%* {"cachePoint": {"type": "default"}})
   result["messages"] = messages
   if req.maxTokens > 0:
     result["inferenceConfig"] = %* {"maxTokens": req.maxTokens}
