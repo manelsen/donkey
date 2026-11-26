@@ -95,14 +95,16 @@ proc skillAgentLoop(callModel: AsyncCompleteFn; fs: FsRuntimePort; paddockDir: s
 
 proc runSkillAgent*(callModel: AsyncCompleteFn; fs: FsRuntimePort; paddockDir: string;
                     system, content, provider, model, by: string;
-                    nowMs: int64): Future[Result[string, string]] {.async.} =
+                    nowMs: int64; deadlineMs = ReviewDeadlineMs): Future[Result[string, string]] {.async.} =
   ## A copy of the agent that may only view and write the person's skills
   ## (as `by`): the review's and the curator's. What it changed, or its
-  ## last words, within ReviewDeadlineMs.
+  ## last words, within `deadlineMs`; past it the loop is cancelled, so it
+  ## writes nothing afterwards.
   if callModel == nil:
     return err(Result[string, string], by & ": no model available")
   let running = skillAgentLoop(callModel, fs, paddockDir, system, content, provider, model, by, nowMs)
-  if not await withTimeout(running, chronos.milliseconds(ReviewDeadlineMs)):
+  if not await withTimeout(running, chronos.milliseconds(deadlineMs)):
+    await running.cancelAndWait()
     return err(Result[string, string], by & ": took too long")
   return running.read()
 

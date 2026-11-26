@@ -107,7 +107,7 @@ func learningCommandPrompt*(text: string): Option[string] =
   ## hermes-agent (MIT), agent/learn_prompt.py: no separate engine.
   let t = text.strip
   if t.len == 0 or t[0] != '/': return none(string)
-  let space = t.find(' ')
+  let space = t.find(Whitespace)   ## any whitespace: a tab too
   var token = (if space >= 0: t[0 ..< space] else: t).toLowerAscii
   let at = token.find('@')
   if at > 0: token = token[0 ..< at]

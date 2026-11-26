@@ -40,6 +40,12 @@ type
     fs:   FsRuntimePort
     root*: string
 
+func validPaddockId*(id: string): bool =
+  ## A person's id as it names their paddock: no separator, no '..', so it
+  ## cannot leave the paddocks directory.
+  id.len > 0 and id.len <= 128 and ".." notin id and
+    id.allCharsInSet({'a'..'z', 'A'..'Z', '0'..'9', '-', '_', ':', '.'})
+
 proc newLearnedSkills*(fs: FsRuntimePort; paddockDir: string): LearnedSkills =
   LearnedSkills(fs: fs, root: paddockDir / LearnedSkillsDirName)
 
@@ -52,6 +58,7 @@ proc loadMeta(s: LearnedSkills): Table[string, SkillMeta] =
   if text.isErr: return
   try:
     let j = parseJson(text.get)
+    if j.kind != JObject: return
     for name, m in j.pairs:
       result[name] = SkillMeta(createdBy: m{"created_by"}.getStr, note: m{"note"}.getStr,
         createdAtMs: m{"created_ms"}.getBiggestInt, updatedAtMs: m{"updated_ms"}.getBiggestInt,
@@ -71,7 +78,9 @@ proc loadUsage(s: LearnedSkills): Table[string, SkillUsage] =
   let text = s.fs.readFile(s.root / UsageFile)
   if text.isErr: return
   try:
-    for name, u in parseJson(text.get).pairs:
+    let j = parseJson(text.get)
+    if j.kind != JObject: return
+    for name, u in j.pairs:
       result[name] = SkillUsage(loads: u{"loads"}.getInt, lastUsedMs: u{"last_ms"}.getBiggestInt)
   except CatchableError:
     discard   ## unreadable usage only restarts the counts

@@ -39,7 +39,7 @@ proc performSkillManage*(fs: FsRuntimePort; paddockDir: string; c: SkillManageCo
     ok(if lines.len == 0: "No learned skills yet." else: lines.join("\n"))
 
 proc performSkillView*(fs: FsRuntimePort; paddockDir, name: string;
-                       nowMs: int64 = 0): Result[string, string] =
+                       nowMs: int64): Result[string, string] =
   let store = newLearnedSkills(fs, paddockDir)
   let doc = ? store.read(name.strip)
   store.recordUse(name.strip, nowMs)
