@@ -68,5 +68,47 @@ proc runTests*() =
       check newAdapter(Sent(), status = 400).send(
         OutboundMessage(channel: ckSms, replyTo: "+1", text: "oi")).isErr
 
+const Media = "https://api.twilio.com/2010-04-01/Accounts/AC1/Messages/MM1/Media/ME1"
+
+proc mediaAdapter(gets: ref seq[(string, seq[HttpHeader])]; location = ""): SmsAdapter =
+  inc n
+  let dir = getTempDir() / ("donkey_sms_media_" & $n)
+  removeDir(dir); createDir(dir)
+  let http = HttpRuntimePort(
+    post: proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+      ok(HttpResponse(status: 201)),
+    get: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+      {.cast(gcsafe).}: gets[].add (url, headers)
+      ok(HttpResponse(status: 200, body: "JPEGDATA")),
+    getNoRedirect: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+      {.cast(gcsafe).}: gets[].add (url, headers)
+      if location.len > 0:
+        return ok(HttpResponse(status: 307, headers: @[("Location", location)]))
+      ok(HttpResponse(status: 200, body: "JPEGDATA")))
+  newSmsAdapter("AC1", "tok", "+5511888880000", dir / "ids.tsv", http = http)
+
+proc runMediaTests*() =
+  suite "sms adapter — MMS in (E9.3)":
+    test "the account's media is fetched with its credentials":
+      let gets = new seq[(string, seq[HttpHeader])]
+      let d = mediaAdapter(gets).downloadFile(Media)
+      check d.isOk and d.get.data.len == 8
+      check gets[][0][0] == Media
+      check gets[][0][1].len == 1 and gets[][0][1][0][0] == "Authorization"
+
+    test "a redirect to Twilio's storage is followed, without the credentials":
+      let gets = new seq[(string, seq[HttpHeader])]
+      let d = mediaAdapter(gets, "https://media.twiliocdn.com/AC1/abc").downloadFile(Media)
+      check d.isOk
+      check gets[][1][0] == "https://media.twiliocdn.com/AC1/abc" and gets[][1][1].len == 0
+
+    test "another account's media, or a redirect elsewhere, is refused":
+      let gets = new seq[(string, seq[HttpHeader])]
+      check mediaAdapter(gets).downloadFile(Media.replace("AC1", "AC2")).isErr
+      check gets[].len == 0
+      check mediaAdapter(gets, "https://evil.example/x").downloadFile(Media).isErr
+      check gets[].len == 1   ## the redirect was not followed
+
 when isMainModule:
   runTests()
+  runMediaTests()

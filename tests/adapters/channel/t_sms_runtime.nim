@@ -2,7 +2,7 @@
 ## queued become session turns through the shared inbound gate; a message
 ## with media and no text gets a short answer instead of a turn.
 
-import std/[os, unittest]
+import std/[os, strutils, unittest]
 import donkey/adapters/channel/sms
 import donkey/adapters/channel/sms_runtime
 import donkey/app/session_manager
@@ -72,7 +72,21 @@ proc runTests*() =
       discard drainSmsEvents(a, sm, fallbackFor(s), replyFor(s), rtLog)
       check s.turns.len == 1
 
-    test "media without text is answered, not a turn":
+    test "an MMS is a turn: the first item goes by its URL and type, the rest are counted (E9.3)":
+      var a = newAdapter()
+      var sm: SessionManager
+      sm.init()
+      let s = Sink()
+      var m = sms("MM2", "", media = 2)
+      m.media = @[("https://api.twilio.com/2010-04-01/Accounts/AC1/Messages/MM2/Media/ME1", "image/jpeg"),
+                  ("https://api.twilio.com/2010-04-01/Accounts/AC1/Messages/MM2/Media/ME2", "audio/ogg")]
+      pushSms(m)
+      check drainSmsEvents(a, sm, fallbackFor(s), replyFor(s), rtLog) == 1
+      check s.turns.len == 1 and s.replies.len == 0
+      check s.turns[0].mediaUrl.endsWith("/Media/ME1") and s.turns[0].mediaMimeType == "image/jpeg"
+      check "audio/ogg" in s.turns[0].text
+
+    test "media the webhook did not list (no URL) is still answered, not a turn":
       var a = newAdapter()
       var sm: SessionManager
       sm.init()

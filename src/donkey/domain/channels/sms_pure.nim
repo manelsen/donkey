@@ -23,6 +23,7 @@ type
   InboundSms* = object
     sid*, sender*, receiver*, text*: string
     mediaCount*: int
+    media*: seq[(string, string)]   ## MMS (E9.3): each item's URL and content type
 
 proc parseForm*(body: string): FormParams =
   ## `application/x-www-form-urlencoded`, `+` as space.
@@ -58,9 +59,27 @@ func parseInboundSms*(p: FormParams): Result[InboundSms, string] =
   var media = 0
   try: media = parseInt(p.get("NumMedia").strip)
   except ValueError: media = 0
+  var items: seq[(string, string)]
+  for i in 0 ..< min(media, 10):   ## Twilio sends at most 10
+    let url = p.get("MediaUrl" & $i).strip
+    if url.len > 0: items.add (url, p.get("MediaContentType" & $i).strip)
   ok(InboundSms(sid: p.get("MessageSid"), sender: sender,
                 receiver: p.get("To").strip, text: p.get("Body"),
-                mediaCount: media))
+                mediaCount: media, media: items))
+
+func twilioMediaUrl*(url, accountSid: string): bool =
+  ## A media item of this account's messages, and nothing else, is fetched
+  ## with the account's credentials.
+  accountSid.len > 0 and
+    url.startsWith("https://api.twilio.com/2010-04-01/Accounts/" & accountSid & "/Messages/") and
+    "/Media/" in url and ".." notin url
+
+func twilioMediaRedirect*(location: string): bool =
+  ## Where Twilio's media URL may redirect: its own media storage, over
+  ## HTTPS. Followed without the credentials.
+  location.startsWith("https://media.twiliocdn.com/") or
+    location.startsWith("https://mms.twiliocdn.com/") or
+    location.startsWith("https://s3-external-1.amazonaws.com/media.twiliocdn.com/")
 
 func messagesUrl*(accountSid: string): string =
   "https://api.twilio.com/2010-04-01/Accounts/" & accountSid & "/Messages.json"

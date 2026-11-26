@@ -192,7 +192,11 @@ proc smsOutboundPort*(a: ptr SmsAdapter): OutboundChannelPort =
     sendKeyboard: unsupportedSendKeyboard,
     editKeyboard: unsupportedEditKeyboard,
     setMessageReaction: unsupportedSetMessageReaction,
-    downloadFile: unsupportedDownloadFile,
+    downloadFile: if a != nil:
+                    proc(fileId: string): Result[FileDownload, string] {.gcsafe.} =
+                      a[].downloadFile(fileId)
+                  else:
+                    unsupportedDownloadFile,
   )
 
 proc ircOutboundPort*(a: ptr IrcAdapter): OutboundChannelPort =
