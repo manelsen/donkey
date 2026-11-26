@@ -601,6 +601,22 @@ OutboundMessage* = object
   mediaUrl*:  string      # Media URL
 ```
 
+### Failed deliveries
+
+A reply a channel refuses (an HTTP error, a dropped connection) is kept in
+`{home}/state/dead_letters.json`, readable only by the daemon's user, and sent
+again at 1, 5 and 30 minutes. A fourth failure leaves it dead; kept replies
+are dropped after a week (at most 200 are kept). Only plain text replies
+qualify, including a stream's final answer: partial stream pieces, edits,
+media and keyboards are not retried, and neither is a reply to a channel that
+is not configured. A reply that went out in pieces and failed midway is sent
+whole again, so its first pieces may repeat: a reply that never arrives is the
+worse failure.
+
+```sh
+donkey ctl deliveries     # what is waiting for a retry, and what is dead
+```
+
 ---
 
 ## Related

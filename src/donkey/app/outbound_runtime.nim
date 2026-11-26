@@ -6,6 +6,7 @@ import ../ports/channel
 import ../ports/runtime_state
 import ../domain/message
 import ./metrics
+import ./dead_letters
 
 export outbound
 
@@ -106,10 +107,18 @@ proc setOutboundReaction*(channel: ChannelKind;
     discard
   false
 
+proc sendThroughPorts*(msg: OutboundMessage; ports: OutboundChannelPorts): Result[void, string] {.gcsafe.} =
+  ## A plain send, for the dead letter retries (app/dead_letters).
+  let port = ports.channelPortFor(msg.channel)
+  if port.send == nil:
+    return err("channel " & $msg.channel & " is not configured")
+  port.send(msg)
+
 proc sendImmediateOutbound*(msg: OutboundMessage;
                             ports: OutboundChannelPorts;
                             log: Logger;
-                            ledger: DeliveryLedgerPort = DeliveryLedgerPort()) {.gcsafe.} =
+                            ledger: DeliveryLedgerPort = DeliveryLedgerPort();
+                            deadLetters: DeadLetterBox = nil) {.gcsafe.} =
   let delivery = beginDelivery(ledger, msg, log)
   let port = ports.channelPortFor(msg.channel)
   if port.send == nil:
@@ -142,6 +151,10 @@ proc sendImmediateOutbound*(msg: OutboundMessage;
     of ckIrc:       log.error("irc send: " & error)
     of ckGoogleChat: log.error("gchat send: " & error)
     finishDeliveryFailed(ledger, delivery.id, error, log)
+    ## Kept for a retry when it qualifies (plain text); a channel that is
+    ## not configured, above, is not: retrying cannot help.
+    deadLetters.keep(msg, error, epochMs()).isOkOr:
+      log.warn("dead letters: " & error)
   else:
     finishDeliverySent(ledger, delivery.id, log)
     recordOutboundSent(channelLabel(msg.channel))
@@ -232,10 +245,11 @@ proc routeOutbound*(msg: OutboundMessage;
                     ports: OutboundChannelPorts;
                     log: Logger;
                     presentationState: var PresentationState;
-                    ledger: DeliveryLedgerPort = DeliveryLedgerPort()) {.gcsafe.} =
+                    ledger: DeliveryLedgerPort = DeliveryLedgerPort();
+                    deadLetters: DeadLetterBox = nil) {.gcsafe.} =
   if msg.editTargetId.len > 0:
     if not editImmediateOutbound(msg, ports, log):
-      sendImmediateOutbound(msg, ports, log, ledger)
+      sendImmediateOutbound(msg, ports, log, ledger, deadLetters)
     return
   if msg.replacementSlot.len > 0 and supportsEditableReplacement(msg.channel):
     let existingMsgId = presentationState.lookupReplacement(msg)
@@ -252,7 +266,7 @@ proc routeOutbound*(msg: OutboundMessage;
     if channelMsgId.len > 0:
       presentationState.rememberReplacement(msg, channelMsgId)
       return
-    sendImmediateOutbound(msg, ports, log, ledger)
+    sendImmediateOutbound(msg, ports, log, ledger, deadLetters)
     return
   var effectiveMsg = msg
   if msg.streamId.len > 0 and supportsEditableStreams(msg.channel):
@@ -266,7 +280,7 @@ proc routeOutbound*(msg: OutboundMessage;
   let decision = decideOutbound(effectiveMsg, presentationState)
   case decision.intent
   of oiSend:
-    sendImmediateOutbound(effectiveMsg, ports, log, ledger)
+    sendImmediateOutbound(effectiveMsg, ports, log, ledger, deadLetters)
   of oiStreamUpdate:
     let confirmed = editStreamOutbound(effectiveMsg, decision.existingMsgId, ports, log)
     ## Behavior derived from hermes-agent (MIT) fix 30878411b8; see
@@ -279,7 +293,7 @@ proc routeOutbound*(msg: OutboundMessage;
       ## A final edit that the channel refused must not swallow the answer:
       ## deliver it as a new message instead of trusting the stale stream.
       presentationState.clearStream(effectiveMsg)
-      sendImmediateOutbound(effectiveMsg, ports, log, ledger)
+      sendImmediateOutbound(effectiveMsg, ports, log, ledger, deadLetters)
   of oiStreamCreate:
     let channelMsgId = createStreamOutbound(effectiveMsg, ports, log, ledger)
     if channelMsgId.len > 0:
