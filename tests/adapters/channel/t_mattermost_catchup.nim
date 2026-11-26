@@ -50,5 +50,13 @@ proc runTests*() =
         if "posts?since=" & $(99 * 86_400_000) in u: ok = true
       check ok
 
+proc runStartTests*() =
+  suite "mattermost catch-up: where it starts":
+    test "the first connection marks the time and fetches nothing":
+      check catchUpStart(0, 5_000) == (since: 5_000'i64, fetch: false)
+    test "a reconnection fetches from the newest post seen or the first connection":
+      check catchUpStart(5_000, 9_000) == (since: 5_000'i64, fetch: true)
+
 when isMainModule:
+  runStartTests()
   runTests()

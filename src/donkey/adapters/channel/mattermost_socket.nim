@@ -75,6 +75,11 @@ proc apiGet(http: HttpRuntimePort; url, token: string): string {.gcsafe, raises:
   except Exception:  ## effect boundary: callee raises are unannotated
     ""
 
+func catchUpStart*(lastPostMs, nowMs: int64): tuple[since: int64, fetch: bool] =
+  ## On the first connection there is nothing to catch up on: the time is
+  ## marked, so a drop before any post still fetches what came after it.
+  if lastPostMs <= 0: (nowMs, false) else: (lastPostMs, true)
+
 proc catchUpPosts*(http: HttpRuntimePort; serverUrl, token: string; me: MattermostMe;
                    sinceMs, nowMs: int64): seq[MattermostPost] {.gcsafe, raises: [].} =
   ## The posts written in the bot's channels after `sinceMs` (at most a day
@@ -109,9 +114,11 @@ proc mmOpened(cfg: MattermostSocketConfig; state: var MattermostSocketState; ws:
   state.seq = ChallengeSeq
   ws.sendFrame(authChallenge(cfg.token, ChallengeSeq))
   ## After a drop, what was written meanwhile (the socket does not replay it).
-  if state.lastPostMs > 0:
+  let (since, fetch) = catchUpStart(state.lastPostMs, epochMs())
+  state.lastPostMs = since
+  if fetch:
     let missed = catchUpPosts(state.http, cfg.serverUrl, cfg.token, state.me,
-                              state.lastPostMs, epochMs())
+                              since, epochMs())
     for p in missed:
       if not pushPost(p): break
       state.lastPostMs = max(state.lastPostMs, p.createdMs)
