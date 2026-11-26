@@ -9,6 +9,8 @@ type
     ## rounds. Carried to the terminal answer so the API can report it.
     inputTokens*:  int
     outputTokens*: int
+    cacheReadTokens*:  int   ## of inputTokens, served from the prompt cache
+    cacheWriteTokens*: int   ## of inputTokens, written to it
 
   ToolLoopRunResult* = object
     history*:       ConversationHistory
@@ -98,10 +100,16 @@ func addUsage*(totals: UsageTotals;
                inputTokens, outputTokens: int): UsageTotals =
   ## Adds one round's reported usage. Negative provider values are ignored so
   ## a broken adapter cannot make the turn's totals decrease.
-  UsageTotals(
-    inputTokens:  totals.inputTokens + max(0, inputTokens),
-    outputTokens: totals.outputTokens + max(0, outputTokens),
-  )
+  var next = totals
+  next.inputTokens = totals.inputTokens + max(0, inputTokens)
+  next.outputTokens = totals.outputTokens + max(0, outputTokens)
+  next
+
+func addUsage*(totals: UsageTotals; r: CompletionResponse): UsageTotals =
+  ## One round's whole usage, the prompt cache's share included (E8.3).
+  result = totals.addUsage(r.inputTokens, r.outputTokens)
+  result.cacheReadTokens += max(0, r.cacheReadTokens)
+  result.cacheWriteTokens += max(0, r.cacheWriteTokens)
 
 func addUsage*(inputTokens, outputTokens: int;
                totals: UsageTotals): UsageTotals =

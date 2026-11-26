@@ -348,6 +348,11 @@ compacta antes de ele expirar, aprende como cada rota cacheia).
   `cacheWrite`, lidos de cada dialeto (Anthropic, OpenAI e compatíveis,
   DeepSeek, Gemini, Bedrock), também no streaming. Traços, métricas
   Prometheus e `/insights` passam a mostrar a taxa de acerto por rota.
+  *Feito:* `cacheReadTokens` e `cacheWriteTokens` na resposta, de todos os
+  dialetos, com e sem streaming; na Anthropic e no Bedrock, `inputTokens`
+  passou a ser o prompt inteiro (antes era só o resto não cacheado). Traço,
+  span OTLP, métrica (`direction="cache_read"`/`"cache_write"`) e `/insights`
+  (parte da entrada servida pelo cache, por provider).
 - **E8.4 Detector de invalidação.** Uma rota que cacheia mas lê zero do
   cache por N turnos seguidos numa mesma sessão gera um aviso no log e no
   `doctor`, com o tamanho do prefixo (pode ser só um prefixo abaixo do

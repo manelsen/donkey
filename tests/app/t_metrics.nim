@@ -155,6 +155,13 @@ proc runTests*() =
       check "donkey_provider_tokens_total{provider=\"deepseek\",direction=\"output\"} 300" in r
       check "provider=\"gemini\",direction" notin r
 
+    test "cached tokens are their own directions (E8.3)":
+      initMetrics()
+      recordTokens("anthropic", 3000, 5, cacheRead = 2048, cacheWrite = 100)
+      let r = renderMetrics()
+      check "donkey_provider_tokens_total{provider=\"anthropic\",direction=\"cache_read\"} 2048" in r
+      check "donkey_provider_tokens_total{provider=\"anthropic\",direction=\"cache_write\"} 100" in r
+
     test "turns are counted per channel and outcome, with their duration":
       initMetrics()
       recordTurn("telegram", "user", 3_000.0, ok = true)

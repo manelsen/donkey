@@ -8,11 +8,13 @@ import donkey/domain/insights_pure
 
 proc line(user = "u1"; provider = "openrouter"; channel = "telegram";
           tools = """[{"name":"web_search","outcome":"output"}]""";
-          inTok = 100; outTok = 20; outcome = "ok"): string =
+          inTok = 100; outTok = 20; outcome = "ok"; cacheRead = -1): string =
   """{"ts":1,"duration_ms":1000,"user":"""" & user & """","channel":"""" & channel &
     """","kind":"user","session":"s","provider":"""" & provider &
     """","streamed":true,"tools":""" & tools & ""","tokens":{"input":""" & $inTok &
-    ""","output":""" & $outTok & """},"outcome":"""" & outcome & """"}"""
+    ""","output":""" & $outTok &
+    (if cacheRead >= 0: ""","cache_read":""" & $cacheRead else: "") &
+    """},"outcome":"""" & outcome & """"}"""
 
 proc runTests*() =
   suite "insights":
@@ -33,6 +35,18 @@ proc runTests*() =
       check ("openrouter", 1) in r.providers and ("groq", 1) in r.providers
       check ("cli", 1) in r.channels
       check ("provider_error", 1) in r.outcomes
+
+    test "the prompt cache: how much of the input it served, per provider (E8.3)":
+      let r = aggregateInsights(@[line(inTok = 1000, cacheRead = 800),
+                                  line(provider = "groq", inTok = 1000, cacheRead = 0),
+                                  line(inTok = 1000)])   ## an old line, before E8.3
+      check r.cacheReadTokens == 800
+      let text = formatInsights(r, "x")
+      check "Prompt cache: 800 of 3000 input tokens (26%)" in text
+      check "openrouter 40%" in text and "groq 0%" in text
+
+    test "no cached tokens: no cache line":
+      check "Prompt cache" notin formatInsights(aggregateInsights(@[line()]), "x")
 
     test "a broken line is skipped, not fatal":
       check aggregateInsights(@["not json", line()]).turns == 1

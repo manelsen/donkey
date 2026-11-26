@@ -12,6 +12,7 @@
 ## Gemini API reference:
 ##   https://ai.google.dev/api/rest/v1beta/models/generateContent
 
+import ./cache_usage_pure
 import std/[json, tables, strutils]
 import ../../core/pipeops
 import ../../domain/message
@@ -176,5 +177,6 @@ func parseGeminiResponse*(j: JsonNode): Result[CompletionResponse, string] =
     reasoning:    reasoningParts.join("\n"),
     inputTokens:  if usage != nil: usage.getOrDefault("promptTokenCount").getInt(0)     else: 0,
     outputTokens: if usage != nil: usage.getOrDefault("candidatesTokenCount").getInt(0) else: 0,
+    cacheReadTokens: geminiUsage(usage).cacheRead,
     toolCalls:    toolCalls,
   )

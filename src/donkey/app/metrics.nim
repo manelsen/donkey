@@ -45,6 +45,8 @@ type
     errors*:             Counter        # provider -> count
     tokensIn*:           Counter        # provider -> input tokens
     tokensOut*:          Counter        # provider -> output tokens
+    tokensCacheRead*:    Counter        # provider -> input tokens served from the prompt cache
+    tokensCacheWrite*:   Counter        # provider -> input tokens written to it
     turnsOk*:            Counter        # channel␟kind -> turns that answered
     turnsError*:         Counter        # channel␟kind -> turns that failed
     turnDuration*:       Histograms     # channel -> turn duration
@@ -107,12 +109,16 @@ proc recordLatency*(provider: string; ms: float) {.gcsafe, raises: [].} =
     if not gMetricsReady: return
     gMetrics.providerLatency.mgetOrPut(provider).observe(ms)
 
-proc recordTokens*(provider: string; input, output: int) {.gcsafe, raises: [].} =
+proc recordTokens*(provider: string; input, output: int;
+                   cacheRead = 0; cacheWrite = 0) {.gcsafe, raises: [].} =
   ## Tokens a provider reported for one completion; zeros are not recorded.
+  ## The cached ones are part of `input` (E8.3).
   withMetrics:
     if not gMetricsReady: return
     if input > 0: gMetrics.tokensIn.inc(provider, input)
     if output > 0: gMetrics.tokensOut.inc(provider, output)
+    if cacheRead > 0: gMetrics.tokensCacheRead.inc(provider, cacheRead)
+    if cacheWrite > 0: gMetrics.tokensCacheWrite.inc(provider, cacheWrite)
 
 # ── Turns, tools, traffic, schedules ─────────────────────────────────────────
 
@@ -263,6 +269,10 @@ proc renderMetrics*(): string {.gcsafe.} =
       res.add(&"donkey_provider_tokens_total{{provider=\"{escapeLabel(prov)}\",direction=\"input\"}} {n}\n")
     for prov, n in gMetrics.tokensOut:
       res.add(&"donkey_provider_tokens_total{{provider=\"{escapeLabel(prov)}\",direction=\"output\"}} {n}\n")
+    for prov, n in gMetrics.tokensCacheRead:
+      res.add(&"donkey_provider_tokens_total{{provider=\"{escapeLabel(prov)}\",direction=\"cache_read\"}} {n}\n")
+    for prov, n in gMetrics.tokensCacheWrite:
+      res.add(&"donkey_provider_tokens_total{{provider=\"{escapeLabel(prov)}\",direction=\"cache_write\"}} {n}\n")
 
     family(res, "donkey_turns_total", "counter",
            "Agent turns per channel, kind and outcome")

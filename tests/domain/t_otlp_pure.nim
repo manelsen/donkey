@@ -56,6 +56,7 @@ proc runTests*() =
       check a.attr("donkey.streamed")["boolValue"].getBool
       check a.attr("gen_ai.usage.input_tokens")["intValue"].getStr == "1200"
       check a.attr("gen_ai.usage.output_tokens")["intValue"].getStr == "300"
+      check a.attr("gen_ai.usage.cache_read_input_tokens")["intValue"].getStr == "0"
       check a.attr("donkey.outcome")["stringValue"].getStr == "ok"
       check span["status"]["code"].getInt == 1
 

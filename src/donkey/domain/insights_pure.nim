@@ -15,6 +15,8 @@ type
 
   Insights* = object
     turns*, inputTokens*, outputTokens*: int
+    cacheReadTokens*, cacheWriteTokens*: int
+    cacheByProvider*: seq[(string, int, int)]   ## provider, input, read from cache
     tools*:     seq[ToolUse]
     providers*: seq[(string, int)]
     channels*:  seq[(string, int)]
@@ -28,6 +30,7 @@ func ranked(t: CountTable[string]): seq[(string, int)] =
 proc aggregateInsights*(lines: seq[string]): Insights =
   var providers, channels, outcomes: CountTable[string]
   var calls, failures: CountTable[string]
+  var provIn, provRead: CountTable[string]
   for raw in lines:
     let j =
       try: parseJson(raw)
@@ -36,8 +39,14 @@ proc aggregateInsights*(lines: seq[string]): Insights =
     inc result.turns
     result.inputTokens += j{"tokens"}{"input"}.getInt
     result.outputTokens += j{"tokens"}{"output"}.getInt
+    let read = j{"tokens"}{"cache_read"}.getInt
+    result.cacheReadTokens += read
+    result.cacheWriteTokens += j{"tokens"}{"cache_write"}.getInt
     let provider = j{"provider"}.getStr
-    if provider.len > 0: providers.inc provider
+    if provider.len > 0:
+      providers.inc provider
+      provIn.inc(provider, j{"tokens"}{"input"}.getInt)
+      provRead.inc(provider, read)
     let channel = j{"channel"}.getStr
     if channel.len > 0: channels.inc channel
     let outcome = j{"outcome"}.getStr
@@ -52,6 +61,8 @@ proc aggregateInsights*(lines: seq[string]): Insights =
   result.providers = ranked(providers)
   result.channels = ranked(channels)
   result.outcomes = ranked(outcomes)
+  for (name, input) in ranked(provIn):
+    result.cacheByProvider.add (name, input, provRead.getOrDefault(name))
 
 func counts(items: seq[(string, int)]): string =
   var parts: seq[string]
@@ -63,6 +74,14 @@ func formatInsights*(r: Insights; period: string; toolLimit = 10): string =
     return "No turns in " & period & " (traces are kept with DONKEY_TRACES=on)."
   var lines = @["Insights, " & period & ": " & $r.turns & " turns, " &
                 $r.inputTokens & " tokens in, " & $r.outputTokens & " out."]
+  if r.cacheReadTokens + r.cacheWriteTokens > 0 and r.inputTokens > 0:
+    lines.add "Prompt cache: " & $r.cacheReadTokens & " of " & $r.inputTokens &
+      " input tokens (" & $(r.cacheReadTokens * 100 div r.inputTokens) & "%), " &
+      $r.cacheWriteTokens & " written."
+    var parts: seq[string]
+    for (name, input, read) in r.cacheByProvider:
+      if input > 0: parts.add name & " " & $(read * 100 div input) & "%"
+    if parts.len > 0: lines.add "  by provider: " & parts.join(", ")
   if r.tools.len > 0:
     lines.add "Tools:"
     for i, t in r.tools:

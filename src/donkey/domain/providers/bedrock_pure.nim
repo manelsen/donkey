@@ -12,6 +12,7 @@
 ##   - an image is bytes with a format (no URL source).
 ## No I/O; signing and HTTP live in `adapters/provider/bedrock.nim`.
 
+import ./cache_usage_pure
 import std/[json, strutils]
 import ../../core/pipeops
 import ../message
@@ -124,7 +125,10 @@ func parseConverseResponse*(body: JsonNode): Result[CompletionResponse, string] 
         inputJson: $(if use.hasKey("input"): use["input"] else: newJObject())))
     elif item.hasKey("reasoningContent"):
       resp.reasoning.add(item["reasoningContent"]{"reasoningText"}{"text"}.getStr(""))
-  resp.inputTokens = body{"usage"}{"inputTokens"}.getInt(0)
+  let cache = bedrockUsage(body{"usage"})
+  resp.inputTokens = cache.inputTokens
+  resp.cacheReadTokens = cache.cacheRead
+  resp.cacheWriteTokens = cache.cacheWrite
   resp.outputTokens = body{"usage"}{"outputTokens"}.getInt(0)
   ok(resp)
 

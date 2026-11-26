@@ -13,6 +13,7 @@
 ##
 ## `proc`, not `func`: parseJson is not `noSideEffect` (ADR-007 allows it).
 
+import ./cache_usage_pure
 import std/[json, strutils, tables]
 import ../../core/pipeops
 import ../message
@@ -24,6 +25,7 @@ type
     reasoning:    string
     inputTokens:  int
     outputTokens: int
+    cache:        CacheUsage
     tools:        Table[int, ToolCallRequest]
     order:        seq[int]   ## tool-call indexes in the order they first came
     sawEvent:     bool
@@ -90,6 +92,7 @@ proc feed*(acc: var OpenAiStream; line: string): Result[string, string] =
   let usage = j{"usage"}
   if intField(usage, "prompt_tokens") > 0:
     acc.inputTokens = intField(usage, "prompt_tokens")
+    acc.cache = openAiUsage(usage)
   if intField(usage, "completion_tokens") > 0:
     acc.outputTokens = intField(usage, "completion_tokens")
   let choices = j{"choices"}
@@ -129,4 +132,6 @@ func finish*(acc: OpenAiStream; label: string): Result[CompletionResponse, strin
     toolCalls.add call
   ok CompletionResponse(text: acc.text, reasoning: acc.reasoning,
                         inputTokens: acc.inputTokens,
-                        outputTokens: acc.outputTokens, toolCalls: toolCalls)
+                        outputTokens: acc.outputTokens, toolCalls: toolCalls,
+                        cacheReadTokens: acc.cache.cacheRead,
+                        cacheWriteTokens: acc.cache.cacheWrite)

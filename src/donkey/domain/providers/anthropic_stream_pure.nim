@@ -13,6 +13,7 @@
 ##
 ## `proc`, not `func`: parseJson is not `noSideEffect` (ADR-007 allows it).
 
+import ./cache_usage_pure
 import std/[json, strutils, tables]
 import ../../core/pipeops
 import ../message
@@ -22,6 +23,7 @@ type
     text:         string
     inputTokens:  int
     outputTokens: int
+    cache:        CacheUsage
     tools:        Table[int, ToolCallRequest]
     order:        seq[int]
     textBlocks:   int        ## text blocks seen, to join them
@@ -60,12 +62,14 @@ proc feed*(acc: var AnthropicStream; line: string): Result[string, string] =
   case j{"type"}.getStr("")
   of "message_start":
     let usage = j{"message"}{"usage"}
-    acc.inputTokens = intField(usage, "input_tokens")
+    acc.cache = anthropicUsage(usage)
+    acc.inputTokens = acc.cache.inputTokens
     acc.outputTokens = intField(usage, "output_tokens")
   of "message_delta":
     let usage = j{"usage"}
-    if intField(usage, "input_tokens") > 0:
-      acc.inputTokens = intField(usage, "input_tokens")
+    if anthropicUsage(usage).inputTokens > 0:   ## any of the three counts
+      acc.cache = anthropicUsage(usage)
+      acc.inputTokens = acc.cache.inputTokens
     if intField(usage, "output_tokens") > 0:
       acc.outputTokens = intField(usage, "output_tokens")
   of "content_block_start":
@@ -121,4 +125,6 @@ func finish*(acc: AnthropicStream; label: string): Result[CompletionResponse, st
       call.inputJson = "{}"
     toolCalls.add call
   ok CompletionResponse(text: acc.text, inputTokens: acc.inputTokens,
-                        outputTokens: acc.outputTokens, toolCalls: toolCalls)
+                        outputTokens: acc.outputTokens, toolCalls: toolCalls,
+                        cacheReadTokens: acc.cache.cacheRead,
+                        cacheWriteTokens: acc.cache.cacheWrite)

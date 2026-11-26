@@ -14,6 +14,7 @@
 ##   https://platform.openai.com/docs/api-reference/chat/create
 ##   https://platform.openai.com/docs/api-reference/chat/object
 
+import ./cache_usage_pure
 import std/[json, strutils]
 import ../../core/pipeops
 import ../../domain/message
@@ -349,6 +350,8 @@ proc parseResponseFrom*(body: JsonNode): Result[CompletionResponse, string] =
       reasoning:    reasoning,
       inputTokens:  promptTokens,
       outputTokens: completionTokens,
+      cacheReadTokens:  openAiUsage(usage).cacheRead,
+      cacheWriteTokens: openAiUsage(usage).cacheWrite,
       toolCalls:   toolCalls,
     )
   except JsonKindError, KeyError, ValueError:

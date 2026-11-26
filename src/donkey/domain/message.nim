@@ -117,8 +117,10 @@ type
   CompletionResponse* = object
     text*:         string
     reasoning*:    string       ## optional chain-of-thought
-    inputTokens*:  int
+    inputTokens*:  int          ## the whole prompt, cached parts included
     outputTokens*: int
+    cacheReadTokens*:  int      ## of inputTokens, served from the prompt cache
+    cacheWriteTokens*: int      ## of inputTokens, written to the prompt cache
     toolCalls*:    seq[ToolCallRequest]
 
 # ── history helpers ───────────────────────────────────────────────────────────

@@ -693,6 +693,8 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
       streamed: loopResult.wasStreamed, tools: toolCallsOfTurn(added),
       inputTokens: loopResult.usage.inputTokens,
       outputTokens: loopResult.usage.outputTokens,
+      cacheReadTokens: loopResult.usage.cacheReadTokens,
+      cacheWriteTokens: loopResult.usage.cacheWriteTokens,
       outcome:
         if loopResult.providerFailed: "provider_error"
         elif sessionStopRequested(turnSetup.nativeCtx): "stopped"

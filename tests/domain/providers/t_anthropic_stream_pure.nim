@@ -41,6 +41,24 @@ proc runTests*() =
       check r.text == "Olá"
       check r.inputTokens == 20 and r.outputTokens == 7
 
+    test "cached tokens from message_start, input as the whole prompt (E8.3)":
+      let (acc, _, fed) = feedAll([
+        """data: {"type":"message_start","message":{"usage":{"input_tokens":20,"cache_read_input_tokens":3000,"cache_creation_input_tokens":500,"output_tokens":1}}}""",
+        """data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}""",
+        stop])
+      check fed.isOk
+      let r = acc.finish("Anthropic").get
+      check r.inputTokens == 3520 and r.cacheReadTokens == 3000 and r.cacheWriteTokens == 500
+
+    test "a message_delta with only cached tokens still counts them":
+      let (acc, _, fed) = feedAll([
+        start,
+        """data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":0,"cache_read_input_tokens":4000,"output_tokens":7}}""",
+        stop])
+      check fed.isOk
+      let r = acc.finish("Anthropic").get
+      check r.cacheReadTokens == 4000 and r.inputTokens == 4000
+
     test "a tool_use block comes back with its input assembled":
       let (acc, tokens, _) = feedAll([
         start,

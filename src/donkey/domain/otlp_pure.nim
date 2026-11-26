@@ -59,6 +59,8 @@ proc otlpTraceJson*(t: TurnTrace; traceIdHex, spanIdHex: string): string =
                 strAttr("donkey.provider", t.provider), boolAttr("donkey.streamed", t.streamed),
                 intAttr("gen_ai.usage.input_tokens", t.inputTokens),
                 intAttr("gen_ai.usage.output_tokens", t.outputTokens),
+                intAttr("gen_ai.usage.cache_read_input_tokens", t.cacheReadTokens),
+                intAttr("gen_ai.usage.cache_creation_input_tokens", t.cacheWriteTokens),
                 strAttr("donkey.outcome", t.outcome)]
   if t.agentProvider.len > 0:
     attrs.add strAttr("donkey.agent_provider", t.agentProvider)

@@ -30,6 +30,8 @@ type
     tools*:         seq[ToolCallTrace]
     inputTokens*:   int
     outputTokens*:  int
+    cacheReadTokens*:  int   ## of inputTokens, served from the prompt cache
+    cacheWriteTokens*: int
     outcome*:       string   ## ok, provider_error, stopped
 
 const DayMs = 86_400_000'i64
@@ -65,7 +67,8 @@ proc traceLine*(t: TurnTrace): string =
     "ts": t.startedMs, "duration_ms": t.durationMs, "user": t.userId,
     "channel": t.channel, "kind": t.kind, "session": t.sessionId,
     "provider": t.provider, "streamed": t.streamed, "tools": tools,
-    "tokens": {"input": t.inputTokens, "output": t.outputTokens},
+    "tokens": {"input": t.inputTokens, "output": t.outputTokens,
+               "cache_read": t.cacheReadTokens, "cache_write": t.cacheWriteTokens},
     "outcome": t.outcome}
   if t.agentProvider.len > 0:
     j["agent_provider"] = %t.agentProvider

@@ -482,6 +482,15 @@ proc runTests*() =
       check usage.inputTokens == 13
       check usage.outputTokens == 6
 
+    test "a round's cached tokens are summed too (E8.3)":
+      var usage = UsageTotals()
+      usage = usage.addUsage(CompletionResponse(inputTokens: 3000, outputTokens: 5,
+                                                cacheReadTokens: 2048, cacheWriteTokens: 100))
+      usage = usage.addUsage(CompletionResponse(inputTokens: 3100, outputTokens: 7,
+                                                cacheReadTokens: 2900))
+      check usage.inputTokens == 6100 and usage.outputTokens == 12
+      check usage.cacheReadTokens == 4948 and usage.cacheWriteTokens == 100
+
     test "a fresh tool loop state starts at zero":
       let state = newToolLoopState(@[])
       check state.usage.inputTokens == 0

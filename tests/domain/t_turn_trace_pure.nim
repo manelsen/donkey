@@ -38,7 +38,13 @@ proc runTests*() =
       check j["tools"].len == 2
       check j["tools"][1]["outcome"].getStr == "usage_error"
       check j["tokens"]["input"].getInt == 100
+      check j["tokens"]["cache_read"].getInt == 0
       check "senha" notin line and "girassol42" notin line
+
+    test "the cached tokens go in the line (E8.3)":
+      let t = TurnTrace(inputTokens: 3000, cacheReadTokens: 2048, cacheWriteTokens: 100)
+      let j = parseJson(traceLine(t))
+      check j["tokens"]["cache_read"].getInt == 2048 and j["tokens"]["cache_write"].getInt == 100
 
     test "one file per UTC day":
       check traceFileName(0) == "1970-01-01.jsonl"

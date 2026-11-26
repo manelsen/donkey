@@ -590,7 +590,8 @@ proc recordStreamRound(factory: StreamFactory;
   if res.isErr:
     recordError(provider)
   else:
-    recordTokens(provider, res.get.inputTokens, res.get.outputTokens)
+    recordTokens(provider, res.get.inputTokens, res.get.outputTokens,
+                 res.get.cacheReadTokens, res.get.cacheWriteTokens)
 
 proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
                  toolInbox: AsyncQueue[AgentMessage];
@@ -715,8 +716,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
         continue
       if not fallBackToRouting:
         let streamed = streamedRes.value
-        loopState.usage = loopState.usage.addUsage(
-          streamed.inputTokens, streamed.outputTokens)
+        loopState.usage = loopState.usage.addUsage(streamed)
         if sessionStopRequested(nativeCtx):
           loopState.done = true
           break
@@ -774,7 +774,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
       continue
 
     let r = resp.value
-    loopState.usage = loopState.usage.addUsage(r.inputTokens, r.outputTokens)
+    loopState.usage = loopState.usage.addUsage(r)
     if sessionStopRequested(nativeCtx):
       loopState.done = true
       break

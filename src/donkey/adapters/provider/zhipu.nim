@@ -10,6 +10,7 @@
 ##     but native tools are passed as {"type":"web_search"} etc.
 ##   - No streaming in F1 (streaming added in F4)
 
+import ../../domain/providers/cache_usage_pure
 import std/[json]
 import ../../domain/message
 import ../../domain/providers/compat
@@ -111,6 +112,7 @@ func parseZhipuResponse*(parsed: JsonNode): Result[CompletionResponse, string] =
     text:         msg{"content"}.getStr(""),
     reasoning:    msg{"reasoning_content"}.getStr(""),
     inputTokens:  usage.jInt("prompt_tokens"),
+    cacheReadTokens:  openAiUsage(usage).cacheRead,
     outputTokens: usage.jInt("completion_tokens"),
     toolCalls:    toolCalls,
   )

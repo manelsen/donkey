@@ -142,6 +142,7 @@ with `skill_manage`, and a person's own skill of the same name wins.
 ## /insights
 
 `/insights [days]` asks the agent for the person's own usage report (the
-`insights` tool): their turns, tokens, tools and failures, providers,
+`insights` tool): their turns, tokens (with the share served from the prompt
+cache, per provider), tools and failures, providers,
 channels, and the learned skills they loaded most, over the last 30 days by
 default. It reads the traces (`DONKEY_TRACES=on`) and only that person's turns.
