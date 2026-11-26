@@ -50,17 +50,22 @@ proc drainGoogleChatEvents*(a: var GoogleChatAdapter;
       ## E9.2: the first uploaded file is downloaded for the turn (by its
       ## resource name, through the port's downloadFile); a Drive file, which
       ## the app cannot read, and the others are named.
-      var unread: seq[string]
+      var unread, drive: seq[string]
       for f in e.attachments:
-        if msg.mediaUrl.len == 0 and not f.drive and f.resourceName.len > 0:
+        let name = if f.name.len > 0: f.name else: "anexo"
+        if f.drive:
+          drive.add name
+        elif msg.mediaUrl.len == 0 and f.resourceName.len > 0:
           msg.mediaUrl = f.resourceName
           msg.mediaFileName = f.name
           msg.mediaMimeType = f.mimeType
         else:
-          unread.add(if f.name.len > 0: f.name else: "anexo")
-      if unread.len > 0:
-        if msg.text.len > 0: msg.text.add "\n\n"
-        msg.text.add "[Anexos não lidos: " & unread.join(", ") & "]"
+          unread.add name
+      for (label, names) in [("Anexos não lidos", unread),
+                             ("Arquivos do Drive, que o Donkey não acessa", drive)]:
+        if names.len > 0:
+          if msg.text.len > 0: msg.text.add "\n\n"
+          msg.text.add "[" & label & ": " & names.join(", ") & "]"
       let command = decideCommandRequest(CommandRequest(channel: ckGoogleChat, text: msg.text))
       if command.route == crLocal and
           decideLocalCommandAction(command) == lcaContinueLink:

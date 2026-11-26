@@ -116,7 +116,8 @@ proc runMediaTests*() =
       let m = s.turns[0]
       check m.mediaUrl == "AbC-123_xyz=" and m.mediaFileName == "foto.png"
       check m.mediaMimeType == "image/png"
-      check "plano.gdoc" in m.text and "nota.pdf" in m.text
+      check "[Anexos não lidos: nota.pdf]" in m.text
+      check "[Arquivos do Drive, que o Donkey não acessa: plano.gdoc]" in m.text
 
 when isMainModule:
   runTests()
