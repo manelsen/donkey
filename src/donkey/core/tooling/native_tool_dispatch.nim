@@ -70,6 +70,8 @@ const
     "manage_agents",
     "manage_schedules",
     "manage_tasks",
+    "skill_manage",
+    "skill_view",
     "session_search",
     "memory_ingest",
   ]

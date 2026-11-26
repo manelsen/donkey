@@ -189,6 +189,7 @@ const
     "manage_agents",
     "manage_schedules",
     "manage_tasks",
+    "skill_manage",
     "ask_agent",
     "convene_agents",
     "bash",
