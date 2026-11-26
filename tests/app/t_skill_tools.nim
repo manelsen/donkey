@@ -27,6 +27,7 @@ proc runTests*() =
       let v = performSkillView(newFsAdapter(), p, "deploy-staging")
       check v.isOk and "2. Push." in v.get and "name: deploy-staging" in v.get
       check performSkillView(newFsAdapter(), p, "nope").isErr
+      check newLearnedSkills(newFsAdapter(), p).list()[0].usage.loads == 1   ## a view is a use
 
     test "a blocked skill is refused with the guard's reason":
       let r = manage(paddock(), %* {"action": "create",

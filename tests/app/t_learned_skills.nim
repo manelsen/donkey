@@ -94,5 +94,23 @@ proc runTests*() =
       check store.read("../USER").isErr
       check store.archive("../../x", nowMs = 1).isErr
 
+  suite "learned skills — usage (E7.3)":
+
+    test "each load is counted, with when it happened; a skill never loaded shows zero":
+      let p = paddock()
+      let store = newLearnedSkills(newFsAdapter(), p)
+      check store.create(Skill, by = "agent", nowMs = 1).isOk
+      check store.list()[0].usage.loads == 0
+      store.recordUse("deploy-staging", 5_000)
+      store.recordUse("deploy-staging", 9_000)
+      let s = newLearnedSkills(newFsAdapter(), p).list()[0]   ## survives a restart
+      check s.usage.loads == 2 and s.usage.lastUsedMs == 9_000
+
+    test "recording a use of a missing or bad name does nothing":
+      let store = newLearnedSkills(newFsAdapter(), paddock())
+      store.recordUse("nope", 1)
+      store.recordUse("../x", 1)
+      check store.list().len == 0
+
 when isMainModule:
   runTests()
