@@ -10,6 +10,7 @@ import ../../ports/http as httpPort
 import ../../domain/builtin_tools
 import ../../core/dns
 import ../../core/tooling/structured_tool_result
+import ../../domain/message
 import ./text_tools  # stripHtml
 
 # ── fetch ─────────────────────────────────────────────────────────────────────
@@ -175,3 +176,42 @@ proc performWebSearch*(query: string; count: int;
     lines.join("\n\n")
   except Exception as e:  ## effect boundary: callee raises are unannotated
     "Error: " & e.msg
+
+# ── A web tool call as plain data, for a worker thread ───────────────────────
+
+type
+  WebToolKind* = enum
+    wtkFetch            ## web_fetch, fetch: text
+    wtkFetchStructured  ## http_fetch: the structured envelope
+    wtkSearch           ## web_search
+
+  WebToolJob* = object
+    ## Everything a worker needs: no ref, no closure. `transportAllowlist`
+    ## and `proxy` rebuild the session's transport there.
+    kind*:               WebToolKind
+    url*, expect*, label*: string
+    query*, apiKey*:     string
+    maxCh*, count*:      int
+    rules*:              seq[cfgTypes.WebAccessRule]
+    allowlist*:          seq[string]
+    transportAllowlist*: seq[string]
+    proxy*:              string
+
+  WebToolOutput* = object
+    text*:       string
+    kind*:       ToolResultKind
+    structured*: bool   ## `text` is the envelope's JSON and `kind` its status
+
+proc runWebToolJob*(job: WebToolJob; http: httpPort.HttpRuntimePort): WebToolOutput {.gcsafe, raises: [].} =
+  ## The same operations the tools ran on the loop, on whatever thread this is.
+  case job.kind
+  of wtkFetch:
+    WebToolOutput(text: performFetch(http, job.url, job.maxCh, job.rules, job.allowlist, job.label))
+  of wtkFetchStructured:
+    let r = performFetchStructured(http, job.url, expect = job.expect, maxCh = job.maxCh,
+                                   allowRules = job.rules, fallbackAllowlist = job.allowlist,
+                                   policyLabel = job.label)
+    WebToolOutput(text: r.toJson(), kind: r.kind, structured: true)
+  of wtkSearch:
+    WebToolOutput(text: performWebSearch(job.query, job.count, job.apiKey, http,
+                                         job.rules, job.allowlist))

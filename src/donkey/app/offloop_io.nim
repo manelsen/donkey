@@ -13,6 +13,7 @@ import ../core/pipeops
 import ../infra/thread_owner
 import ../ports/http
 import ../ports/process
+import ./tools/web_tools
 
 type
   AsyncHttpGet* = proc(url: string; headers: seq[HttpHeader]; allowHosts: seq[string]):
@@ -24,10 +25,14 @@ type
   AsyncProcessRun* = proc(spec: ProcessSpec): Future[Result[ProcessOutput, string]]
       {.async: (raises: []), gcsafe.}
 
+  AsyncWebTool* = proc(job: WebToolJob): Future[WebToolOutput] {.async: (raises: []), gcsafe.}
+    ## web_fetch, fetch, http_fetch, web_search with a transport of its own.
+
   OffLoopIo* = object
     httpGet*:    AsyncHttpGet
     httpPost*:   AsyncHttpPost
     processRun*: AsyncProcessRun
+    webTool*:    AsyncWebTool
 
 var
   gIo {.threadvar.}: OffLoopIo

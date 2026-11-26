@@ -345,6 +345,22 @@ proc handledOutcome(text: string): NativeToolResult {.gcsafe, raises: [].} =
   else:
     handledText(text)
 
+proc webToolResult(o: WebToolOutput): NativeToolResult {.gcsafe, raises: [].} =
+  if o.structured: NativeToolResult(handled: true, text: o.text, resultKind: o.kind)
+  else: handledOutcome(o.text)
+
+proc runWeb(job: WebToolJob; ctx: NativeCtx): Future[WebToolOutput] {.async.} =
+  ## Off the loop through the installed runner (app/offloop_io), with a
+  ## transport like the session's; in place, through ctx.http, when nothing
+  ## is installed (tests).
+  var job = job
+  job.transportAllowlist = ctx.webAllowlist
+  job.proxy = ctx.env.get("DONKEY_WEB_PROXY").strip()
+  let io = offLoopIo()
+  if io.webTool != nil:
+    return await io.webTool(job)
+  return runWebToolJob(job, ctx.http)
+
 proc buildCheckpointResult*(state: SessionState): NativeToolResult {.gcsafe, raises: [].} =
   NativeToolResult(
     handled: true,
@@ -443,8 +459,8 @@ proc executeLegacyNativeTool(tc: ToolCallRequest;
     let rules = toolWebRules(ctx, WebFetchToolName)
     if not isAllowedPublicUrl(url, rules, ctx.webAllowlist):
       return handledError(buildUrlAccessError(url, rules, ctx.webAllowlist, WebFetchToolName))
-    let fetched = performFetch(ctx.http, url, maxCh, rules, ctx.webAllowlist, WebFetchToolName)
-    return handledOutcome(fetched)
+    return webToolResult(await runWeb(WebToolJob(kind: wtkFetch, url: url, maxCh: maxCh,
+      rules: rules, allowlist: ctx.webAllowlist, label: WebFetchToolName), ctx))
   else:
     return NativeToolResult(handled: false)
 
@@ -573,12 +589,16 @@ proc executeWebNativeTool(tc: ToolCallRequest;
     let fetchCtx = parseFetchContext(j, FetchDefaultMax).valueOr:
       return handledError(error)
     let rules = toolWebRules(ctx, FetchToolName)
-    return handledOutcome(performFetch(ctx.http, fetchCtx.url, fetchCtx.maxCh, rules, ctx.webAllowlist, FetchToolName))
+    return webToolResult(await runWeb(WebToolJob(kind: wtkFetch, url: fetchCtx.url,
+      maxCh: fetchCtx.maxCh, rules: rules, allowlist: ctx.webAllowlist,
+      label: FetchToolName), ctx))
   of WebSearchToolName:
     let searchCtx = parseWebSearchContext(j).valueOr:
       return handledError(error)
     let rules = toolWebRules(ctx, WebSearchToolName)
-    return handledOutcome(performWebSearch(searchCtx.query, searchCtx.count, ctx.braveApiKey, ctx.http, rules, ctx.webAllowlist))
+    return webToolResult(await runWeb(WebToolJob(kind: wtkSearch, query: searchCtx.query,
+      count: searchCtx.count, apiKey: ctx.braveApiKey, rules: rules,
+      allowlist: ctx.webAllowlist), ctx))
   of GithubToolName:
     ## Off the loop, through the installed runner (app/offloop_io).
     let read = await performGithub(j, githubToken(), offLoopIo())
@@ -665,14 +685,10 @@ proc executeStructuredNativeTool(tc: ToolCallRequest;
     let fetchCtx = parseFetchContext(j, FetchDefaultMax).valueOr:
       return handledStructured(usageErrorToolResult(normalizedErrorMessage(error)))
     let rules = toolWebRules(ctx, HttpFetchToolName)
-    return handledStructured(performFetchStructured(
-      ctx.http, fetchCtx.url,
-      expect = j.getOrDefault("expect").getStr("text"),
-      maxCh = fetchCtx.maxCh,
-      allowRules = rules,
-      fallbackAllowlist = ctx.webAllowlist,
-      policyLabel = HttpFetchToolName,
-    ))
+    return webToolResult(await runWeb(WebToolJob(kind: wtkFetchStructured,
+      url: fetchCtx.url, expect: j.getOrDefault("expect").getStr("text"),
+      maxCh: fetchCtx.maxCh, rules: rules, allowlist: ctx.webAllowlist,
+      label: HttpFetchToolName), ctx))
   of GitInspectToolName:
     let gitCtx = parseGitInspectContext(j).valueOr:
       return handledError(error)
