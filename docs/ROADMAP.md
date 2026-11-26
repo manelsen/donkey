@@ -5,7 +5,7 @@
 > [`docs/prd/PRD-roadmap.md`](prd/PRD-roadmap.md), um épico por frente.
 > Decisões abaixo tomadas pelo mantenedor em 25/11/2026.
 
-## 1. Onde estamos (26/11/2026, `master` em `d3e20826`)
+## 1. Onde estamos (26/11/2026, `master` em `84dea25d`)
 
 - **Código:** 398 módulos e ~85 mil linhas em `src/`, 409 arquivos de teste,
   suíte completa verde. Arquitetura hexagonal com as fronteiras verificadas
@@ -37,6 +37,12 @@
   guardadas por uma guarda que bloqueia antes de gravar; uma revisão em
   segundo plano guarda o que merece, um curador consolida e arquiva, e
   `/learn`, `/refine`, `ctl skill learned` e `ctl insights` completam o ciclo.
+- **Cache de prompt e contexto (E8):** o histórico só cresce (o contexto
+  recuperado fica com a mensagem do turno; nada sai do começo), marcadores de
+  cache para Claude, tokens do cache no uso, nos traços, nas métricas e no
+  `/insights`; uma conversa longa é compactada em degrau (40% do contexto em
+  modelos de 1M, 60% nos menores). Raciocínio adaptativo na Anthropic, com os
+  blocos de raciocínio devolvidos intactos (Anthropic e Bedrock).
 
 ## 2. Primeira rodada: frentes decididas, todas feitas
 
@@ -120,19 +126,21 @@ comandos destrutivos.
 | E7.7 Jornada | `ctl skill learned` e o detalhe da pessoa na TUI | **Feito** (#226) |
 | E7.8 Insights | `donkey ctl insights`: turnos, tokens, ferramentas e falhas, providers, skills mais carregadas | **Feito** (#227); correções das revisões em #228 |
 
-## 6. Quarta rodada (proposta em 26/11, aguardando aprovação)
+## 6. Quarta rodada (proposta em 26/11; decisões de E9 a E12 tomadas)
 
-As seis candidatas do comparativo, agora épicos E8 a E13 no PRD, em ordem
-de ganho. Nenhuma está aprovada; cada uma lista as decisões que pede.
+As seis candidatas do comparativo, épicos E8 a E13 no PRD, renumeradas em
+26/11 (a escrita no GitHub subiu para E11, a supervisão para E12, os canais
+restantes foram para o fim). E8 está feito; de E9 a E12 as decisões estão
+tomadas; E13 ainda pede a do A2A.
 
 | Épico | Frente | O que entrega | Decisões pendentes |
 |---|---|---|---|
-| E8 | Cache de prompt | **Feito** (#232–#235 e o PR da compactação): prefixo estável (o que muda a cada turno vai com a mensagem da pessoa), marcadores `cache_control` para Claude (Anthropic, Bedrock, OpenRouter), tokens do cache no uso, nos traços, nas métricas e no `/insights`, aviso de cache que nunca acerta, compactação de verdade (40% do contexto em modelos de 1M, 60% nos menores; `/compact` funciona) | Decididas em 26/11 |
-| E9 | Mídia nos canais novos | Anexos de entrada e saída no Mattermost, Google Chat, SMS (MMS) e Teams; cartões de aprovação no Google Chat e no Teams; IRC só com links | URL pública assinada para MMS de saída |
-| E10 | Interface para editores (ACP) | `donkey acp`: sessões, streaming, ferramentas e aprovações no Zed e afins, pela IPC do daemon | Identidade do editor; memória compartilhada com os outros canais |
-| E11 | Canais restantes | ntfy, SimpleX, BlueBubbles (iMessage), A2A | A2A nesta rodada; cliente A2A |
-| E12 | Escrita no GitHub | Abrir e fechar issues, comentar, rotular; cada escrita aprovada; repositórios permitidos | Aprovação sempre ou por política; token da instância ou da pessoa |
-| E13 | Supervisão de adapters | Trocar fontes de `Defect` por erro como valor, reinício por adapter, adapters de socket fora do processo (opcional) | Se adapters fora do processo valem o custo |
+| E8 | Cache de prompt | **Feito** (#232–#236; #237 e #238 completam: raciocínio devolvido intacto e histórico só de acréscimo): prefixo estável (o que muda a cada turno vai com a mensagem da pessoa), marcadores `cache_control` para Claude (Anthropic, Bedrock, OpenRouter), tokens do cache no uso, nos traços, nas métricas e no `/insights`, aviso de cache que nunca acerta, compactação de verdade (40% do contexto em modelos de 1M, 60% nos menores; `/compact` funciona) | Decididas em 26/11 |
+| E9 | Mídia nos canais novos | Anexos de entrada e saída no Mattermost, Google Chat e Teams; MMS só de entrada; cartões de aprovação no Google Chat e no Teams; IRC só com links | Decidida: MMS só de entrada |
+| E10 | Interface para editores (ACP) | `donkey acp`: sessões, streaming, ferramentas e aprovações no Zed e afins, pela IPC do daemon; o editor entra por pareamento | Decididas: pareamento; memória compartilhada com os outros canais |
+| E11 | Escrita no GitHub | Abrir e fechar issues, comentar, rotular, com o token de cada pessoa; política por repositório (`allow`, `ask`, `deny` por ação) | Decididas: política por repositório; token da pessoa |
+| E12 | Supervisão de adapters | À maneira do OTP: árvore de supervisão, `one_for_one`, tipos de filho, intensidade de reinícios e escalada; fontes de `Defect` viram erro como valor; canais de socket como processo filho | Decidida: inspirar-se no OTP |
+| E13 | Canais restantes | ntfy, SimpleX, BlueBubbles (iMessage), A2A | A2A nesta rodada; cliente A2A |
 
 ## 7. Decidido não fazer
 

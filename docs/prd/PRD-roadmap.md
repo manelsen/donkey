@@ -406,16 +406,19 @@ agente não manda arquivos de volta. Os canais antigos já fazem isso pelo
 mesmo caminho (`mediaPaths` na entrada, anexos na saída, transcrição e
 `inspect_image`).
 
+**Decisão (26/11).** MMS só de entrada: o Donkey não serve arquivos por URL
+pública (o que exigiria expor o endpoint HTTP do daemon); para mandar um
+arquivo por SMS, responde com texto.
+
 **Histórias**
 - **E9.1 Mattermost.** Entrada: os `file_ids` do post são baixados pela API
   de arquivos. Saída: o anexo é enviado com `POST /files` e citado no post.
 - **E9.2 Google Chat.** Entrada: anexos da mensagem pela API de mídia, com o
   token da conta de serviço. Saída: upload de anexo; cartões (cardsV2) para
   pedidos de aprovação.
-- **E9.3 SMS → MMS.** Entrada: `NumMedia` e `MediaUrlN` do webhook da Twilio,
-  baixados com autenticação. Saída: `MediaUrl` exige uma URL pública; o
-  Donkey serve o arquivo por um link assinado e com prazo, ou o canal
-  responde só com texto (decisão abaixo).
+- **E9.3 SMS → MMS, só de entrada.** `NumMedia` e `MediaUrlN` do webhook da
+  Twilio, baixados com autenticação. Um anexo de saída vira texto (o nome e
+  o que é), nunca uma URL.
 - **E9.4 Teams.** Entrada: anexos (imagens inline e arquivos do OneDrive por
   `downloadUrl`). Saída: arquivos e Adaptive Cards para aprovações.
 - **E9.5 IRC.** Só links: o protocolo não carrega arquivos (DCC fica fora).
@@ -425,9 +428,6 @@ mesmo caminho (`mediaPaths` na entrada, anexos na saída, transcrição e
 *Aceite geral:* uma foto e um áudio mandados em cada canal chegam ao agente
 como nos canais antigos (teste com servidor falso por canal); limites de
 tamanho por canal respeitados com mensagem clara.
-
-*Decisões a tomar:* servir arquivos por URL pública assinada (exige o
-endpoint HTTP do daemon exposto) ou MMS só de entrada.
 
 ---
 
@@ -440,43 +440,120 @@ JSON-RPC sobre stdin e stdout: o editor abre sessões, manda prompts, recebe
 a resposta em pedaços, vê as chamadas de ferramenta e responde a pedidos de
 permissão.
 
+**Decisões (26/11).** O editor é um canal: entra por pareamento, como os
+outros (`ctl pair`), e a pessoa pareada é a mesma dos outros canais, com a
+memória compartilhada.
+
 **Histórias**
 - **E10.1 `donkey acp`.** Um subcomando que fala ACP com o editor e repassa
   ao daemon pela IPC já existente (o mesmo caminho do `ctl` e da API
   compatível com OpenAI); nada de laço novo. `initialize`, `session/new`,
   `session/prompt`, `session/cancel`.
-- **E10.2 Streaming e ferramentas.** Pedaços da resposta como
+- **E10.2 Pareamento.** Na primeira vez, o editor mostra um código que a
+  pessoa confirma num canal onde já é conhecida (ou o operador, com
+  `ctl pair`); depois, o editor guarda uma credencial local e a sessão é da
+  pessoa, com a memória dela.
+- **E10.3 Streaming e ferramentas.** Pedaços da resposta como
   `session/update`; cada chamada de ferramenta aparece com título e estado.
-- **E10.3 Aprovações.** Os pedidos de aprovação do Donkey (ferramentas
+- **E10.4 Aprovações.** Os pedidos de aprovação do Donkey (ferramentas
   perigosas, sampling) viram `session/request_permission` no editor.
-- **E10.4 Contexto do editor.** Arquivos anexados ao prompt pelo editor
+- **E10.5 Contexto do editor.** Arquivos anexados ao prompt pelo editor
   entram como anexos do turno; leitura de arquivos pelo editor
   (`fs/read_text_file`) só se o editor oferecer e com aprovação.
 
-*Aceite geral:* uma sessão no Zed conversa com o agente nomeado escolhido,
-vê as ferramentas rodando e aprova ou recusa uma ação perigosa.
-
-*Decisões a tomar:* que identidade o editor usa (o operador local, um
-usuário escolhido por token, ou um par por `ctl pair`); se a sessão do
-editor compartilha memória com a pessoa nos outros canais (o padrão do
-Donkey diz que sim).
+*Aceite geral:* uma sessão no Zed, pareada, conversa com a pessoa que ela é
+nos outros canais (lembra o que foi dito no Telegram), vê as ferramentas
+rodando e aprova ou recusa uma ação perigosa.
 
 ---
 
-## E11 — Canais restantes
+## E11 — Escrita no GitHub com política
+
+**Problema.** A ferramenta `github` só lê. Abrir uma issue, comentar num PR
+ou numa issue e pôr um rótulo são pedidos comuns de equipe, e o Pincer já os
+faz.
+
+**Decisões (26/11).** Uma política por repositório diz que ações passam sem
+perguntar e quais pedem aprovação; o token é de cada pessoa (o GitHub
+registra quem agiu, e cada um só escreve onde já pode).
+
+**Histórias**
+- **E11.1 Ações de escrita.** `create_issue`, `comment` (issue ou PR),
+  `add_labels`, `close_issue`; sem merge, push ou apagar.
+- **E11.2 Token por pessoa.** Cada pessoa guarda o próprio token no cofre
+  (`/github token` no chat, gravado como segredo da pessoa, nunca no
+  histórico); sem token, a escrita é recusada com a instrução de como
+  configurar. A leitura continua com o token da instância.
+- **E11.3 Política por repositório.** No `donkey.toml`, por repositório (ou
+  padrão): cada ação é `allow`, `ask` ou `deny`; o padrão é `ask` para tudo.
+  `ask` usa o mecanismo de aprovação que já existe, mostrando o texto exato
+  e onde será publicado.
+
+*Aceite geral:* nada é publicado fora da política; o que pede aprovação só
+sai aprovado, com o texto aprovado byte a byte; cada escrita sai com o token
+de quem pediu.
+
+---
+
+## E12 — Supervisão de adapters (à maneira do OTP)
+
+**Problema.** O Donkey compila com `--panics:on`: um `Defect` (índice fora
+do limite, nil, asserção) em qualquer adapter derruba o daemon inteiro e
+todos os canais com ele. A retomada de turno (E1) e o systemd limitam o
+estrago, mas a queda é de todos. No Pincer, a árvore OTP reinicia só o
+pedaço que falhou.
+
+**Decisão (26/11).** Inspirar-se no modelo OTP: uma árvore de supervisão.
+Em Nim, um `Defect` com panics ligado não pode ser capturado (nem numa
+thread), então a árvore tem dois níveis de filho: a tarefa dentro do daemon
+(para erros capturáveis) e o processo do sistema (para isolamento total).
+
+**O que vem do OTP**
+- *Árvore:* o daemon supervisiona os canais e os jobs; o systemd
+  supervisiona o daemon, que retoma os turnos pelo journal (E1).
+- *Estratégia `one_for_one`:* um filho que cai é reiniciado sozinho.
+- *Tipos de filho:* `permanent` (canais: sempre reiniciados), `transient`
+  (só se caírem com erro), `temporary` (jobs: nunca).
+- *Intensidade:* no máximo N reinícios em T segundos (padrão 5 em 60); além
+  disso, o supervisor escala: o canal fica `down` no status, o operador é
+  avisado, e o daemon segue com os outros.
+- *"Let it crash":* um adapter não guarda estado que importe; o que importa
+  vive no journal, nas filas e na fila de mensagens mortas, então reiniciar
+  não perde nada.
+
+**Histórias**
+- **E12.1 Mapa de riscos.** Onde um `Defect` pode nascer nos adapters
+  (indexação de dados externos, `get` de `Option`, conversões) vira erro
+  como valor; um teste de arquitetura impede a volta dos padrões mais
+  perigosos nos parsers de canal.
+- **E12.2 Supervisor no daemon.** A especificação de cada filho (tipo,
+  intensidade, espera crescente entre reinícios), a estratégia
+  `one_for_one` e a escalada; estado `restarting`/`down` no status e na TUI.
+- **E12.3 Filho como processo.** Para os canais de socket (Discord,
+  Mattermost, IRC), o filho pode ser um processo do sistema que fala com o
+  daemon pela fila de eventos; o supervisor reinicia o processo pelas mesmas
+  regras. Ligado por canal na configuração.
+
+*Aceite geral:* um adapter que falha repetidamente não interrompe os outros
+canais nem os turnos em curso; um `Defect` num canal que roda como processo
+não derruba o daemon.
+
+---
+
+## E13 — Canais restantes
 
 **Problema.** O Hermes tem 26 plataformas; o Donkey, 19. Faltam quatro
 relevantes para equipes pequenas.
 
 **Histórias, da mais simples à mais trabalhosa**
-- **E11.1 ntfy.** Publicar notificações num tópico (agendamentos, alertas,
+- **E13.1 ntfy.** Publicar notificações num tópico (agendamentos, alertas,
   respostas longas) e, opcionalmente, ouvir um tópico de entrada. HTTP
   simples, servidor próprio ou ntfy.sh.
-- **E11.2 SimpleX.** Pelo `simplex-chat` em modo servidor (API WebSocket
+- **E13.2 SimpleX.** Pelo `simplex-chat` em modo servidor (API WebSocket
   local). Sem identificador global de usuário: o pareamento é pelo contato.
-- **E11.3 BlueBubbles (iMessage).** API REST e webhooks de um servidor
+- **E13.3 BlueBubbles (iMessage).** API REST e webhooks de um servidor
   BlueBubbles num Mac do operador.
-- **E11.4 A2A.** O protocolo Agent2Agent: o Donkey publica um agent card e
+- **E13.4 A2A.** O protocolo Agent2Agent: o Donkey publica um agent card e
   recebe tarefas de outros agentes por JSON-RPC; o agente remoto vira uma
   identidade como qualquer canal, com pareamento.
 
@@ -488,64 +565,12 @@ se o Donkey também chama agentes A2A (cliente) ou só os atende.
 
 ---
 
-## E12 — Escrita no GitHub com aprovação
-
-**Problema.** A ferramenta `github` só lê. Abrir uma issue, comentar num PR
-ou numa issue e pôr um rótulo são pedidos comuns de equipe, e o Pincer já os
-faz.
-
-**Histórias**
-- **E12.1 Ações de escrita.** `create_issue`, `comment` (issue ou PR),
-  `add_labels`, `close_issue`; sem merge, push ou apagar.
-- **E12.2 Aprovação.** Cada escrita passa pelo mecanismo de aprovação que já
-  existe (o mesmo das ferramentas perigosas e do sampling), mostrando à
-  pessoa o texto exato que será publicado e onde.
-- **E12.3 Escopo.** Uma lista de repositórios permitidos por instância (ou
-  por pessoa), e o token com o menor escopo que serve; recusa fora da lista.
-
-*Aceite geral:* nada é publicado sem aprovação explícita, salvo o que a
-política permitir; o texto publicado é o aprovado, byte a byte.
-
-*Decisões a tomar:* aprovação por ação sempre, ou uma política por
-repositório que libera algumas ações; token da instância ou de cada pessoa.
-
----
-
-## E13 — Supervisão de adapters
-
-**Problema.** O Donkey compila com `--panics:on`: um `Defect` (índice fora
-do limite, nil, asserção) em qualquer adapter derruba o daemon inteiro e
-todos os canais com ele. A retomada de turno (E1) e o systemd limitam o
-estrago, mas a queda é de todos. No Pincer, a árvore OTP reinicia só o
-pedaço que falhou. Em Nim, um `Defect` com panics ligado não pode ser
-capturado; isolar exige outro processo.
-
-**Histórias**
-- **E13.1 Mapa de riscos.** Levantar onde um `Defect` pode nascer nos
-  adapters (indexação de dados externos, `get` de `Option`, conversões) e
-  trocar por erro como valor; um teste de arquitetura impede a volta dos
-  padrões mais perigosos nos parsers de canal.
-- **E13.2 Reinício por adapter.** Um laço de supervisão por canal: um erro
-  capturável derruba só o adapter, que volta com espera crescente e aparece
-  no status como `restarting`, sem afetar os outros.
-- **E13.3 Adapters fora do processo (opcional).** Para os canais de socket
-  mais arriscados, rodar o adapter num processo filho que fala com o daemon
-  pela fila de eventos; a queda dele é um reinício, não uma queda geral.
-
-*Aceite geral:* um adapter que falha repetidamente não interrompe os outros
-canais nem os turnos em curso.
-
-*Decisões a tomar:* se o E13.3 vale o custo (mais processos e IPC numa VPS
-pequena) ou se E13.1 e E13.2 bastam.
-
----
-
 ## Ordem e dependências
 
 E1 → E2 → E3 (E3.6 depois de E2) → E4 → E5 → E6 (E6.5 depois de E5).
 E4 e E5 não dependem de E3 e podem andar em paralelo a ela se for útil.
 
-Quarta rodada (proposta): E8 → E9 → E10 → E11 → E12 → E13. Nenhum depende
-de outro; E8 vem primeiro porque reduz o custo de tudo o que vem depois, e
-E9.2 e E9.4 (cartões de aprovação) podem esperar E12.2 se a aprovação mudar
-de forma.
+Quarta rodada: E8 (feito) → E9 → E10 → E11 → E12 → E13. Renumerada em
+26/11: a escrita no GitHub subiu para E11 e a supervisão para E12; os canais
+restantes foram para o fim. E10.4 e os cartões de E9.2 e E9.4 usam o mesmo
+mecanismo de aprovação que E11.3.
