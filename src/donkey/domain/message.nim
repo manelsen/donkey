@@ -209,7 +209,9 @@ func trimTo*(h: var ConversationHistory; maxLen: int) =
 
 func turnContextBlock*(context: string): string =
   ## What is recalled for this turn, marked as not written by the person.
-  "<turn_context>\n## Memória relevante\n" & context & "\n</turn_context>\n\n"
+  ## A recalled text that holds the closing tag cannot end the block early.
+  let safe = context.replace("</turn_context>", "</turn-context>")
+  "<turn_context>\n## Memória relevante\n" & safe & "\n</turn_context>\n\n"
 
 func withTurnContext(system: string; history: ConversationHistory;
                      context: string): (string, ConversationHistory) =
