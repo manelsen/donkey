@@ -71,5 +71,24 @@ model = "claude-sonnet-5-5"
       let prompt = namedAgentSystem(NamedAgent(name: "a", description: "d"), "", "")
       check "notes" notin prompt.toLowerAscii
 
+proc runStrictTests*() =
+  suite "named agent — a strict provider (audit of 26/11, finding 2)":
+    test "a local provider is strict unless the file says otherwise":
+      check parseAgentFile("name = \"a\"\ndescription = \"b\"\nprovider = \"ollama\"").get.providerIsStrict
+      check not parseAgentFile("name = \"a\"\ndescription = \"b\"\nprovider = \"ollama\"\nstrict_provider = false").get.providerIsStrict
+
+    test "a cloud provider is a preference unless the file makes it strict":
+      check not parseAgentFile("name = \"a\"\ndescription = \"b\"\nprovider = \"openai\"").get.providerIsStrict
+      check parseAgentFile("name = \"a\"\ndescription = \"b\"\nprovider = \"openai\"\nstrict_provider = true").get.providerIsStrict
+
+    test "no provider is never strict; a bad value is an error":
+      check not parseAgentFile("name = \"a\"\ndescription = \"b\"\nstrict_provider = true").get.providerIsStrict
+      check parseAgentFile("name = \"a\"\ndescription = \"b\"\nstrict_provider = talvez").isErr
+
+    test "the setting survives a round trip":
+      let a = parseAgentFile("name = \"a\"\ndescription = \"b\"\nprovider = \"ollama\"\nstrict_provider = false").get
+      check not parseAgentFile(renderAgentFile(a)).get.providerIsStrict
+
 when isMainModule:
   runTests()
+  runStrictTests()

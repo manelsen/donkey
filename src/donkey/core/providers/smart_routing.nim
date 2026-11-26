@@ -740,6 +740,14 @@ func smartRouteSelections*(prefs: SmartRoutingPrefs;
   ## A named agent's provider (`req.providerOverride`) goes first; the user's
   ## own routing follows, so an agent whose provider fails still answers. A
   ## provider with no credentials configured is skipped instead of tried.
+  ## A strict provider (audit of 26/11, finding 2) is the only route: when
+  ## it is unavailable there is none, rather than another destination.
+  if req.providerStrict and req.providerOverride.len > 0:
+    if not isAvailable(availability, req.providerOverride):
+      return @[]
+    return @[selection(req.providerOverride,
+      if req.modelOverride.len > 0: req.modelOverride
+      else: defaultModelForProvider(req.providerOverride))]
   if req.providerOverride.len == 0 or
       not isAvailable(availability, req.providerOverride):
     return routedSelections(prefs, req, availability)

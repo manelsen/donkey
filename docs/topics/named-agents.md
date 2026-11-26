@@ -15,7 +15,13 @@ Start a message with `@name`:
 That turn is the agent's: its role replaces the main assistant's identity in
 the system prompt, its notes are added, and its model is tried first (the
 user's own routing follows as the fallback, so an agent whose provider fails
-still answers; a provider with no credentials configured is skipped). The message keeps its `@name` in the history, so the main
+still answers; a provider with no credentials configured is skipped). With
+`strict_provider = true` the agent's provider is the only route: when it fails
+or has no credentials, the turn fails instead of going to another provider,
+so the data never reaches a destination the agent was not given. A local
+provider (Ollama) is strict unless the file says `strict_provider = false`:
+whoever picks one wants the data to stay on the host (audit of 26/11,
+finding 2). The message keeps its `@name` in the history, so the main
 assistant and the other agents see who was asked what.
 
 `@name` only counts as the first word. An unknown name is an ordinary message.
@@ -42,6 +48,7 @@ name = "revisor"
 description = "Reviews code strictly: risks before praise, tests before style."
 provider = "anthropic"          # optional
 model = "claude-sonnet-5-5"     # optional
+strict_provider = false         # optional: true = this provider only
 ```
 
 Names are 1–32 characters of `a-z`, `0-9` and `-`. `manage_agents` supports

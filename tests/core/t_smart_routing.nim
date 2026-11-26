@@ -83,6 +83,14 @@ thinking = "low"
       check smartRouteSelections(prefs, req, ProviderAvailability(openai: true)) ==
         @[ProviderSelection(providerName: "openai", modelName: "gpt-5")]
 
+    test "a strict agent provider is the only route; unavailable, there is none":
+      let prefs = parseSmartRoutingPrefs("provider = \"openai\"\nmodel = \"gpt-5\"")
+      let req = CompletionRequest(providerOverride: "ollama", modelOverride: "llama4",
+        providerStrict: true, messages: @[ChatMessage(role: "user", text: "oi")])
+      check smartRouteSelections(prefs, req, ProviderAvailability(openai: true, ollama: true)) ==
+        @[ProviderSelection(providerName: "ollama", modelName: "llama4")]
+      check smartRouteSelections(prefs, req, ProviderAvailability(openai: true)).len == 0
+
     test "no override, no change":
       let prefs = parseSmartRoutingPrefs("provider = \"openai\"\nmodel = \"gpt-5\"")
       let req = CompletionRequest(messages: @[ChatMessage(role: "user", text: "oi")])

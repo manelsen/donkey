@@ -621,6 +621,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
                  providerOverride = "";
                  modelOverride = "";
                  streamRoute: StreamRouteFn = nil;
+                 providerStrict = false;
                  providerRuntime: ProviderRuntimeBuilder = nil): Future[ToolLoopRunResult] {.async.} =
   ## `providerOverride`/`modelOverride`: a named agent's model, carried on
   ## every request of the turn so routing tries it first.
@@ -642,6 +643,7 @@ proc runToolLoop*(globalOutbox: AsyncQueue[OutboundMessage];
     var req = buildPrompt(systemBase, loopState.history, context, tools, reasoning = showReasoning)
     req.providerOverride = providerOverride
     req.modelOverride = modelOverride
+    req.providerStrict = providerStrict
 
     ## With a route known, the stream goes through the provider routing
     ## selects, and only if its stream carries tool calls

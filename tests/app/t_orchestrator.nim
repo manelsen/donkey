@@ -531,6 +531,8 @@ proc runTests*() =
         writeFile(userDir / "agents" / "revisor.toml",
           "name = \"revisor\"\ndescription = \"Revisa código com rigor.\"\nprovider = \"anthropic\"\n")
         writeFile(userDir / "agents" / "revisor.notes.md", "- prefere PRs pequenos")
+        writeFile(userDir / "agents" / "local.toml",
+          "name = \"local\"\ndescription = \"Roda na máquina.\"\nprovider = \"ollama\"\n")
         let mem = MdFileAdapter(paddocksDir: dir)
         let inbox = newAsyncQueue[AgentMessage]()
         let outbox = newAsyncQueue[OutboundMessage]()
@@ -551,7 +553,13 @@ proc runTests*() =
       check "revisor" in req.system and "Revisa código com rigor." in req.system
       check "prefere PRs pequenos" in req.system
       check req.providerOverride == "anthropic"
+      check not req.providerStrict   ## a cloud provider is a preference
       check req.messages[^1].text.endsWith("@revisor olha esse diff")   ## after the turn context (E8.1)
+
+      seen = @[]
+      discard waitFor doTest(tmpDir, "@local resume isso")
+      check seen.len >= 1
+      check seen[^1].providerOverride == "ollama" and seen[^1].providerStrict   ## finding 2
 
       seen = @[]
       discard waitFor doTest(tmpDir, "@desconhecido oi")
