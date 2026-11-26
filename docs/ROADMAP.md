@@ -57,7 +57,6 @@ O que cada frente deixou de fora ao ser implementada. Nenhum está agendado.
 | MCP sampling por HTTP | E5 | só servidores stdio podem pedir sampling |
 | Estado de conexão dos canais por webhook e long poll | E6 | Discord, Mattermost, IRC e Slack e QQ em modo socket mostram se estão conectados (`connected`, `reconnecting c/r`, `stopped`); os demais aparecem como `active`, sem saber da conexão |
 | Skill novo de usuário | E5 | as ferramentas aparecem a partir da mensagem seguinte (listagem em segundo plano) |
-| Renovação de token OAuth do MCP por HTTP | E5 | ainda roda no laço (rara, com prazo próprio) |
 | Escrita no GitHub (abrir issue, comentar) | 2ª rodada, frente 2 | fora de propósito: o agente lê texto de terceiros; pede decisão sobre aprovação |
 | Mattermost, SMS, IRC e Google Chat com mídia | 2ª rodada, frente 1 | só texto; no IRC, só quem tem conta nos serviços da rede é atendido |
 | Mensagens do Mattermost com o socket caído | 2ª rodada, frente 1 | não são reapresentadas ao reconectar |

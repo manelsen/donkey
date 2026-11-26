@@ -25,6 +25,12 @@ proc runTests*() =
       check not env.has("EMPTY")
       check not env.has("UNSET")
 
+    test "its pairs can be copied out, as plain data for a worker":
+      var got: seq[(string, string)]
+      for name, value in environmentOf({"A": "1", "B": "2"}).pairs:
+        got.add (name, value)
+      check ("A", "1") in got and ("B", "2") in got and got.len == 2
+
     test "with returns a copy and leaves the original alone":
       let base = environmentOf({"A": "1"})
       let changed = base.with("A", "2").with("B", "3")

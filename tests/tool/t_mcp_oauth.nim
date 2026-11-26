@@ -351,6 +351,23 @@ proc runTests*() =
       check tools.isOk
       check f.tokenCalls == 1
 
+    test "the token job (for the blocking executor) answers like the source":
+      removeDir(StoreDir)
+      discard saveMcpOAuth(StoreDir, McpOAuthRecord(serverUrl: Server, clientId: "cid",
+        resource: Server, tokenEndpoint: "https://auth.example.test/token",
+        tokens: OAuthTokens(accessToken: "valid", refreshToken: "rt", expiresAt: high(int64) div 2)))
+      check mcpTokenJob(McpTokenJob(dir: StoreDir, serverUrl: Server)).get == "valid"
+      check mcpTokenJob(McpTokenJob(dir: StoreDir, serverUrl: "https://other.example/mcp")).isErr
+
+    test "a confidential client's refresh needs the named secret, which the job carries":
+      removeDir(StoreDir)
+      discard saveMcpOAuth(StoreDir, McpOAuthRecord(serverUrl: Server, clientId: "cid",
+        resource: Server, tokenEndpoint: "https://auth.example.test/token",
+        authMethod: camPost, clientSecretEnv: "MCP_SECRET",
+        tokens: OAuthTokens(accessToken: "old", refreshToken: "rt", expiresAt: 1)))
+      let r = mcpTokenJob(McpTokenJob(dir: StoreDir, serverUrl: Server, forceRefresh: true))
+      check r.isErr and "MCP_SECRET" in r.error
+
     test "without a stored login the token source says to log in":
       removeDir(StoreDir)
       let source = mcpTokenSource(StoreDir, Server, fakePort(FakeAuth()))

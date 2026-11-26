@@ -259,3 +259,28 @@ proc mcpTokenSource*(dir, serverUrl: string; http = HttpRuntimePort();
     rec.tokens = mergeRefreshed(rec.tokens, fresh)
     ? saveMcpOAuth(dir, rec)
     ok(rec.tokens.accessToken)
+
+# ── The refresh as a job, for the blocking executor ──────────────────────────
+
+type McpTokenJob* = object
+  ## Plain data: the store, the server, whether the server refused the last
+  ## token, and the secrets a confidential client may name.
+  dir*, serverUrl*: string
+  forceRefresh*:    bool
+  secrets*:         seq[(string, string)]
+
+proc mcpTokenJob*(job: McpTokenJob): Result[string, string] {.nimcall, gcsafe, raises: [].} =
+  ## A worker's run of mcpTokenSource: the record read, refreshed and stored
+  ## off the loop.
+  let secrets = job.secrets
+  let source = mcpTokenSource(job.dir, job.serverUrl,
+    secretOf = proc(name: string): string {.gcsafe.} =
+      for (k, v) in secrets:
+        if k == name: return v
+      "")
+  try:
+    source(job.forceRefresh)
+  except CatchableError as e:
+    err("oauth: " & e.msg)
+  except Exception as e:  ## effect boundary: callee raises are unannotated
+    err("oauth: " & e.msg)
