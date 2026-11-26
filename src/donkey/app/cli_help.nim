@@ -52,6 +52,7 @@ Commands:
   ctl skill install <slug>              Download/install remote skill bundle
   ctl skill list                        List local skill registry + remote installs
   ctl skill update <name> <script>      Update a local skill path
+  ctl skill learned <uuid> [show|archive|restore <name>]  What the agent learned for a person
   ctl skill rollback <uuid>             A person's learned skills as the curator's last backup had them
   ctl skill update [slug]               Update one/all remote installed skills
   ctl provider test <name>              Test provider connectivity

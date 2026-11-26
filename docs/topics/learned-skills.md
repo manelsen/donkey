@@ -109,3 +109,18 @@ donkey ctl skill rollback <uuid>        # the skills as the newest backup had th
 ```
 
 A rollback backs up the skills it replaces first, so it can be undone too.
+
+## The journey
+
+What the agent learned for a person, who wrote each skill (the agent, the
+review, the curator, the person), when, how often it was loaded, and where it
+came from:
+
+```sh
+donkey ctl skill learned <uuid>                  # the journey
+donkey ctl skill learned <uuid> show <name>      # one skill in full
+donkey ctl skill learned <uuid> archive <name>   # or restore <name>
+```
+
+The TUI shows the same journey in a person's detail view (Admin → Users →
+Enter). The person can ask the agent too (`skill_manage list`).

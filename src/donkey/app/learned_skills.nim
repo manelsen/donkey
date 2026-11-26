@@ -193,3 +193,35 @@ proc restore*(s: LearnedSkills; name: string): Result[void, string] =
       except ValueError: discard
   if latest.len == 0: return err("no archived skill " & name)
   s.fs.move(s.root / ArchiveDirName / latest, s.skillDir(name))
+
+# ── The journey (E7.7) ───────────────────────────────────────────────────────
+
+func dayOf(ms: int64): string =
+  ## YYYY-MM-DD (UTC) of an epoch ms, without a clock (Hinnant's algorithm).
+  if ms <= 0: return "-"
+  let z = ms div 86_400_000 + 719_468
+  let era = (if z >= 0: z else: z - 146_096) div 146_097
+  let doe = z - era * 146_097
+  let yoe = (doe - doe div 1460 + doe div 36_524 - doe div 146_096) div 365
+  let doy = doe - (365 * yoe + yoe div 4 - yoe div 100)
+  let mp = (5 * doy + 2) div 153
+  let d = doy - (153 * mp + 2) div 5 + 1
+  let m = if mp < 10: mp + 3 else: mp - 9
+  let y = yoe + era * 400 + (if m <= 2: 1 else: 0)
+  $y & "-" & align($m, 2, '0') & "-" & align($d, 2, '0')
+
+func journeyLine*(s: LearnedSkill): string =
+  ## One skill as the person or the operator reads it.
+  result = s.doc.name & " — " & s.doc.description & "\n  written by " &
+    (if s.meta.createdBy.len > 0: s.meta.createdBy else: "?") & " on " & dayOf(s.meta.createdAtMs) &
+    ", loaded " & $s.usage.loads & "×" &
+    (if s.usage.lastUsedMs > 0: " (last " & dayOf(s.usage.lastUsedMs) & ")" else: "")
+  if s.meta.note.len > 0:
+    result.add "\n  from: " & s.meta.note
+
+proc journey*(store: LearnedSkills): string =
+  var parts: seq[string]
+  for s in store.list(): parts.add journeyLine(s)
+  let archived = store.archived()
+  if archived.len > 0: parts.add "archived: " & archived.join(", ")
+  if parts.len == 0: "No learned skills yet." else: parts.join("\n")
