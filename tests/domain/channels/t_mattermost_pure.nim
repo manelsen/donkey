@@ -3,7 +3,7 @@
 ## target and the post body. Formats from the Mattermost API reference
 ## ("WebSocket" and "Create a post", api.mattermost.com / developers.mattermost.com).
 
-import std/[json, options, strutils, unittest]
+import std/[sequtils, json, options, strutils, unittest]
 import donkey/core/pipeops
 import donkey/domain/channels/mattermost_pure
 
@@ -18,6 +18,46 @@ proc posted(message: string; channelType = "D"; userId = "alice-id";
   if mentions.len > 0:
     data["mentions"] = %($(%mentions))
   $(%* {"event": "posted", "data": data, "seq": 7})
+
+proc postedWithFiles(message: string; files: JsonNode; channelType = "D"): string =
+  let post = %* {"id": "post-2", "user_id": "alice-id", "channel_id": "chan-1",
+                 "root_id": "", "message": message, "type": "",
+                 "file_ids": files.getElems.mapIt(it["id"]), "metadata": {"files": files}}
+  $(%* {"event": "posted", "data": {"channel_type": channelType, "post": $post}})
+
+proc runMediaTests*() =
+  suite "mattermost — attachments (E9.1)":
+    let photo = %* [{"id": "f1aaaaaaaaaaaaaaaaaaaaaaaa", "name": "foto.png",
+                     "mime_type": "image/png", "size": 2048}]
+
+    test "a post's files come with their name, type and size":
+      let p = parsePostedEvent(postedWithFiles("olha isso", photo), Bot).get
+      check p.files == @[MattermostFile(id: "f1aaaaaaaaaaaaaaaaaaaaaaaa", name: "foto.png",
+                                        mimeType: "image/png", size: 2048)]
+
+    test "a post with only a file, no text, is still answered":
+      let p = inboundPost(postedWithFiles("", photo), MattermostMe(id: Bot, username: "donkey"))
+      check p.isSome and p.get.text == "" and p.get.files.len == 1
+
+    test "file ids without metadata still count":
+      let post = %* {"id": "p", "user_id": "alice-id", "channel_id": "c", "message": "",
+                     "type": "", "file_ids": ["f2bbbbbbbbbbbbbbbbbbbbbbbb"]}
+      let frame = $(%* {"event": "posted", "data": {"channel_type": "D", "post": $post}})
+      check parsePostedEvent(frame, Bot).get.files == @[MattermostFile(id: "f2bbbbbbbbbbbbbbbbbbbbbbbb")]
+
+    test "a file id is the server's 26 letters and digits, nothing else":
+      check validFileId("f1aaaaaaaaaaaaaaaaaaaaaaaa")
+      check not validFileId("../../users/me")
+      check not validFileId("")
+
+    test "posting with files: their ids go with the text":
+      let body = parseJson(postBody("chan-1:root-1", "segue", @["f1aaaaaaaaaaaaaaaaaaaaaaaa"]))
+      check body["file_ids"] == %* ["f1aaaaaaaaaaaaaaaaaaaaaaaa"] and body["root_id"].getStr == "root-1"
+      check not parseJson(postBody("chan-1", "oi")).hasKey("file_ids")
+
+    test "the id of an uploaded file":
+      check uploadedFileId("""{"file_infos":[{"id":"f9zzzzzzzzzzzzzzzzzzzzzzzz"}]}""").get == "f9zzzzzzzzzzzzzzzzzzzzzzzz"
+      check uploadedFileId("{}").isErr
 
 proc runTests*() =
   suite "mattermost — reading an event":
@@ -140,3 +180,4 @@ proc runTests*() =
 
 when isMainModule:
   runTests()
+  runMediaTests()

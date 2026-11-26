@@ -413,6 +413,12 @@ arquivo por SMS, responde com texto.
 **Histórias**
 - **E9.1 Mattermost.** Entrada: os `file_ids` do post são baixados pela API
   de arquivos. Saída: o anexo é enviado com `POST /files` e citado no post.
+  *Feito:* entrada pelo `file_ids` e `metadata.files` do post (também na
+  recuperação depois de uma queda), o primeiro arquivo até 25 MB baixado
+  pelo `downloadFile` do canal, os outros nomeados; saída por upload
+  (`POST /files`, multipart) e o id no post, lendo o arquivo só dentro do
+  paddock (a leitura confinada saiu do Telegram para
+  `adapters/filesystem/confined_read`).
 - **E9.2 Google Chat.** Entrada: anexos da mensagem pela API de mídia, com o
   token da conta de serviço. Saída: upload de anexo; cartões (cardsV2) para
   pedidos de aprovação.
@@ -560,8 +566,9 @@ relevantes para equipes pequenas.
 *Aceite geral:* cada canal com servidor falso nos testes, documentação em
 `docs/topics/channels.md` e estado de conexão no status.
 
-*Decisão (26/11):* A2A entra nesta rodada. *A tomar:* se o Donkey também
-chama agentes A2A (cliente) ou só os atende.
+*Decisões (26/11):* A2A entra nesta rodada, e o Donkey também chama agentes
+A2A (uma ferramenta de delegação, com lista de agentes permitidos e
+aprovação, como as outras ações para fora).
 
 ---
 

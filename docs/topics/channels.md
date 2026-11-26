@@ -358,7 +358,13 @@ personal access token, and add it to the teams and channels it should serve.
 - After a drop, the posts written meanwhile in the bot's channels (at most a
   day back, 100 posts) are fetched on reconnection and answered under the same
   rules, oldest first.
-- Text only: no attachments or edits yet.
+- Attachments both ways. A post's first file (25 MB at most) is downloaded
+  with the bot's token and handed to the turn like on the other channels (an
+  image goes to the model, any file is saved in the paddock); the others are
+  named in the text. A file the agent sends is read only inside the person's
+  paddock, uploaded to the channel and posted with the reply (50 MB at most);
+  one that cannot be read becomes a neutral note, never a path.
+- No edits or buttons yet.
 
 ---
 
