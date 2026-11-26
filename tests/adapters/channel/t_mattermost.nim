@@ -77,10 +77,7 @@ proc runTests*() =
                                    dir / "channels.json", http = fakeHttp(s))
       check b.send(OutboundMessage(userId: uid, channel: ckMattermost, text: "oi")).isOk
 
-    test "media is refused, not dropped; a refused post is an error":
-      let s = Sent()
-      check newAdapter(s).send(OutboundMessage(channel: ckMattermost, replyTo: "c",
-        text: "foto", mediaUrl: "/tmp/x.png")).isErr
+    test "a refused post is an error":
       check newAdapter(Sent(), status = 403).send(
         OutboundMessage(channel: ckMattermost, replyTo: "c", text: "oi")).isErr
 
@@ -91,5 +88,71 @@ proc runTests*() =
       check newAdapter(Sent(), server = "http://chat.example.com").send(
         OutboundMessage(channel: ckMattermost, replyTo: "c", text: "oi")).isErr
 
+type Calls = ref object
+  posts: seq[(string, string, seq[HttpHeader])]
+  gets: seq[(string, seq[HttpHeader])]
+
+const Uploaded = "f9zzzzzzzzzzzzzzzzzzzzzzzz"
+
+proc mediaHttp(c: Calls): HttpRuntimePort =
+  HttpRuntimePort(
+    post: proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+      {.cast(gcsafe).}: c.posts.add (url, body, headers)
+      if url.endsWith("/api/v4/files"):
+        return ok(HttpResponse(status: 201, body: """{"file_infos":[{"id":"""" & Uploaded & """"}]}"""))
+      ok(HttpResponse(status: 201, body: "{}")),
+    get: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+      {.cast(gcsafe).}: c.gets.add (url, headers)
+      ok(HttpResponse(status: 200, body: "\x89PNG-bytes")))
+
+proc mediaAdapter(c: Calls): (MattermostAdapter, string) =
+  inc n
+  let dir = getTempDir() / ("donkey_mm_media_" & $n)
+  removeDir(dir)
+  createDir(dir / "attachments")
+  writeFile(dir / "attachments" / "grafico.png", "\x89PNG-data")
+  (newMattermostAdapter("https://chat.example.com", "tok", dir / "ids.tsv",
+                        dir / "channels.json", http = mediaHttp(c)), dir)
+
+proc runMediaTests*() =
+  suite "mattermost adapter — attachments (E9.1)":
+
+    test "a file inside the paddock is uploaded, then posted with its id":
+      let c = Calls()
+      let (a, dir) = mediaAdapter(c)
+      check a.send(OutboundMessage(channel: ckMattermost, replyTo: "chan-1:root-9",
+        text: "segue o gráfico", mediaUrl: dir / "attachments" / "grafico.png",
+        mediaRoot: dir)).isOk
+      check c.posts.len == 2
+      check c.posts[0][0] == "https://chat.example.com/api/v4/files"
+      check "grafico.png" in c.posts[0][1] and "chan-1" in c.posts[0][1]
+      check "\x89PNG-data" in c.posts[0][1]
+      var multipart = false
+      for (k, v) in c.posts[0][2]:
+        if k == "Content-Type" and v.startsWith("multipart/form-data; boundary="): multipart = true
+      check multipart
+      let post = parseJson(c.posts[1][1])
+      check post["file_ids"] == %* [Uploaded] and post["root_id"].getStr == "root-9"
+      check post["message"].getStr == "segue o gráfico"
+
+    test "a file outside the paddock is never read: a neutral note instead":
+      let c = Calls()
+      let (a, dir) = mediaAdapter(c)
+      check a.send(OutboundMessage(channel: ckMattermost, replyTo: "chan-1",
+        text: "", mediaUrl: "/etc/passwd", mediaRoot: dir)).isOk
+      check c.posts.len == 1 and c.posts[0][0].endsWith("/api/v4/posts")
+      check "/etc/passwd" notin c.posts[0][1]
+
+    test "an attachment is downloaded with the bot's token":
+      let c = Calls()
+      let (a, _) = mediaAdapter(c)
+      let d = a.downloadFile("f1aaaaaaaaaaaaaaaaaaaaaaaa")
+      check d.isOk and d.get.data.len > 0
+      check c.gets[0][0] == "https://chat.example.com/api/v4/files/f1aaaaaaaaaaaaaaaaaaaaaaaa"
+      check ("Authorization", "Bearer tok") in c.gets[0][1]
+      check a.downloadFile("../users/me").isErr
+      check c.gets.len == 1
+
 when isMainModule:
   runTests()
+  runMediaTests()

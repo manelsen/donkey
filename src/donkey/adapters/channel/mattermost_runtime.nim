@@ -41,10 +41,25 @@ proc drainMattermostEvents*(a: var MattermostAdapter;
         a.rememberChannel(post.userId, post.channelId).isOkOr:
           log.warn("mattermost: channel not saved: " & error)
       sm.recordChannel(auth.userId, ckMattermost, target, persist = false)
-      let msg = InboundMessage(
+      var msg = InboundMessage(
         userId: auth.userId, channel: ckMattermost, channelId: target,
         chatId: post.channelId, rawChannelId: post.userId,
         messageId: post.id, text: post.text, isGroup: post.isGroup)
+      ## E9.1: the first file that fits is downloaded for the turn (by its id,
+      ## through the port's downloadFile); the others, or one too large, are
+      ## named.
+      var unread: seq[string]
+      for f in post.files:
+        let name = if f.name.len > 0: f.name else: f.id
+        if msg.mediaUrl.len == 0 and f.size <= MattermostMaxDownloadBytes:
+          msg.mediaUrl = f.id
+          msg.mediaFileName = f.name
+          msg.mediaMimeType = f.mimeType
+        else:
+          unread.add name
+      if unread.len > 0:
+        if msg.text.len > 0: msg.text.add "\n\n"
+        msg.text.add "[Anexos não lidos: " & unread.join(", ") & "]"
       let command = decideCommandRequest(CommandRequest(channel: ckMattermost, text: msg.text))
       if command.route == crLocal and
           decideLocalCommandAction(command) == lcaContinueLink:
