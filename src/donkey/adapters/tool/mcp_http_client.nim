@@ -39,6 +39,10 @@ type
     lock:        AsyncLock
 
   McpHttpTokenFn* = proc(forceRefresh: bool): Result[string, string] {.gcsafe.}
+  McpHttpTokenAsync* = proc(forceRefresh: bool): Future[Result[string, string]]
+      {.async: (raises: []), gcsafe.}
+    ## The same, awaited: the daemon runs the OAuth refresh (a file read and
+    ## a POST to the token endpoint) on the blocking executor.
     ## An OAuth token source (`mcp_oauth.mcpTokenSource`); `forceRefresh`
     ## after the server refused the current token.
 
@@ -56,6 +60,7 @@ type
     url*:       string
     bearer*:    string           ## a static token; ignored when tokenFn is set
     tokenFn*:   McpHttpTokenFn
+    tokenAsync*: McpHttpTokenAsync   ## preferred to tokenFn when set
     http*:      HttpRuntimePort
     postAsync*: McpHttpPost
     state:      ref McpHttpState
@@ -90,12 +95,13 @@ proc syncPost(http: HttpRuntimePort): McpHttpPost =
 proc newMcpHttpClient*(url: string; bearer = "";
                        http = HttpRuntimePort();
                        tokenFn: McpHttpTokenFn = nil;
-                       postAsync: McpHttpPost = nil): McpHttpClient =
+                       postAsync: McpHttpPost = nil;
+                       tokenAsync: McpHttpTokenAsync = nil): McpHttpClient =
   var state = new(McpHttpState)
   state.nextId = 1
   state.lock = newAsyncLock()
   let port = if http.postNoRedirect != nil or http.post != nil: http else: productionPort()
-  McpHttpClient(url: url, bearer: bearer, tokenFn: tokenFn, http: port,
+  McpHttpClient(url: url, bearer: bearer, tokenFn: tokenFn, tokenAsync: tokenAsync, http: port,
                 postAsync: if postAsync != nil: postAsync else: syncPost(port),
                 state: state)
 
@@ -109,9 +115,14 @@ proc currentBearer(c: McpHttpClient; forceRefresh = false): Result[string, strin
   except Exception as e:  ## effect boundary: callee raises are unannotated
     err("mcp: token: " & e.msg)
 
+proc bearerFor(c: McpHttpClient; forceRefresh: bool): Future[Result[string, string]] {.async: (raises: []).} =
+  if c.tokenAsync != nil:
+    return await c.tokenAsync(forceRefresh)
+  return c.currentBearer(forceRefresh)
+
 proc post(c: McpHttpClient; message: JsonNode;
           forceRefresh = false): Future[Result[HttpResponse, string]] {.async: (raises: []).} =
-  let bearer = ? c.currentBearer(forceRefresh)
+  let bearer = ? await c.bearerFor(forceRefresh)
   let headers = mcpRequestHeaders(
     c.state.sessionId,
     (if c.state.initialized: McpProtocolVersion else: ""),
@@ -123,7 +134,7 @@ proc call(c: McpHttpClient; meth: string; params: JsonNode): Future[Result[JsonN
   inc c.state.nextId
   let message = %* {"jsonrpc": "2.0", "id": id, "method": meth, "params": params}
   var resp = ? await c.post(message)
-  if resp.status == 401 and c.tokenFn != nil:
+  if resp.status == 401 and (c.tokenFn != nil or c.tokenAsync != nil):
     ## The server refused the token: refresh it once and send again.
     resp = ? await c.post(message, forceRefresh = true)
   if meth == "initialize":

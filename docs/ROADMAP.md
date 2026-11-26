@@ -58,7 +58,6 @@ O que cada frente deixou de fora ao ser implementada. Nenhum está agendado.
 | Estado de conexão dos canais | E6 | o status do daemon não o informa; a TUI mostra só os canais ativos |
 | Saúde de todos os providers | E6 | o status manda métricas só dos 5 mais usados; os outros aparecem como "no recent calls" |
 | Skill novo de usuário | E5 | as ferramentas aparecem a partir da mensagem seguinte (listagem em segundo plano) |
-| Renovação de token OAuth do MCP por HTTP | E5 | ainda roda no laço (rara, com prazo próprio) |
 | `transcribe_audio` e `text_to_speech` | — | ainda chamam o HTTP síncrono no laço, até o prazo da requisição. `web_fetch`, `fetch`, `http_fetch` e `web_search` já rodam no executor (`WebToolJob`), como `github` e `git_inspect` (`app/offloop_io`) |
 | Escrita no GitHub (abrir issue, comentar) | 2ª rodada, frente 2 | fora de propósito: o agente lê texto de terceiros; pede decisão sobre aprovação |
 | Mattermost, SMS, IRC e Google Chat com mídia | 2ª rodada, frente 1 | só texto; no IRC, só quem tem conta nos serviços da rede é atendido |

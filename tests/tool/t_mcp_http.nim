@@ -188,5 +188,36 @@ proc runTests*() =
                                             headers: @[], timeoutSec: 2))
       check r.isErr
 
+  suite "mcp http client — the token off the loop":
+
+    test "an async token source is used, and a 401 asks it for a fresh token once":
+      var asked: seq[bool]
+      var posts = 0
+      var current = "stale"   ## a refresh is stored, like the real source does
+      let tokenAsync: McpHttpTokenAsync = proc(force: bool): Future[Result[string, string]] {.async: (raises: []), gcsafe.} =
+        {.cast(gcsafe).}:
+          asked.add force
+          if force: current = "fresh"
+          return ok(current)
+      let post: McpHttpPost = proc(url, body: string; headers: seq[HttpHeader]):
+          Future[Result[HttpResponse, string]] {.async: (raises: []), gcsafe.} =
+        {.cast(gcsafe).}: inc posts
+        var bearer = ""
+        for (k, v) in headers:
+          if k == "Authorization": bearer = v
+        if bearer != "Bearer fresh":
+          return ok(HttpResponse(status: 401))
+        try:
+          let msg = parseJson(body)
+          let id = msg{"id"}.getInt(0)
+          if id == 0: return ok(Accepted)
+          if msg{"method"}.getStr == "initialize":
+            return ok(initReplies(id = id)[0])
+          return ok(json("""{"jsonrpc":"2.0","id":""" & $id & ""","result":{"tools":[]}}"""))
+        except CatchableError as e: return err(e.msg)
+      let c = newMcpHttpClient("https://mcp.example/mcp", tokenAsync = tokenAsync, postAsync = post)
+      check (waitFor c.listToolsAsync()).isOk
+      check asked.len >= 2 and asked[0] == false and true in asked
+
 when isMainModule:
   runTests()

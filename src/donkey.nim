@@ -466,6 +466,23 @@ proc offLoopMcpPost(url, body: string; headers: seq[HttpHeader]):
   except CatchableError as e:
     return err("mcp: " & e.msg)
 
+proc offLoopMcpToken(dir, serverUrl: string; env: Environment): McpHttpTokenAsync =
+  ## A server's OAuth token, read and refreshed on the blocking executor.
+  ## Only the secret the login names travels, as a plain pair: the record
+  ## (a small file) is read here just to learn which variable it is.
+  result = proc(forceRefresh: bool): Future[Result[string, string]] {.async: (raises: []), gcsafe.} =
+    var secrets: seq[(string, string)]
+    let rec = loadMcpOAuth(dir, serverUrl)
+    if rec.isOk and rec.get.clientSecretEnv.len > 0:
+      secrets.add (rec.get.clientSecretEnv, env.get(rec.get.clientSecretEnv))
+    try:
+      return await runOffLoop(mcpTokenJob, McpTokenJob(dir: dir, serverUrl: serverUrl,
+        forceRefresh: forceRefresh, secrets: secrets))
+    except CancelledError:
+      return err("oauth: cancelled")
+    except CatchableError as e:
+      return err("oauth: " & e.msg)
+
 proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
   for entry in loadToolRegistry(cfg.home / "tools.toml"):
     var port: ToolRuntimePort
@@ -481,13 +498,13 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
       ## The bearer comes from the variable the entry names, read from the
       ## environment snapshot; the registry holds only the name.
       let bearer = if entry.tokenEnv.len > 0: cfg.env.get(entry.tokenEnv) else: ""
-      let tokenFn: McpHttpTokenFn =
-        if entry.oauth:
-          mcpTokenSource(cfg.home / "state" / McpOAuthDirName, entry.url,
-            secretOf = proc(name: string): string {.gcsafe.} = cfg.env.get(name))
+      ## An OAuth refresh (a file read and a POST to the token endpoint)
+      ## runs on the blocking executor, like every POST to the server.
+      let tokenAsync: McpHttpTokenAsync =
+        if entry.oauth: offLoopMcpToken(cfg.home / "state" / McpOAuthDirName, entry.url, cfg.env)
         else: nil
       ## The POST runs on the blocking executor; listed by startDaemon.
-      let client = newMcpHttpClient(entry.url, bearer = bearer, tokenFn = tokenFn,
+      let client = newMcpHttpClient(entry.url, bearer = bearer, tokenAsync = tokenAsync,
                                     postAsync = offLoopMcpPost)
       result.mcpHttp.add client
       result.clients.add client.toRuntimePort()
