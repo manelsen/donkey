@@ -18,6 +18,7 @@ type
     cfDownloadFile      ## download files/media from messages
     cfSendMedia         ## send media/files as messages
     cfSendVoice         ## send an audio file delivered as a voice note
+    cfSendFile          ## upload a local file from the paddock (send_file, E9.6)
 
   ChannelCapabilityDescriptor* = object
     send*:               bool
@@ -29,6 +30,7 @@ type
     downloadFile*:       bool
     sendMedia*:          bool
     sendVoice*:          bool
+    sendFile*:           bool  ## reads a paddock file and uploads it (not just a URL)
     configUi*:           bool  ## /config is answered with a button view
     interactiveMenus*:   bool  ## /menu is answered with a button view
     repliesToRequester*: bool
@@ -67,7 +69,7 @@ const
   TelegramCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: true, editMessage: true,
     sendKeyboard: true, editKeyboard: true, setMessageReaction: true,
-    downloadFile: true, sendMedia: true, sendVoice: true,
+    downloadFile: true, sendMedia: true, sendVoice: true, sendFile: true,
     configUi: true, interactiveMenus: true)
 
   ## Discord and Slack runtimes answer /config and /menu with button views.
@@ -110,7 +112,7 @@ const
   MattermostCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: false, editMessage: false,
     sendKeyboard: false, editKeyboard: false, setMessageReaction: false,
-    downloadFile: true, sendMedia: true, sendVoice: false)
+    downloadFile: true, sendMedia: true, sendVoice: false, sendFile: true)
 
   TeamsCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: false, editMessage: false,
@@ -178,6 +180,7 @@ func supports*(kind: ChannelKind; flag: ChannelCapabilityFlag): bool =
   of cfDownloadFile:      caps.downloadFile
   of cfSendMedia:         caps.sendMedia
   of cfSendVoice:         caps.sendVoice
+  of cfSendFile:          caps.sendFile
 
 func commandCaps*(d: ChannelCapabilityDescriptor): CommandSurfaceCaps =
   CommandSurfaceCaps(configUi: d.configUi, interactiveMenus: d.interactiveMenus)

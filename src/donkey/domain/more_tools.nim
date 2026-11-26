@@ -260,6 +260,21 @@ const
     "\"prompt\":{\"type\":\"string\",\"description\":\"Optional vocabulary/context hint\"}}" &
     ",\"required\":[\"path\"]}"
 
+# ── send_file ──────────────────────────────────────────────────────────────────
+const
+  SendFileToolName* = "send_file"
+  SendFileToolDescription* =
+    "Send a file from the workspace to the person, in this conversation " &
+    "(a report you wrote, an attachment they sent, a generated chart). The " &
+    "path is resolved inside the current workspace like the other local file " &
+    "tools. On a channel that cannot receive files the tool says so: then tell " &
+    "the person where the file is saved."
+  SendFileToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"path\":{\"type\":\"string\",\"description\":\"Workspace path of the file\"}," &
+    "\"caption\":{\"type\":\"string\",\"description\":\"Optional text sent with the file\"}}" &
+    ",\"required\":[\"path\"]}"
+
 # ── text_to_speech ─────────────────────────────────────────────────────────────
 const
   TextToSpeechToolName* = "text_to_speech"

@@ -444,6 +444,12 @@ arquivo por SMS, responde com texto.
   paddock; onde o canal não aceita arquivo (`sendMedia`), responde com o
   nome e que ele está guardado. Sem ela, o upload do Mattermost (E9.1) só
   serve à voz.
+  *Feito:* `send_file(path, caption)`; o caminho resolvido dentro do
+  paddock; uma capacidade própria, `cfSendFile` (o adapter lê um arquivo do
+  paddock e o sobe), verdadeira no Telegram e no Mattermost. Achado ao
+  fazer: `sendMedia` não basta. O Discord ignora o `mediaUrl` no envio e o
+  WhatsApp mandaria o caminho local como link; ficam sem a ferramenta até
+  ganharem upload (continuação: Discord, Slack e WhatsApp com upload).
 
 *Aceite geral:* uma foto e um áudio mandados em cada canal chegam ao agente
 como nos canais antigos (teste com servidor falso por canal); limites de
