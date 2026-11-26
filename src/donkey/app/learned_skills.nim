@@ -16,6 +16,7 @@ export learned_skill_pure
 const
   LearnedSkillsDirName* = "learned_skills"
   ProvenanceFile = ".provenance.json"
+  UsageFile = ".usage.json"
   ArchiveDirName = ".archive"
 
 type
@@ -26,9 +27,14 @@ type
     updatedAtMs*: int64
     updatedBy*:   string
 
+  SkillUsage* = object
+    loads*:      int     ## times skill_view loaded it
+    lastUsedMs*: int64   ## 0: never
+
   LearnedSkill* = object
-    doc*:  SkillDoc
-    meta*: SkillMeta
+    doc*:   SkillDoc
+    meta*:  SkillMeta
+    usage*: SkillUsage
 
   LearnedSkills* = object
     fs:   FsRuntimePort
@@ -60,6 +66,31 @@ proc saveMeta(s: LearnedSkills; meta: Table[string, SkillMeta]): Result[void, st
                   "updated_ms": m.updatedAtMs, "updated_by": m.updatedBy}
   s.fs.writePrivate(s.root / ProvenanceFile, $j)
 
+proc loadUsage(s: LearnedSkills): Table[string, SkillUsage] =
+  result = initTable[string, SkillUsage]()
+  let text = s.fs.readFile(s.root / UsageFile)
+  if text.isErr: return
+  try:
+    for name, u in parseJson(text.get).pairs:
+      result[name] = SkillUsage(loads: u{"loads"}.getInt, lastUsedMs: u{"last_ms"}.getBiggestInt)
+  except CatchableError:
+    discard   ## unreadable usage only restarts the counts
+
+proc recordUse*(s: LearnedSkills; name: string; nowMs: int64) =
+  ## A load of `name`, for the curator and the journey (E7.3). Best effort:
+  ## a failed write loses one count, never the skill.
+  if not validSkillName(name) or s.fs.entryKind(s.skillFile(name)) != fekFile:
+    return
+  var usage = s.loadUsage()
+  var u = usage.getOrDefault(name)
+  inc u.loads
+  u.lastUsedMs = nowMs
+  usage[name] = u
+  var j = newJObject()
+  for n, x in usage:
+    j[n] = %* {"loads": x.loads, "last_ms": x.lastUsedMs}
+  discard s.fs.writePrivate(s.root / UsageFile, $j)
+
 proc checked(text: string): Result[SkillDoc, string] =
   let doc = ? parseSkillMd(text)
   let findings = scanSkill(doc)
@@ -74,6 +105,7 @@ proc read*(s: LearnedSkills; name: string): Result[SkillDoc, string] =
 proc list*(s: LearnedSkills): seq[LearnedSkill] =
   ## The active skills, by name; a broken file is left out.
   let meta = s.loadMeta()
+  let usage = s.loadUsage()
   var names: seq[string]
   for e in s.fs.listDir(s.root).get(@[]):
     let name = extractFilename(e.path)
@@ -82,7 +114,8 @@ proc list*(s: LearnedSkills): seq[LearnedSkill] =
   for name in names:
     let doc = s.read(name)
     if doc.isOk:
-      result.add LearnedSkill(doc: doc.get, meta: meta.getOrDefault(name))
+      result.add LearnedSkill(doc: doc.get, meta: meta.getOrDefault(name),
+                              usage: usage.getOrDefault(name))
 
 proc write(s: LearnedSkills; doc: SkillDoc; by, note: string; nowMs: int64;
            creating: bool): Result[void, string] =

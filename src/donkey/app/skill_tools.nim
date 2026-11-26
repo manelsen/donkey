@@ -38,6 +38,9 @@ proc performSkillManage*(fs: FsRuntimePort; paddockDir: string; c: SkillManageCo
       lines.add "archived: " & archived.join(", ")
     ok(if lines.len == 0: "No learned skills yet." else: lines.join("\n"))
 
-proc performSkillView*(fs: FsRuntimePort; paddockDir, name: string): Result[string, string] =
-  let doc = ? newLearnedSkills(fs, paddockDir).read(name.strip)
+proc performSkillView*(fs: FsRuntimePort; paddockDir, name: string;
+                       nowMs: int64 = 0): Result[string, string] =
+  let store = newLearnedSkills(fs, paddockDir)
+  let doc = ? store.read(name.strip)
+  store.recordUse(name.strip, nowMs)
   ok(renderSkillMd(doc))

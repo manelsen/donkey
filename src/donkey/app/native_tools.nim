@@ -907,7 +907,8 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
       return handledError("Error: " & error)
     return handledText(reply)
   of SkillViewToolName:
-    let shown = performSkillView(ctx.fs, ctx.paddockDir, j{"name"}.getStr).valueOr:
+    let shown = performSkillView(ctx.fs, ctx.paddockDir, j{"name"}.getStr,
+                                 int64(epochTime() * 1000)).valueOr:
       return handledError("Error: " & error)
     return handledText(shown)
   of ManageTasksToolName:
