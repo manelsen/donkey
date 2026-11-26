@@ -19,7 +19,7 @@ Every label set is capped at 64 values; the rest is counted under `_other`.
 | `donkey_tool_duration_ms` | histogram | tool | tool call duration (approval waits included) |
 | `donkey_provider_latency_ms` | histogram | provider | one completion, streamed or not |
 | `donkey_provider_errors_total` | counter | provider | failed completions |
-| `donkey_provider_tokens_total` | counter | provider, direction | tokens the provider reported (`input`/`output`) |
+| `donkey_provider_tokens_total` | counter | provider, direction | tokens the provider reported (`input`/`output`); `cache_read` and `cache_write` are the part of `input` served from and written to the prompt cache |
 | `donkey_inbound_messages_total` | counter | channel | user messages received |
 | `donkey_outbound_messages_total` | counter | channel | messages delivered |
 | `donkey_outbound_failures_total` | counter | channel | deliveries that failed |
@@ -40,7 +40,9 @@ Useful queries:
 sum by (channel) (rate(donkey_turns_total{outcome="error"}[1h]))
   / sum by (channel) (rate(donkey_turns_total[1h]))           # turn error rate
 histogram_quantile(0.95, sum by (le, provider) (rate(donkey_provider_latency_ms_bucket[15m])))
-sum by (provider) (increase(donkey_provider_tokens_total[1d]))  # tokens per day
+sum by (provider) (increase(donkey_provider_tokens_total{direction=~"input|output"}[1d]))  # tokens per day
+sum by (provider) (rate(donkey_provider_tokens_total{direction="cache_read"}[1h]))
+  / sum by (provider) (rate(donkey_provider_tokens_total{direction="input"}[1h]))  # prompt cache hit share
 topk(5, sum by (tool) (rate(donkey_tool_calls_total{outcome="error"}[1h])))
 ```
 
@@ -64,7 +66,7 @@ takes effect the next day):
 {"ts":1800000000000,"duration_ms":2310,"user":"<uuid>","channel":"telegram",
  "kind":"user","session":"s-12","provider":"openrouter","streamed":true,
  "tools":[{"name":"session_search","outcome":"output"}],
- "tokens":{"input":1830,"output":212},"outcome":"ok"}
+ "tokens":{"input":1830,"output":212,"cache_read":1536,"cache_write":0},"outcome":"ok"}
 ```
 
 `agent_provider` appears when a named agent with its own provider answered.
@@ -95,7 +97,7 @@ OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer%20<token>  # key=value pairs, UR
 
 The span is `donkey.turn <kind>` for the `donkey` service, with the trace's
 fields as attributes (`donkey.channel`, `donkey.provider`, `donkey.outcome`,
-`gen_ai.usage.input_tokens`, …) and each tool call as an event with its
+`gen_ai.usage.input_tokens`, `gen_ai.usage.cache_read_input_tokens`, …) and each tool call as an event with its
 outcome; a turn that did not end `ok` (or `stopped`) is an error span. As with
 the file, nothing that was said goes out. The export runs off the event loop
 after the turn, only to the endpoint's host, so a slow or absent collector
@@ -106,7 +108,8 @@ be re-run from one.
 
 ### Insights
 
-The traces summed into a report: turns, tokens in and out, the tools used most
+The traces summed into a report: turns, tokens in and out (and the share of
+the input served from the prompt cache, per provider), the tools used most
 and how often each failed, providers, channels and outcomes; for one person,
 also the learned skills they loaded most.
 
