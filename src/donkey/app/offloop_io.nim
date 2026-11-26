@@ -18,11 +18,15 @@ type
   AsyncHttpGet* = proc(url: string; headers: seq[HttpHeader]; allowHosts: seq[string]):
       Future[Result[HttpResponse, string]] {.async: (raises: []), gcsafe.}
     ## A GET that may only reach `allowHosts`.
+  AsyncHttpPost* = proc(url, body: string; headers: seq[HttpHeader]; allowHosts: seq[string]):
+      Future[Result[HttpResponse, string]] {.async: (raises: []), gcsafe.}
+    ## A POST that may only reach `allowHosts`.
   AsyncProcessRun* = proc(spec: ProcessSpec): Future[Result[ProcessOutput, string]]
       {.async: (raises: []), gcsafe.}
 
   OffLoopIo* = object
     httpGet*:    AsyncHttpGet
+    httpPost*:   AsyncHttpPost
     processRun*: AsyncProcessRun
 
 var

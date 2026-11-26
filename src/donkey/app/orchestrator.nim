@@ -40,6 +40,8 @@ import ../domain/gateway/identity_pure
 import ../domain/memory/capture_pure
 import ../domain/turn_trace_pure
 import ./turn_traces
+import ./otlp_export
+import ./offloop_io
 import ../domain/memory/provenance_pure
 import ../domain/message
 import ../domain/personality
@@ -277,6 +279,11 @@ proc buildNativeCtx*(uid: UserId;
     sandboxAllowNetwork: cfg.sandboxAllowNetwork,
     sandboxReadOnlyRootfs: cfg.sandboxReadOnlyRootfs,
   )
+
+proc exportTraceAndLog(env: Environment; trace: TurnTrace; log: Logger) {.async: (raises: []).} =
+  let sent = await exportTurnTrace(env, trace, offLoopIo())
+  if sent.isErr:
+    log.warn("turn trace export: " & sent.error)
 
 # ── User turn setup ───────────────────────────────────────────────────────────
 
@@ -643,7 +650,8 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
              float(turnEndedMs - turnStartedMs), ok = not loopResult.providerFailed)
   ## The turn's own account, when traces are on (app/turn_traces): what
   ## happened, never what was said.
-  if tracesEnabled(result.env):
+  let exportOtlp = otlpEnabled(result.env)
+  if tracesEnabled(result.env) or exportOtlp:
     let added =
       if loopResult.history.len > history.len: loopResult.history[history.len .. ^1]
       else: @[]
@@ -660,9 +668,13 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
         elif sessionStopRequested(turnSetup.nativeCtx): "stopped"
         else: "ok")
     ## paddockDir is this user's paddock; its parent is the paddocks dir.
-    appendTurnTrace(fs, tracesDir(parentDir(paddockDir)), trace, turnEndedMs,
-                    traceRetentionDays(result.env)).isOkOr:
-      log.warn("turn trace: " & error)
+    if tracesEnabled(result.env):
+      appendTurnTrace(fs, tracesDir(parentDir(paddockDir)), trace, turnEndedMs,
+                      traceRetentionDays(result.env)).isOkOr:
+        log.warn("turn trace: " & error)
+    ## Sent in the background: a slow collector never delays the answer.
+    if exportOtlp:
+      asyncSpawn exportTraceAndLog(result.env, trace, log)
   result =
     result |>->
     withLoopResult(loopResult)
