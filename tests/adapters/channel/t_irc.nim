@@ -60,6 +60,9 @@ proc runTests*() =
       check a.send(OutboundMessage(userId: uid, channel: ckIrc, text: "lembrete")).isOk
       check tryTakeOutLine() == (true, "PRIVMSG Belle_ :lembrete")
       check a.send(OutboundMessage(channel: ckIrc, replyTo: "x\r\nQUIT", text: "oi")).isErr
+      check a.send(OutboundMessage(channel: ckIrc, replyTo: ":x", text: "oi")).isErr
+      check a.send(OutboundMessage(channel: ckIrc, replyTo: "@x", text: "oi")).isErr
+      check a.send(OutboundMessage(channel: ckIrc, replyTo: "a:b", text: "oi")).isErr
       let b = newIrcAdapter(true, dir / "ids.tsv", dir / "nicks.json")
       check b.send(OutboundMessage(userId: uid, channel: ckIrc, text: "depois")).isOk
 
