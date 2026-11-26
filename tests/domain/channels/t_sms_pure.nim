@@ -39,6 +39,7 @@ proc runTests*() =
       check m.receiver == "+5511888880000" and m.text == "oi, tudo bem?"
       check m.mediaCount == 0
       check parseInboundSms(parseForm("Body=oi")).isErr   ## no sender
+      check parseInboundSms(parseForm("From=%2B1&Body=oi")).isErr   ## no id: a retry could not be told apart
 
     test "media without text is kept, with its count (answered as unsupported)":
       let m = parseInboundSms(parseForm("MessageSid=SM9&From=%2B1&To=%2B2&Body=&NumMedia=2")).get

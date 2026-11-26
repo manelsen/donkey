@@ -53,6 +53,8 @@ func parseInboundSms*(p: FormParams): Result[InboundSms, string] =
   let sender = p.get("From").strip
   if sender.len == 0:
     return err("no From")
+  if p.get("MessageSid").strip.len == 0:
+    return err("no MessageSid")   ## Twilio always sends it; without it a retry is a new turn
   var media = 0
   try: media = parseInt(p.get("NumMedia").strip)
   except ValueError: media = 0
