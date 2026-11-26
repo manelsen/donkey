@@ -475,7 +475,9 @@ proc runTui*(sockPath: string; env: Environment; cfg: DonkeyConfig) =
           inc st.admin.selectedIndex
     of Key.Enter, Key.D, Key.X, Key.A, Key.ShiftD, Key.ShiftX, Key.ShiftA:
       ## With or without Shift: the footer writes the letters in capitals.
-      let ch = actionChar(key).get('E')
+      ## Every key of this branch has an action letter; one added here
+      ## without one in actionChar fails loudly instead of acting as Enter.
+      let ch = actionChar(key).get
       let action =
         if st.panel == pAdmin: adminKeyFor(st.admin.section, st.admin.viewMode, ch)
         else: none(AdminKey)
