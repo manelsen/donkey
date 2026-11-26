@@ -207,17 +207,37 @@ func trimTo*(h: var ConversationHistory; maxLen: int) =
 
 # ── pure orchestration ────────────────────────────────────────────────────────
 
+func turnContextBlock*(context: string): string =
+  ## What is recalled for this turn, marked as not written by the person.
+  ## A recalled text that holds the closing tag cannot end the block early.
+  let safe = context.replace("</turn_context>", "</turn-context>")
+  "<turn_context>\n## Memória relevante\n" & safe & "\n</turn_context>\n\n"
+
+func withTurnContext(system: string; history: ConversationHistory;
+                     context: string): (string, ConversationHistory) =
+  ## E8.1, a stable prefix for the prompt cache: what changes every turn
+  ## (recall, skills index, commitments) goes with the person's latest
+  ## message, never in the system prompt, so tools, system and the earlier
+  ## turns are the same bytes from one request to the next. Only the request
+  ## carries it: the history keeps the message as the person wrote it. With
+  ## no message from the person, it stays in the system prompt.
+  if context.len == 0: return (system, history)
+  for i in countdown(history.high, 0):
+    if history[i].role == "user" and history[i].toolCallId.len == 0:
+      var msgs = history
+      msgs[i].text = turnContextBlock(context) & msgs[i].text
+      return (system, msgs)
+  (system & "\n\n## Memória relevante\n" & context, history)
+
 func buildPrompt*(system: string;
                   history: ConversationHistory;
                   context: string;
                   reasoning = false): CompletionRequest =
   ## Assembles a CompletionRequest from parts. Pure: no I/O.
-  let fullSystem =
-    if context.len > 0: system & "\n\n## Memória relevante\n" & context
-    else: system
+  let (fullSystem, msgs) = withTurnContext(system, history, context)
   CompletionRequest(
     system:   fullSystem,
-    messages: history,
+    messages: msgs,
     reasoning: reasoning,
   )
 
@@ -227,12 +247,10 @@ func buildPrompt*(system: string;
                   tools: seq[ToolDescription];
                   reasoning = false): CompletionRequest =
   ## Assembles a CompletionRequest including tool descriptions. Pure: no I/O.
-  let fullSystem =
-    if context.len > 0: system & "\n\n## Memória relevante\n" & context
-    else: system
+  let (fullSystem, msgs) = withTurnContext(system, history, context)
   CompletionRequest(
     system:   fullSystem,
-    messages: history,
+    messages: msgs,
     tools:    tools,
     reasoning: reasoning,
   )

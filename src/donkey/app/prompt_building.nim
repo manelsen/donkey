@@ -12,6 +12,20 @@ import ../domain/providers/media_pure
 import ../ports/provider
 import ./inbound_media
 
+func assembleTurnContext*(recalled, recent, commitments, skills: string): string =
+  ## Everything that changes from one turn to the next, in one block that
+  ## goes with the person's message (E8.1): the system prompt stays the same
+  ## bytes and the provider can cache it.
+  var parts: seq[string]
+  if recalled.len > 0: parts.add recalled
+  if recent.len > 0:
+    parts.add "## Recent Context\n" &
+      "These messages happened immediately before the current message and may be missing from live session memory due to restart, rebuild, or long idle time.\n\n" &
+      recent
+  if commitments.len > 0: parts.add "## Session commitments\n" & commitments
+  if skills.len > 0: parts.add skills
+  parts.join("\n\n")
+
 const LiveSourcesPrompt* =
   "For current news, digests, and other time-sensitive facts, consult live sources " &
   "during this run and cite their actual URLs. Treat search snippets as leads. " &

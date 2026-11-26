@@ -117,5 +117,18 @@ proc runTests*() =
       check "anexo" in text
       check "autenticação" notin text
 
+proc runTurnContextTests*() =
+  suite "the turn's context (E8.1)":
+    test "recall, recent context, commitments and the skills index, in that order":
+      let c = assembleTurnContext(recalled = "Ana gosta de chá.", recent = "msg antiga",
+                                  commitments = "- ligar amanhã", skills = "## Skills\n- deploy")
+      check c.find("Ana gosta") < c.find("## Recent Context")
+      check c.find("## Recent Context") < c.find("## Session commitments")
+      check c.find("## Session commitments") < c.find("## Skills")
+    test "empty parts leave no headings":
+      check assembleTurnContext("", "", "", "") == ""
+      check assembleTurnContext("", "", "", "## Skills\n- x") == "## Skills\n- x"
+
 when isMainModule:
   runTests()
+  runTurnContextTests()

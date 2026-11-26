@@ -598,9 +598,9 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   ## model loads the right one with skill_view. Read each turn: one written
   ## during the conversation is in the next turn's prompt.
   ## The shared skills the operator promoted come in too; theirs win on a name.
+  ## It goes with the turn's context, not the system prompt (E8.1).
   let docs = availableSkills(fs, paddockDir)
-  if docs.len > 0:
-    systemBase = systemBase & "\n\n" & skillsIndex(docs)
+  let skillsBlock = if docs.len > 0: skillsIndex(docs) else: ""
 
   let route =
     if msg.taskKind == tkUserMsg:
@@ -612,24 +612,13 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
     recallTask.route = $route.get.route
   await memInbox.put(recallTask)
   let ctxReply = await awaitExpectedReply(memOut, msg.id, "MemoryAgent")
-  var context = if ctxReply.kind == amkResult: ctxReply.text else: ""
-  if userPayload.recentContext.len > 0:
-    let recentBlock =
-      "## Recent Context\n" &
-      "These messages happened immediately before the current message and may be missing from live session memory due to restart, rebuild, or long idle time.\n\n" &
-      userPayload.recentContext
-    context =
-      if context.len > 0: context & "\n\n" & recentBlock
-      else: recentBlock
-
   discard rememberCommitments(
     result.blackboard, userPayload.text, "", epochMs())
-  let blackboardText = result.blackboard.renderForUser()
-  if blackboardText.len > 0:
-    let blackboardBlock = "## Session commitments\n" & blackboardText
-    context =
-      if context.len > 0: context & "\n\n" & blackboardBlock
-      else: blackboardBlock
+  let context = assembleTurnContext(
+    recalled = (if ctxReply.kind == amkResult: ctxReply.text else: ""),
+    recent = userPayload.recentContext,
+    commitments = result.blackboard.renderForUser(),
+    skills = skillsBlock)
 
   const MaxAttachmentsPerTurn = 10
   var attachmentUrls = userPayload.mediaUrls
