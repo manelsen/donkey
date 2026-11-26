@@ -121,6 +121,20 @@ proc runMediaTests*() =
       check m.mediaFileName == "foto.png" and m.mediaMimeType == "image/png"
       check m.text.startsWith("olha") and "nota.pdf" in m.text
 
+    test "the first file that fits is downloaded, even after one too large":
+      var a = newAdapter()
+      var sm: SessionManager
+      sm.init()
+      let s = Sink()
+      var p = post("p3", "dois")
+      p.files = @[MattermostFile(id: "f1aaaaaaaaaaaaaaaaaaaaaaaa", name: "video.mp4",
+                                 size: MattermostMaxDownloadBytes + 1),
+                  MattermostFile(id: "f2bbbbbbbbbbbbbbbbbbbbbbbb", name: "foto.png", size: 10)]
+      pushPost(p)
+      check drainMattermostEvents(a, sm, fallbackFor(s), replyFor(s), rtLog) == 1
+      check s.turns[0].mediaUrl == "f2bbbbbbbbbbbbbbbbbbbbbbbb"
+      check "video.mp4" in s.turns[0].text
+
     test "a file over the download limit is named, not downloaded":
       var a = newAdapter()
       var sm: SessionManager
