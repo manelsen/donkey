@@ -98,6 +98,8 @@ import donkey/ports/schedules
 import donkey/ports/backtrail
 import donkey/adapters/decision/perplexity_backtrail
 import donkey/app/blocking_executor
+import donkey/app/offloop_io
+import donkey/adapters/tools/offloop_jobs
 import donkey/domain/memory/query_policy_pure
 import donkey/adapters/embedding/openrouter_embed
 import donkey/adapters/state/pairing_store
@@ -400,6 +402,26 @@ type DaemonLoopResult = object
 type DaemonBootstrap = object
   memory: MdFileAdapter
   ctx:    DaemonContext
+
+proc offLoopHttpGet(url: string; headers: seq[HttpHeader]; allowHosts: seq[string]):
+    Future[Result[HttpResponse, string]] {.async: (raises: []).} =
+  ## A native tool's GET (github) on the blocking executor, from plain data.
+  try:
+    return await runOffLoop(httpGetJob, HttpGetJob(url: url, headers: headers,
+      allowHosts: allowHosts, timeoutSec: OffLoopHttpTimeoutSec))
+  except CancelledError:
+    return err("cancelled")
+  except CatchableError as e:
+    return err(e.msg)
+
+proc offLoopProcessRun(spec: ProcessSpec): Future[Result[ProcessOutput, string]] {.async: (raises: []).} =
+  ## A native tool's process (git_inspect) on the blocking executor.
+  try:
+    return await runOffLoop(processJob, ProcessJob(spec: spec))
+  except CancelledError:
+    return err("cancelled")
+  except CatchableError as e:
+    return err(e.msg)
 
 proc offLoopMcpPost(url, body: string; headers: seq[HttpHeader]):
     Future[Result[HttpResponse, string]] {.async: (raises: []).} =
@@ -2287,6 +2309,9 @@ proc main =
   ## Provider keys and the presence checks of /about and /doctor read the
   ## snapshot installed here, on the loop thread that uses them.
   useCredentials(cfg.env)
+  ## Native tools that await I/O (github, git_inspect) run it on the
+  ## blocking executor through these, never on the loop.
+  useOffLoopIo(OffLoopIo(httpGet: offLoopHttpGet, processRun: offLoopProcessRun))
   configureApprovalServiceFromEnv(
     newApprovalStore(cfg.home / "state" / "approvals.json").toApprovalPort(), cfg.env,
     newStandingApprovals(cfg.home / "state" / StandingApprovalsFile).toStandingPort())
