@@ -42,6 +42,7 @@ import ../channel/wechat
 import ../channel/qq
 import ../channel/teams
 import ../channel/sms
+import ../channel/google_chat
 import ../../app/metrics
 import ../../domain/channels/qq_pure
 import ../../infra/event_queue
@@ -62,6 +63,7 @@ const
   QQOneBotPath* = "/webhook/qq"
   TeamsPath*    = "/webhook/teams"
   SmsPath*      = "/webhook/sms"
+  GoogleChatPath* = "/webhook/google-chat"
 
   SlackReplayWindowSec*      = 300
   FeishuReplayWindowSec*     = 300
@@ -104,6 +106,7 @@ type
     teamsApps*:               seq[TeamsApp] ## the `[[bots]]` apps on Teams (E3.6)
     twilioAuthToken*:         string   ## TWILIO_AUTH_TOKEN: signs /webhook/sms
     twilioWebhookUrl*:        string   ## TWILIO_WEBHOOK_URL: the URL Twilio calls, exactly
+    googleChatProjectNumber*: string   ## GOOGLE_CHAT_PROJECT_NUMBER: the token audience
     tlsCertFile*:             string
     tlsKeyFile*:              string
 
@@ -588,6 +591,34 @@ proc handleSms(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
     return serviceUnavailable()
   WebhookResponse(status: 200, body: EmptyTwiml, contentType: "text/xml")
 
+# ── Google Chat ───────────────────────────────────────────────────────────────
+
+proc handleGoogleChatAt*(cfg: WebhookConfig; req: WebhookRequest; nowSec: int64;
+                         fetch: ChatKeyFetch): WebhookResponse =
+  ## Google's token is checked before anything is queued; a token naming a
+  ## key not in hand gets one more fetch of the keys, spaced.
+  if cfg.googleChatProjectNumber.len == 0:
+    return notFound()
+  if req.httpMethod != "POST":
+    return methodNotAllowed()
+  let auth = req.header("authorization")
+  let nowMs = nowSec * 1000
+  discard refreshChatKeys(fetch, nowMs)
+  var verdict = verifyChatRequest(auth, cfg.googleChatProjectNumber, currentChatKeys(), nowSec)
+  if verdict.isErr and verdict.error.unknownKey:
+    discard refreshChatKeys(fetch, nowMs, unknownKey = true)
+    verdict = verifyChatRequest(auth, cfg.googleChatProjectNumber, currentChatKeys(), nowSec)
+  if verdict.isErr:
+    return plainResp(401, "unauthorized")
+  let event = parseChatEvent(req.body).valueOr:
+    return badRequest()
+  if event.isTurn and not pushChatEvent(event):
+    return serviceUnavailable()
+  jsonResp(200, "{}")   ## the reply goes through the Chat API
+
+proc handleGoogleChat(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
+  handleGoogleChatAt(cfg, req, epochTime().int64, defaultChatKeyFetch())
+
 proc handleWebhookRequest*(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
   ## Pure-ish request → response mapping (payload dispatch is the only effect).
   ## Never raises: malformed input maps to a 4xx response.
@@ -603,6 +634,7 @@ proc handleWebhookRequest*(cfg: WebhookConfig; req: WebhookRequest): WebhookResp
   of QQOneBotPath: handleQQOneBot(cfg, req)
   of TeamsPath:    handleTeams(cfg, req)
   of SmsPath:      handleSms(cfg, req)
+  of GoogleChatPath: handleGoogleChat(cfg, req)
   else:            notFound()
 
 func anyRouteConfigured*(cfg: WebhookConfig): bool =
@@ -618,7 +650,8 @@ func anyRouteConfigured*(cfg: WebhookConfig): bool =
     cfg.qqOneBotEnabled or
     cfg.teamsAppId.len > 0 or
     cfg.teamsApps.len > 0 or
-    (cfg.twilioAuthToken.len > 0 and cfg.twilioWebhookUrl.len > 0)
+    (cfg.twilioAuthToken.len > 0 and cfg.twilioWebhookUrl.len > 0) or
+    cfg.googleChatProjectNumber.len > 0
 
 # ── HTTP server ───────────────────────────────────────────────────────────────
 

@@ -467,6 +467,8 @@ func sessionReplyTo*(msg: InboundMessage): string =
     msg.channelId   ## the sender's number
   of ckIrc:
     msg.channelId   ## the channel, or the sender's nick
+  of ckGoogleChat:
+    msg.channelId   ## the space, and the thread in a room (google_chat_pure.replyTarget)
   else:
     ""
 

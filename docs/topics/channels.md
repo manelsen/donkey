@@ -22,6 +22,7 @@ This matrix reflects the current `core/outbound` capability model used by the ru
 | [Mattermost](#mattermost) | yes | no | no | no | no |
 | [SMS (Twilio)](#sms-twilio) | yes | no | no | no | no |
 | [IRC](#irc) | yes | no | no | no | no |
+| [Google Chat](#google-chat) | yes | no | no | no | no |
 | WeChat Work | yes | no | no | no | no |
 | WeChat | yes | no | no | no | no |
 | QQ | yes | no | no | no | no |
@@ -421,6 +422,47 @@ password and every message cross it).
 - The connection answers `PING`, pings a silent server after 2 minutes,
   reconnects after 4 minutes of silence or any drop, with backoff.
 - Text only; CTCP and notices are ignored.
+
+---
+
+## Google Chat
+
+Google Chat reaches Donkey as a Chat app with an HTTP endpoint. In the Google
+Cloud console (Google Chat API → Configuration), set the connection to
+**HTTP endpoint URL** `https://<your host>/webhook/google-chat` and the
+**authentication audience** to **Project number**. Create a service account
+for the app and a JSON key for it.
+
+### Configuration
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `GOOGLE_CHAT_PROJECT_NUMBER` | yes | The Cloud project number: the audience every incoming token must carry. Without it `/webhook/google-chat` answers 404. |
+| `GOOGLE_CHAT_SERVICE_ACCOUNT` | yes | The service account key's JSON. Keep it in the vault: `donkey ctl secret set GOOGLE_CHAT_SERVICE_ACCOUNT`. |
+
+### What is checked
+
+Every POST must carry a bearer token Google signed: RS256 with one of the keys
+Chat publishes (fetched at first use, renewed daily, and again when a token
+names an unknown key, at most every five minutes), issuer
+`chat@system.gserviceaccount.com`, audience the project number, within five
+minutes of skew. Anything else is a 401 and nothing is queued.
+
+### Behaviour
+
+- Only messages from people are turns. Direct messages follow the DM policy;
+  in a space Chat only sends the app messages that mention it, and the space
+  passes the shared group allowlist (`DONKEY_TELEGRAM_ALLOWED_GROUPS`, with
+  the space name, `spaces/…`; empty = every group). The mention is taken out.
+- A message Chat delivers again is a turn once.
+- A person is their Chat user (`users/…`), so `/continue` links them to the
+  same person on another channel. Each person's direct space is kept in
+  `state/google_chat_spaces.json`, so reminders reach them after a restart.
+- The webhook answers at once; replies go through the Chat API as the
+  service account (its own RS256 assertion, exchanged for a `chat.bot` token
+  renewed before it expires), in the thread of the message they answer, in
+  pieces under 4000 characters.
+- Text only: no cards, attachments or edits yet.
 
 ---
 

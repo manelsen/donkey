@@ -139,6 +139,7 @@ proc channelCapabilityRegistry*(): ChannelCapabilityRegistry =
   result[ckMattermost] = MattermostCapability
   result[ckSms]        = MattermostCapability   ## SMS: text only, the same shape
   result[ckIrc]        = MattermostCapability   ## IRC: text only, the same shape
+  result[ckGoogleChat] = MattermostCapability   ## Google Chat: text in the thread, the same shape
   for kind in [ckWeCom, ckWeChat, ckFeishu, ckSlack, ckWhatsApp]:
     result[kind].repliesToRequester = true
 

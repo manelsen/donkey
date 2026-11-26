@@ -10,6 +10,7 @@ import donkey/adapters/channel/outbound_builder
 import donkey/adapters/channel/mattermost
 import donkey/adapters/channel/sms
 import donkey/adapters/channel/irc
+import donkey/adapters/channel/google_chat
 
 proc runTests*() =
   suite "mattermost capability":
@@ -51,6 +52,18 @@ proc runTests*() =
       var a = newIrcAdapter(false, "", "")
       let r = ircOutboundPort(addr a).send(OutboundMessage(channel: ckIrc, replyTo: "#x", text: "oi"))
       check r.isErr and "IRC_SERVER" in r.error
+
+  suite "google chat capability":
+
+    test "the registry says: send only; the port reaches the adapter":
+      let c = channelCapabilityRegistry()[ckGoogleChat]
+      check c.send and not c.editMessage and not c.sendMedia
+      check $ckGoogleChat == "google-chat"
+      check googleChatOutboundPort(nil).send(OutboundMessage(channel: ckGoogleChat, text: "oi")).isErr
+      var a = newGoogleChatAdapter("", "", "")
+      let r = googleChatOutboundPort(addr a).send(
+        OutboundMessage(channel: ckGoogleChat, replyTo: "spaces/S1", text: "oi"))
+      check r.isErr and "GOOGLE_CHAT_SERVICE_ACCOUNT" in r.error
 
 when isMainModule:
   runTests()

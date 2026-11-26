@@ -61,6 +61,7 @@ type
     mattermost*: OutboundChannelPort
     sms*:       OutboundChannelPort
     irc*:       OutboundChannelPort
+    googleChat*: OutboundChannelPort
 
 # ── pure helpers ──────────────────────────────────────────────────────────────
 
