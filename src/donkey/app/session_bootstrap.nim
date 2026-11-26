@@ -465,6 +465,8 @@ func sessionReplyTo*(msg: InboundMessage): string =
     msg.channelId   ## channel, and the thread's root in a channel (mattermost_pure.replyTarget)
   of ckSms:
     msg.channelId   ## the sender's number
+  of ckIrc:
+    msg.channelId   ## the channel, or the sender's nick
   else:
     ""
 

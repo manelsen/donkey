@@ -30,7 +30,8 @@ proc runTests*() =
       check ord(ckLine) == 13
       check ckTeams == succ(ckLine)
       check ckMattermost == succ(ckTeams)
-      check ckSms == high(ChannelKind) and ckSms == succ(ckMattermost)
+      check ckSms == succ(ckMattermost)
+      check ckIrc == high(ChannelKind) and ckIrc == succ(ckSms)
 
   suite "capability — LINE":
 
