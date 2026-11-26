@@ -20,6 +20,7 @@ This matrix reflects the current `core/outbound` capability model used by the ru
 | [LINE](#line) | yes | no | no | no | no |
 | [Microsoft Teams](#microsoft-teams) | yes | no | no | no | no |
 | [Mattermost](#mattermost) | yes | no | no | no | no |
+| [SMS (Twilio)](#sms-twilio) | yes | no | no | no | no |
 | WeChat Work | yes | no | no | no | no |
 | WeChat | yes | no | no | no | no |
 | QQ | yes | no | no | no | no |
@@ -354,6 +355,35 @@ personal access token, and add it to the teams and channels it should serve.
   reach them after a restart.
 - Posts made while the socket is down are not replayed.
 - Text only: no attachments or edits yet.
+
+---
+
+## SMS (Twilio)
+
+SMS goes through a Twilio phone number. In the console, set the number's
+"A message comes in" webhook to `https://<your host>/webhook/sms` (HTTP POST)
+on the shared webhook receiver.
+
+### Configuration
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `TWILIO_ACCOUNT_SID` | yes | The account the number belongs to. |
+| `TWILIO_AUTH_TOKEN` | yes | Signs the webhooks and authenticates the replies. |
+| `TWILIO_FROM_NUMBER` | yes | The Twilio number replies come from (E.164, e.g. `+5511…`). |
+| `TWILIO_WEBHOOK_URL` | yes | The webhook URL exactly as set in the console: the signature covers it. Without it (or the token) `/webhook/sms` answers 404. |
+
+### Behaviour
+
+- Every POST must carry a valid `X-Twilio-Signature` (HMAC-SHA1 of the URL
+  and the sorted parameters with the auth token); anything else is a 403 and
+  nothing is queued. The webhook answers an empty TwiML: the reply goes
+  through the Messages API.
+- A person is their phone number; messages follow the DM policy, and
+  `/continue` links the number to the same person on another channel.
+- A message Twilio redelivers is a turn once.
+- Text only: a message with media and no text gets a short answer; long
+  replies go in several messages (1600 characters each).
 
 ---
 

@@ -41,6 +41,7 @@ import ../channel/wecom
 import ../channel/wechat
 import ../channel/qq
 import ../channel/teams
+import ../channel/sms
 import ../../app/metrics
 import ../../domain/channels/qq_pure
 import ../../infra/event_queue
@@ -60,6 +61,7 @@ const
   WeChatPath*   = "/webhook/wechat"
   QQOneBotPath* = "/webhook/qq"
   TeamsPath*    = "/webhook/teams"
+  SmsPath*      = "/webhook/sms"
 
   SlackReplayWindowSec*      = 300
   FeishuReplayWindowSec*     = 300
@@ -100,6 +102,8 @@ type
     qqOneBotSecret*:          string   ## QQ_ONEBOT_SECRET; empty = unsigned
     teamsAppId*:              string   ## MICROSOFT_APP_ID; the JWT audience
     teamsApps*:               seq[TeamsApp] ## the `[[bots]]` apps on Teams (E3.6)
+    twilioAuthToken*:         string   ## TWILIO_AUTH_TOKEN: signs /webhook/sms
+    twilioWebhookUrl*:        string   ## TWILIO_WEBHOOK_URL: the URL Twilio calls, exactly
     tlsCertFile*:             string
     tlsKeyFile*:              string
 
@@ -565,6 +569,25 @@ proc handleTeamsAt*(cfg: WebhookConfig; req: WebhookRequest; nowSec: int64;
 proc handleTeams(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
   handleTeamsAt(cfg, req, epochTime().int64, defaultKeyFetch())
 
+# ── SMS (Twilio) ─────────────────────────────────────────────────────────────
+
+proc handleSms(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
+  ## The signature covers the URL Twilio was given, so the route needs it
+  ## configured; without it (or the token) nothing could be checked.
+  if cfg.twilioAuthToken.len == 0 or cfg.twilioWebhookUrl.len == 0:
+    return notFound()
+  if req.httpMethod != "POST":
+    return methodNotAllowed()
+  let params = sms_pure.parseForm(req.body)   ## ordered pairs: the signature sorts them
+  if not signatureValid(cfg.twilioAuthToken, cfg.twilioWebhookUrl, params,
+                        req.header("x-twilio-signature")):
+    return forbidden()
+  let sms = parseInboundSms(params).valueOr:
+    return badRequest()
+  if not pushSms(sms):
+    return serviceUnavailable()
+  WebhookResponse(status: 200, body: EmptyTwiml, contentType: "text/xml")
+
 proc handleWebhookRequest*(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =
   ## Pure-ish request → response mapping (payload dispatch is the only effect).
   ## Never raises: malformed input maps to a 4xx response.
@@ -579,6 +602,7 @@ proc handleWebhookRequest*(cfg: WebhookConfig; req: WebhookRequest): WebhookResp
   of WeChatPath:   handleWeChat(cfg, req)
   of QQOneBotPath: handleQQOneBot(cfg, req)
   of TeamsPath:    handleTeams(cfg, req)
+  of SmsPath:      handleSms(cfg, req)
   else:            notFound()
 
 func anyRouteConfigured*(cfg: WebhookConfig): bool =
@@ -593,7 +617,8 @@ func anyRouteConfigured*(cfg: WebhookConfig): bool =
     cfg.wechatToken.len > 0 or
     cfg.qqOneBotEnabled or
     cfg.teamsAppId.len > 0 or
-    cfg.teamsApps.len > 0
+    cfg.teamsApps.len > 0 or
+    (cfg.twilioAuthToken.len > 0 and cfg.twilioWebhookUrl.len > 0)
 
 # ── HTTP server ───────────────────────────────────────────────────────────────
 

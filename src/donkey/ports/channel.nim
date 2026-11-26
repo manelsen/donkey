@@ -59,6 +59,7 @@ type
     line*:      OutboundChannelPort
     teams*:     OutboundChannelPort
     mattermost*: OutboundChannelPort
+    sms*:       OutboundChannelPort
 
 # ── pure helpers ──────────────────────────────────────────────────────────────
 

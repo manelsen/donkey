@@ -8,6 +8,7 @@ import donkey/core/types
 import donkey/ports/channel_capability
 import donkey/adapters/channel/outbound_builder
 import donkey/adapters/channel/mattermost
+import donkey/adapters/channel/sms
 
 proc runTests*() =
   suite "mattermost capability":
@@ -27,6 +28,17 @@ proc runTests*() =
       let r = mattermostOutboundPort(addr a).send(
         OutboundMessage(channel: ckMattermost, replyTo: "c", text: "oi"))
       check r.isErr and "MATTERMOST_TOKEN" in r.error   ## reached the adapter
+
+  suite "sms capability":
+
+    test "the registry says: send only; the port reaches the adapter":
+      let c = channelCapabilityRegistry()[ckSms]
+      check c.send and not c.editMessage and not c.sendMedia
+      check $ckSms == "sms"
+      check smsOutboundPort(nil).send(OutboundMessage(channel: ckSms, text: "oi")).isErr
+      var a = newSmsAdapter("", "", "", "")
+      let r = smsOutboundPort(addr a).send(OutboundMessage(channel: ckSms, replyTo: "+1", text: "oi"))
+      check r.isErr and "TWILIO" in r.error
 
 when isMainModule:
   runTests()
