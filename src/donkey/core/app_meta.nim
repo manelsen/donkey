@@ -29,4 +29,6 @@ const
   MermaidTempPrefix* = "donkey_mermaid_"
   PgMemoryTableName* = "donkey_memories"
   PgGraphName*       = "donkey_graph"
-  OpenRouterRefererUrl* = "https://github.com/donkey-ai/donkey"
+  ProjectUrl*        = "https://github.com/manelsen/donkey"
+    ## Where Donkey lives: the HTTP-Referer gateways attribute usage to.
+  OpenRouterRefererUrl* = ProjectUrl
