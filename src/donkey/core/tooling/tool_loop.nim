@@ -59,6 +59,7 @@ type
     kind*:      CompletionDecisionKind
     finalText*: string
     reasoning*: string
+    replayBlocks*: string
     debugText*: string
 
   ToolCallDecisionKind* = enum
@@ -172,6 +173,7 @@ func decideCompletion*(r: CompletionResponse; debugMode: bool): CompletionDecisi
       kind: cdkFinishText,
       finalText: r.text,
       reasoning: r.reasoning,
+      replayBlocks: r.replayBlocks,
       debugText: if debugMode: buildCompletionDebugText(r) else: "",
     )
   CompletionDecision(kind: cdkRetryEmpty)
@@ -181,7 +183,8 @@ func applyCompletionDecision*(history: ConversationHistory;
   result.history = history
   case decision.kind
   of cdkFinishText:
-    result.history.addAssistant(decision.finalText, decision.reasoning)
+    result.history.addAssistant(decision.finalText, decision.reasoning,
+                                decision.replayBlocks)
     result.finalText = decision.finalText
     result.reasoning = decision.reasoning
     result.debugText = decision.debugText
@@ -239,7 +242,8 @@ func planToolBatchItem*(recentCalls: seq[(string, string)];
 
 func withStreamFinalText*(finalText: string;
                           reasoning: string;
-                          state: ToolLoopRunResult): ToolLoopRunResult =
+                          state: ToolLoopRunResult;
+                          replayBlocks = ""): ToolLoopRunResult =
   result = state
   result.finalText = finalText
   if reasoning.len > 0:
@@ -247,7 +251,7 @@ func withStreamFinalText*(finalText: string;
       result.reasoning &= "\n---\n" & reasoning
     else:
       result.reasoning = reasoning
-  result.history.addAssistant(finalText, reasoning)
+  result.history.addAssistant(finalText, reasoning, replayBlocks)
   result.done = true
   result.wasStreamed = true
 

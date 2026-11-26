@@ -24,6 +24,8 @@ type
     inputTokens:  int
     outputTokens: int
     cache:        CacheUsage
+    thinking:     Table[int, JsonNode]   ## index -> the thinking block being assembled
+    thinkingOrder: seq[int]
     tools:        Table[int, ToolCallRequest]
     order:        seq[int]
     textBlocks:   int        ## text blocks seen, to join them
@@ -84,6 +86,12 @@ proc feed*(acc: var AnthropicStream; line: string): Result[string, string] =
       acc.tools[index] = ToolCallRequest(id: blk{"id"}.getStr(""),
                                          name: blk{"name"}.getStr(""))
       acc.order.add index
+    of "thinking":
+      acc.thinking[index] = %* {"type": "thinking", "thinking": "", "signature": ""}
+      acc.thinkingOrder.add index
+    of "redacted_thinking":
+      acc.thinking[index] = blk.copy
+      acc.thinkingOrder.add index
     else:
       discard
   of "content_block_delta":
@@ -96,6 +104,14 @@ proc feed*(acc: var AnthropicStream; line: string): Result[string, string] =
     of "input_json_delta":
       if index in acc.tools:
         acc.tools[index].inputJson.add delta{"partial_json"}.getStr("")
+    of "thinking_delta":
+      if index in acc.thinking:
+        let b = acc.thinking[index]
+        b["thinking"] = %(b["thinking"].getStr & delta{"thinking"}.getStr(""))
+    of "signature_delta":
+      if index in acc.thinking:
+        let b = acc.thinking[index]
+        b["signature"] = %(b{"signature"}.getStr & delta{"signature"}.getStr(""))
     else:
       discard
   of "message_stop":
@@ -124,7 +140,18 @@ func finish*(acc: AnthropicStream; label: string): Result[CompletionResponse, st
     if call.inputJson.strip.len == 0:
       call.inputJson = "{}"
     toolCalls.add call
+  ## Thinking blocks, whole and in order, to be sent back unchanged; their
+  ## text is the reasoning (never streamed as the answer).
+  var replay = newJArray()
+  var reasoning: seq[string]
+  for index in acc.thinkingOrder:
+    let b = acc.thinking[index]
+    replay.add b
+    let t = b{"thinking"}.getStr("")
+    if t.len > 0: reasoning.add t
   ok CompletionResponse(text: acc.text, inputTokens: acc.inputTokens,
                         outputTokens: acc.outputTokens, toolCalls: toolCalls,
+                        reasoning: reasoning.join("\n"),
+                        replayBlocks: (if replay.len > 0: $replay else: ""),
                         cacheReadTokens: acc.cache.cacheRead,
                         cacheWriteTokens: acc.cache.cacheWrite)

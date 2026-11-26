@@ -55,6 +55,14 @@ proc blocksOf(msg: ChatMessage; withTools: bool): seq[JsonNode] =
       return @[%* {"toolResult": {"toolUseId": bedrockToolId(msg.toolCallId),
                                   "content": [{"text": output}]}}]
     return @[%* {"text": "[resultado da ferramenta]\n" & output}]
+  ## An assistant turn that reasoned sends its reasoning blocks first,
+  ## exactly as they came (the signature is checked).
+  if msg.role == roleAssistant and msg.replayBlocks.len > 0:
+    try:
+      let blocks = parseJson(msg.replayBlocks)
+      if blocks.kind == JArray:
+        for b in blocks: result.add b
+    except CatchableError: discard
   if msg.text.len > 0:
     result.add(%* {"text": msg.text})
   if msg.role == roleUser and msg.imageUrl.len > 0:
@@ -126,6 +134,7 @@ func parseConverseResponse*(body: JsonNode): Result[CompletionResponse, string] 
     let detail = body{"message"}.getStr(body{"Message"}.getStr(""))
     return err("Bedrock: " & (if detail.len > 0: detail else: "missing output.message"))
   var resp = CompletionResponse()
+  var replay = newJArray()
   for item in content:
     if item.hasKey("text"):
       resp.text.add(item["text"].getStr)
@@ -137,11 +146,13 @@ func parseConverseResponse*(body: JsonNode): Result[CompletionResponse, string] 
         inputJson: $(if use.hasKey("input"): use["input"] else: newJObject())))
     elif item.hasKey("reasoningContent"):
       resp.reasoning.add(item["reasoningContent"]{"reasoningText"}{"text"}.getStr(""))
+      replay.add item
   let cache = bedrockUsage(body{"usage"})
   resp.inputTokens = cache.inputTokens
   resp.cacheReadTokens = cache.cacheRead
   resp.cacheWriteTokens = cache.cacheWrite
   resp.outputTokens = body{"usage"}{"outputTokens"}.getInt(0)
+  if replay.len > 0: resp.replayBlocks = $replay
   ok(resp)
 
 func bedrockRuntimeUrl*(region: string): string =
