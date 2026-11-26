@@ -432,6 +432,13 @@ arquivo por SMS, responde com texto.
 - **E9.3 SMS → MMS, só de entrada.** `NumMedia` e `MediaUrlN` do webhook da
   Twilio, baixados com autenticação. Um anexo de saída vira texto (o nome e
   o que é), nunca uma URL.
+  *Feito:* `MediaUrlN` e `MediaContentTypeN`; o primeiro item (até 25 MB)
+  baixado só de uma URL de mídia da própria conta, com as credenciais e sem
+  seguir redirecionamento; um redirecionamento para o armazenamento de mídia
+  da Twilio é seguido sem elas. Os outros itens são citados pelo tipo; uma
+  mensagem só com mídia vira turno. Os hosts do redirecionamento
+  (`media.twiliocdn.com`, `mms.twiliocdn.com`, o S3 da Twilio) ficam para
+  conferir com uma conta real.
 - **E9.4 Teams.** Entrada: anexos (imagens inline e arquivos do OneDrive por
   `downloadUrl`). Saída: arquivos e Adaptive Cards para aprovações.
 - **E9.5 IRC.** Só links: o protocolo não carrega arquivos (DCC fica fora).

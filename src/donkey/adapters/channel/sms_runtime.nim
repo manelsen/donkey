@@ -46,15 +46,26 @@ proc drainSmsEvents*(a: var SmsAdapter;
         else:
           enqueueReply(reply).isOkOr:
             log.error("sms: enqueue local reply failed: " & error)
-      if m.text.strip.len == 0:
+      if m.text.strip.len == 0 and m.media.len == 0:
         if m.mediaCount > 0:
-          answer(MediaOnlyText)
+          answer(MediaOnlyText)   ## media the webhook did not list: nothing to fetch
           inc result
         break next
       sm.recordChannel(auth.userId, ckSms, m.sender, persist = false)
-      let msg = InboundMessage(
+      var msg = InboundMessage(
         userId: auth.userId, channel: ckSms, channelId: m.sender,
         rawChannelId: m.sender, messageId: m.sid, text: m.text)
+      ## E9.3: an MMS's first item is downloaded for the turn (by its URL,
+      ## through the port's downloadFile); the others are counted by type.
+      if m.media.len > 0:
+        msg.mediaUrl = m.media[0][0]
+        msg.mediaMimeType = m.media[0][1]
+        if m.media.len > 1:
+          var others: seq[string]
+          for item in m.media[1 .. ^1]:
+            others.add(if item[1].len > 0: item[1] else: "anexo")
+          if msg.text.len > 0: msg.text.add "\n\n"
+          msg.text.add "[Outros anexos do MMS, não lidos: " & others.join(", ") & "]"
       let command = decideCommandRequest(CommandRequest(channel: ckSms, text: msg.text))
       if command.route == crLocal and
           decideLocalCommandAction(command) == lcaContinueLink:

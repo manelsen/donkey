@@ -12,6 +12,7 @@ import ../../core/types
 import ../../domain/message
 import ../../domain/channels/sms_pure
 import ../../infra/event_queue
+import ../../ports/channel
 import ../../ports/http
 import ../../ports/link_codes
 import ../http/std_http
@@ -78,6 +79,35 @@ proc send*(a: SmsAdapter; msg: OutboundMessage): Result[void, string] =
       return err("SMS: send status " & $resp.status)
   ok()
 
+const SmsMaxDownloadBytes* = 25 * 1024 * 1024
+
+func headerValue(headers: seq[HttpHeader]; name: string): string =
+  for (k, v) in headers:
+    if k.toLowerAscii == name.toLowerAscii: return v
+  ""
+
+proc downloadFile*(a: SmsAdapter; url: string): Result[FileDownload, string] =
+  ## An MMS media item (E9.3): only this account's media URL is fetched with
+  ## the account's credentials, without following redirects; a redirect to
+  ## Twilio's media storage is then followed without them.
+  if a.configError.len > 0:
+    return err("SMS: " & a.configError)
+  if not twilioMediaUrl(url, a.accountSid):
+    return err("SMS: not this account's media")
+  var resp = ? a.http.getNoRedirect(url, @[("Authorization", basicAuth(a.accountSid, a.authToken))])
+  if resp.status in 300 .. 399:
+    let location = headerValue(resp.headers, "Location")
+    if not twilioMediaRedirect(location):
+      return err("SMS: media redirected outside Twilio's storage")
+    resp = ? a.http.get(location, @[])
+  if resp.status != 200:
+    return err("SMS: media download status " & $resp.status)
+  if resp.body.len > SmsMaxDownloadBytes:
+    return err("SMS: media larger than " & $(SmsMaxDownloadBytes div (1024 * 1024)) & " MB")
+  var data = newSeq[byte](resp.body.len)
+  for i in 0 ..< resp.body.len: data[i] = byte(resp.body[i])
+  ok(FileDownload(fileName: "mms", fileSize: data.len.int64, data: data))
+
 proc newSmsAdapter*(accountSid, authToken, fromNumber, identityPath: string;
                     http: HttpRuntimePort = HttpRuntimePort()): SmsAdapter =
   ## `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` and `TWILIO_FROM_NUMBER` from the
@@ -86,7 +116,9 @@ proc newSmsAdapter*(accountSid, authToken, fromNumber, identityPath: string;
   var transport = http
   if transport.post.isNil:
     transport = newStdHttpAdapter(timeout = SmsTimeoutSec,
-      allowlist = @["api.twilio.com"], retryNonIdempotent = false,
+      allowlist = @["api.twilio.com", "media.twiliocdn.com", "mms.twiliocdn.com",
+                    "s3-external-1.amazonaws.com"],   ## MMS media (E9.3)
+      retryNonIdempotent = false,
       retryConflict = false).toRuntimePort()
   result = SmsAdapter(
     accountSid: accountSid.strip, authToken: authToken.strip,

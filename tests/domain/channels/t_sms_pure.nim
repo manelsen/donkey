@@ -65,5 +65,34 @@ proc runTests*() =
     test "the empty answer Twilio expects":
       check "<Response" in EmptyTwiml
 
+const MediaBase = "https://api.twilio.com/2010-04-01/Accounts/AC1/Messages/MM1/Media/"
+
+proc runMediaTests*() =
+  suite "sms — MMS in (E9.3)":
+    test "each media item comes with its URL and type":
+      let p = parseForm("MessageSid=MM1&From=%2B5511999990000&Body=&NumMedia=2" &
+        "&MediaUrl0=" & MediaBase & "ME1&MediaContentType0=image%2Fjpeg" &
+        "&MediaUrl1=" & MediaBase & "ME2&MediaContentType1=audio%2Fogg")
+      let m = parseInboundSms(p).get
+      check m.media == @[(MediaBase & "ME1", "image/jpeg"), (MediaBase & "ME2", "audio/ogg")]
+
+    test "only the account's own media URLs are fetched":
+      check twilioMediaUrl(MediaBase & "ME1", "AC1")
+      check not twilioMediaUrl(MediaBase & "ME1", "AC2")             ## another account
+      check not twilioMediaUrl("https://evil.example/2010-04-01/Accounts/AC1/Messages/M/Media/X", "AC1")
+      check not twilioMediaUrl("http://api.twilio.com/2010-04-01/Accounts/AC1/Messages/M/Media/X", "AC1")
+      ## the exact shape: no query, fragment, encoding or extra segment
+      check not twilioMediaUrl(MediaBase & "ME1?x=/Media/", "AC1")
+      check not twilioMediaUrl(MediaBase & "ME1#frag", "AC1")
+      check not twilioMediaUrl("https://api.twilio.com/2010-04-01/Accounts/AC1/Messages/%2e%2e/Media/X", "AC1")
+      check not twilioMediaUrl("https://api.twilio.com/2010-04-01/Accounts/AC1/Messages/MM1/x/Media/ME1", "AC1")
+
+    test "a redirect is followed only to Twilio's media storage":
+      check twilioMediaRedirect("https://media.twiliocdn.com/AC1/abc")
+      check twilioMediaRedirect("https://s3-external-1.amazonaws.com/media.twiliocdn.com/AC1/abc")
+      check not twilioMediaRedirect("https://evil.example/abc")
+      check not twilioMediaRedirect("http://media.twiliocdn.com/AC1/abc")
+
 when isMainModule:
   runTests()
+  runMediaTests()

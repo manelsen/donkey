@@ -36,6 +36,8 @@ proc runTests*() =
     test "the registry says: send only; the port reaches the adapter":
       let c = channelCapabilityRegistry()[ckSms]
       check c.send and not c.editMessage and not c.sendMedia
+      check c.downloadFile   ## MMS in (E9.3)
+      check smsOutboundPort(nil).downloadFile("x").isErr
       check $ckSms == "sms"
       check smsOutboundPort(nil).send(OutboundMessage(channel: ckSms, text: "oi")).isErr
       var a = newSmsAdapter("", "", "", "")

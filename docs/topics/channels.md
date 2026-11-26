@@ -392,8 +392,14 @@ on the shared webhook receiver.
 - A person is their phone number; messages follow the DM policy, and
   `/continue` links the number to the same person on another channel.
 - A message Twilio redelivers is a turn once.
-- Text only: a message with media and no text gets a short answer; long
-  replies go in several messages (1600 characters each).
+- MMS comes in (E9.3): the first media item (25 MB at most) is fetched with
+  the account's credentials, only from this account's media URLs and
+  without following redirects; a redirect to Twilio's media storage is then
+  followed without the credentials. It reaches the turn like on the other
+  channels; the other items are named by type. Nothing goes out as media
+  (decided on 26/11: a public URL for outbound MMS would need the daemon's
+  HTTP endpoint exposed). Long replies go in several messages (1600
+  characters each).
 
 ---
 
