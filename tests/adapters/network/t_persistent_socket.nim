@@ -5,9 +5,11 @@
 ## A tiny WebSocket server runs on a thread over loopback; scenarios are
 ## chosen through a global, and what the protocol saw is counted in atomics.
 
-import std/[atomics, monotimes, nativesockets, net, os, strutils, times, unittest]
+import std/[atomics, monotimes, nativesockets, net, options, os, strutils, times, unittest]
 import donkey/adapters/channel/ws_client
 import donkey/adapters/network/persistent_socket
+import donkey/infra/connection_state
+import donkey/core/types
 import donkey/core/log
 import donkey/core/pipeops
 
@@ -206,6 +208,26 @@ proc runTests*() =
       let started = getMonoTime()
       ps.stop()
       check inMilliseconds(getMonoTime() - started) < 1500
+
+    test "a socket that names its channel counts itself running and connected":
+      reset(scHold)
+      resetConnections()
+      var ps = startPersistentSocket("test", TestProtocol,
+                                     TestConfig(port: port), fastPolicy(), log,
+                                     channel = some(ckMattermost)).get
+      check waitFor(proc(): bool = connectionCounts(ckMattermost) == (running: 1, connected: 1), 3000)
+      ps.stop()
+      check connectionCounts(ckMattermost) == (running: 0, connected: 0)
+
+    test "a socket that names no channel is not counted":
+      reset(scHold)
+      resetConnections()
+      var ps = startPersistentSocket("test", TestProtocol,
+                                     TestConfig(port: port), fastPolicy(), log).get
+      check waitFor(proc(): bool = gFrames.load() >= 1, 3000)
+      for k in ChannelKind:
+        check connectionCounts(k).running == 0
+      ps.stop()
 
     test "a silent connection is reopened after the idle timeout":
       reset(scHold)

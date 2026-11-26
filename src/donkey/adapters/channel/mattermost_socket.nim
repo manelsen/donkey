@@ -122,7 +122,7 @@ proc startMattermostSocket*(serverUrl, token: string;
                  reconnectMaxMs: MattermostReconnectMaxMs,
                  idleTimeoutMs: MattermostIdleTimeoutMs,
                  recvTimeoutMs: 1_000),
-    logger)
+    logger, channel = some(ckMattermost))
   ok()
 
 proc stopMattermostSocket*() =

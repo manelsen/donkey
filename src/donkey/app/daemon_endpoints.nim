@@ -15,6 +15,7 @@ import ../ports/ipc
 import ./http_gateway
 import ./route_health
 import ./session_manager
+import ../infra/connection_state
 
 type
   ActiveChannels* = set[ChannelKind]
@@ -33,6 +34,16 @@ type
   SessionTaskEnqueue* = proc(msg: InboundMessage; kind: TaskKind; payload: string)
                             {.gcsafe, raises: [CatchableError].}
 
+const SocketChannels* = {ckDiscord, ckMattermost, ckIrc}
+  ## Always a counted socket; Slack and QQ only in their socket modes.
+
+proc channelStatesOf*(channels: ActiveChannels): seq[ChannelConnection] =
+  for kind in ChannelKind:
+    if kind notin channels: continue
+    let (running, connected) = connectionCounts(kind)
+    result.add ChannelConnection(name: $kind,
+      state: connectionLabel(kind in SocketChannels or running > 0, running, connected))
+
 func activeChannelNames*(channels: ActiveChannels): seq[string] =
   for kind in ChannelKind:
     if kind in channels: result.add $kind
@@ -49,6 +60,7 @@ proc daemonStatus*(sm: SessionManager; inputs: DaemonStatusInputs): DaemonStatus
     sessionCount: sm.sessionCount(),
     sessions: sessions,
     channels: activeChannelNames(inputs.channels),
+    channelStates: channelStatesOf(inputs.channels),
     providers: inputs.providers,
     toolsCount: inputs.toolsCount,
     memoryBackend: inputs.memoryBackend,

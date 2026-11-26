@@ -73,6 +73,7 @@ type
     runtimeProviders*: seq[string]
     runtimeProviderMetrics*: seq[ProviderMetric]  ## the daemon's recent window
     runtimeCooldowns*: seq[string]                ## "provider (time left)"
+    runtimeChannelStates*: seq[ChannelConnection] ## each active channel's connection
     runtimeChannels*: seq[string]
     runtimeSessionCount*: int
     memory*: MdFileAdapter
@@ -363,11 +364,14 @@ proc loadChannelItems*(st: var AdminState) =
   if st.runtimeChannels.len > 0:
     st.items = @[]
     for ch in st.runtimeChannels:
+      var state = "active"
+      for c in st.runtimeChannelStates:
+        if c.name == ch: state = c.state
       st.items.add(AdminItem(
         name: ch,
         description: ch.capitalizeAscii() & " channel",
-        enabled: true,
-        status: "connected"
+        enabled: state in ["connected", "active"],
+        status: state
       ))
   else:
     ## Fallback when no daemon is running.

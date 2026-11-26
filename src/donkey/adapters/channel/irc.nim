@@ -16,6 +16,7 @@ import ../../domain/message
 import ../../domain/channels/irc_pure
 import ../../infra/event_queue
 import ../../infra/thread_handle
+import ../../infra/connection_state
 import ../../ports/link_codes
 import ../identity/identity_resolver
 import ../state/durable_file
@@ -140,6 +141,7 @@ proc runSession(args: IrcArgs; log: Logger; registered: var bool) =
         session.problems.setLen(0)
         if session.registered and not registered:
           registered = true
+          socketConnected(ckIrc)
           log.info("irc: connected to " & cfg.host & " as " & session.nick)
         let msg = inboundPrivmsg(line, session.nick)
         if msg.isSome and not pushIrc(msg.get):
@@ -168,6 +170,8 @@ proc runIrc(args: IrcArgs) {.thread, nimcall.} =
   let log = args.logger.toLogger
   let control = args.control
   defer: control.exited.store(true)
+  socketStarted(ckIrc)
+  defer: socketEnded(ckIrc)
   randomize()
   var backoff = IrcReconnectMinMs
   while not control.stop.load():
@@ -177,6 +181,8 @@ proc runIrc(args: IrcArgs) {.thread, nimcall.} =
     except CatchableError as e:
       if not control.stop.load():
         log.warn("irc: " & e.msg)
+    if registered:
+      socketDisconnected(ckIrc)
     if control.stop.load():
       return
     if registered:

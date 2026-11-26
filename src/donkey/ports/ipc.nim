@@ -39,6 +39,10 @@ type
     embeddingNodes*: int
     totalEdges*: int
 
+  ChannelConnection* = object
+    name*:  string
+    state*: string   ## connected, reconnecting c/r, connecting, stopped, active
+
   DaemonStatus* = object
     uptimeSec*:     int64
     sessionCount*:  int
@@ -50,6 +54,7 @@ type
     recentRouteMetrics*: seq[RouteMetric]
     recentProviderMetrics*: seq[ProviderMetric]
     providerCooldowns*: seq[string]
+    channelStates*: seq[ChannelConnection]
     toolsCount*:    int
     memoryBackend*: string
     memoryStats*:   MemoryStats
@@ -106,6 +111,9 @@ func toJson*(st: DaemonStatus): JsonNode =
   var providerCooldowns = newJArray()
   for item in st.providerCooldowns:
     providerCooldowns.add(%item)
+  var channelStates = newJArray()
+  for c in st.channelStates:
+    channelStates.add(%*{"name": c.name, "state": c.state})
   %*{
     "uptimeSec":     st.uptimeSec,
     "sessionCount":  st.sessionCount,
@@ -117,6 +125,7 @@ func toJson*(st: DaemonStatus): JsonNode =
     "recentRouteMetrics": recentRouteMetrics,
     "recentProviderMetrics": recentProviderMetrics,
     "providerCooldowns": providerCooldowns,
+    "channelStates": channelStates,
     "toolsCount":    st.toolsCount,
     "memoryBackend": st.memoryBackend,
     "memoryStats": %*{
@@ -179,6 +188,9 @@ func fromJsonStatus*(j: JsonNode): DaemonStatus =
     ))
   for item in j{"providerCooldowns"}:
     result.providerCooldowns.add(item.getStr())
+  for c in j{"channelStates"}:
+    result.channelStates.add(ChannelConnection(name: c{"name"}.getStr(),
+                                               state: c{"state"}.getStr()))
   for s in j{"sessions"}:
     var si = SessionInfo(userId: s{"userId"}.getStr())
     for ch in s{"channels"}:

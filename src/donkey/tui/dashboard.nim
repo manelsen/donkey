@@ -78,6 +78,7 @@ proc fetchData(st: var TuiState) =
   st.admin.runtimeProviders = st.status.providers
   st.admin.runtimeProviderMetrics = st.status.recentProviderMetrics
   st.admin.runtimeCooldowns = st.status.providerCooldowns
+  st.admin.runtimeChannelStates = st.status.channelStates
   st.admin.runtimeChannels = st.status.channels
   st.admin.runtimeSessionCount = st.status.sessionCount
   st.admin.memory = st.memory
