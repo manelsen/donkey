@@ -50,6 +50,15 @@ proc runTests*() =
       discard f.handleKey(KeyUp)
       check f.field == 1          ## the name cannot be reached while editing
 
+    test "while editing, the name cannot be typed even with the cursor on it":
+      var f = editAgentForm(NamedAgent(name: "suporte", description: "d"))
+      f.field = 0
+      typeText(f, "x")
+      check f.values[0] == "suporte"
+      f.field = 0
+      discard f.handleKey(KeyBackspace)
+      check f.values[0] == "suporte"
+
     test "control characters are not typed; the length is bounded":
       var f = newAgentForm()
       discard f.handleKey(1)

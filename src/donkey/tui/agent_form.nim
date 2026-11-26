@@ -43,6 +43,8 @@ func agent*(f: AgentForm): NamedAgent =
 
 func handleKey*(f: var AgentForm; code: int): FormEvent =
   f.error = ""
+  if f.editing and f.field < f.firstField:
+    f.field = f.firstField   ## the name of an existing agent is fixed
   case code
   of KeyEscape:
     return feCancel
