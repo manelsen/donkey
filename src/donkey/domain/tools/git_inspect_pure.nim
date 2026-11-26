@@ -25,7 +25,7 @@ func validRev(rev: string): bool =
 
 func validFile(file: string): bool =
   file.len > 0 and file[0] notin {'-', '/'} and ".." notin file.split('/') and
-    not file.contains({'\0', '\n', '\r'})
+    not file.contains({'\0', '\n', '\r', '\\'})
 
 proc parseGitInspectContext*(j: JsonNode): Result[GitInspectContext, string] =
   let action = j{"action"}.getStr.strip.toLowerAscii

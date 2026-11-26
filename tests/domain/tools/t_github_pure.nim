@@ -79,6 +79,16 @@ proc runTests*() =
       let found = """{"total_count":1,"items":[{"path":"src/x.nim","repository":{"full_name":"a/b"},"html_url":"u"}]}"""
       check "a/b: src/x.nim" in formatGithub(ctxOf("""{"action":"search_code","query":"q"}""").get, 200, found).get
 
+    test "a list action that gets an object back is an error, not an empty list":
+      let r = formatGithub(ctxOf("""{"action":"list_issues","repo":"a/b"}""").get, 200,
+                           """{"message":"API rate limit exceeded"}""")
+      check r.isErr and "rate limit" in r.error
+
+    test "a branch is letters, digits and ._/- only":
+      check ctxOf("""{"action":"list_commits","repo":"a/b","branch":"feat/x-1.2"}""").isOk
+      check ctxOf("""{"action":"list_commits","repo":"a/b","branch":"a%26per_page=1"}""").isErr
+      check ctxOf("""{"action":"list_commits","repo":"a/b","branch":"a+b"}""").isErr
+
     test "an error status says what GitHub said":
       let r = formatGithub(ctxOf("""{"action":"get_issue","repo":"a/b","number":1}""").get, 404,
                            """{"message":"Not Found"}""")

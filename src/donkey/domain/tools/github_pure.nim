@@ -50,7 +50,8 @@ proc parseGithubContext*(j: JsonNode): Result[GithubContext, string] =
     if not validRepo(c.repo): return err("Error: 'repo' is owner/name")
   if action in ["get_issue", "get_pr"] and c.number <= 0:
     return err("Error: 'number' is required")
-  if c.branch.len > 0 and (c.branch.startsWith("-") or c.branch.contains({' ', '?', '#', '&'})):
+  if c.branch.len > 0 and (c.branch.startsWith("-") or ".." in c.branch or
+      not c.branch.allCharsInSet({'a'..'z', 'A'..'Z', '0'..'9', '.', '_', '/', '-'})):
     return err("Error: not a branch name")
   ok(c)
 
@@ -92,6 +93,9 @@ proc formatGithub*(c: GithubContext; status: int; body: string): Result[string, 
   if status notin 200 .. 299:
     return err("Error: GitHub answered " & $status & ": " & j{"message"}.getStr("no message"))
   var lines = @[ThirdPartyNote]
+  let wantsList = c.action in ["list_issues", "list_prs", "list_commits"]
+  if wantsList and j.kind != JArray or not wantsList and j.kind != JObject:
+    return err("Error: GitHub answered something unexpected: " & j{"message"}.getStr(body.substr(0, 200)))
   case c.action
   of "list_issues", "list_prs":
     for it in j.getElems:
