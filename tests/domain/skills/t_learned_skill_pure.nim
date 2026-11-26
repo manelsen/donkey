@@ -103,7 +103,7 @@ proc runTests*() =
 
     test "a long description is cut at a character, never inside one":
       let idx = skillsIndex(@[SkillDoc(name: "x", description: "ç".repeat(300))])
-      check validUtf8(idx) == -1
+      check validateUtf8(idx) == -1
 
     test "skill_manage: each action and what it needs":
       check parseSkillManage(parseJson("""{"action":"create","content":"---"}""")).get.action == "create"
