@@ -33,6 +33,7 @@ type
     drainTeams*:     GatewayDrainProc
     drainMattermost*: GatewayDrainProc
     drainSms*:       GatewayDrainProc
+    drainIrc*:       GatewayDrainProc
 
 func initGatewayDrainer*(
   drainDiscord:   GatewayDrainProc = nil,
@@ -51,6 +52,7 @@ func initGatewayDrainer*(
   drainTeams:     GatewayDrainProc = nil,
   drainMattermost: GatewayDrainProc = nil,
   drainSms:       GatewayDrainProc = nil,
+  drainIrc:       GatewayDrainProc = nil,
 ): GatewayDrainer =
   ## Initializes a GatewayDrainer with channel drain callbacks.
   GatewayDrainer(
@@ -70,6 +72,7 @@ func initGatewayDrainer*(
     drainTeams:     drainTeams,
     drainMattermost: drainMattermost,
     drainSms:       drainSms,
+    drainIrc:       drainIrc,
   )
 
 # ── Polling & Batch Draining Helpers ──────────────────────────────────────────
@@ -299,6 +302,11 @@ proc drainSmsGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   if drainer.drainSms != nil:
     result = drainer.drainSms()
 
+proc drainIrcGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
+  ## Drains the IRC connection's queue if configured.
+  if drainer.drainIrc != nil:
+    result = drainer.drainIrc()
+
 proc drainTeamsGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains the Teams webhook queue if configured.
   if drainer.drainTeams != nil:
@@ -323,3 +331,4 @@ proc drainGatewayEvents*(drainer: GatewayDrainer): int {.discardable, gcsafe.} =
   if drainTeamsGateway(drainer): result.inc
   if drainMattermostGateway(drainer): result.inc
   if drainSmsGateway(drainer): result.inc
+  if drainIrcGateway(drainer): result.inc

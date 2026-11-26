@@ -21,6 +21,7 @@ This matrix reflects the current `core/outbound` capability model used by the ru
 | [Microsoft Teams](#microsoft-teams) | yes | no | no | no | no |
 | [Mattermost](#mattermost) | yes | no | no | no | no |
 | [SMS (Twilio)](#sms-twilio) | yes | no | no | no | no |
+| [IRC](#irc) | yes | no | no | no | no |
 | WeChat Work | yes | no | no | no | no |
 | WeChat | yes | no | no | no | no |
 | QQ | yes | no | no | no | no |
@@ -384,6 +385,42 @@ on the shared webhook receiver.
 - A message Twilio redelivers is a turn once.
 - Text only: a message with media and no text gets a short answer; long
   replies go in several messages (1600 characters each).
+
+---
+
+## IRC
+
+Donkey keeps one connection to an IRC network, over TLS only (the SASL
+password and every message cross it).
+
+### Configuration
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `IRC_SERVER` | yes | `host` or `host:port` (6697 by default). |
+| `IRC_NICK` | yes | The bot's nick; `_` is appended while it is taken. |
+| `IRC_PASSWORD` | no | The bot's services password, for SASL PLAIN login as `IRC_NICK`. |
+| `IRC_CHANNELS` | no | Channels to join (comma-separated). |
+| `IRC_REALNAME` | no | The real name shown by WHOIS (`Donkey`). |
+
+### Behaviour
+
+- A nick proves nothing on IRC, so a person is their **services account**:
+  the network must offer the IRCv3 `account-tag` capability, and only
+  messages it vouches for (users logged in to NickServ or equivalent) are
+  answered. Without it the bot connects and logs why, but answers nobody.
+- Private messages follow the DM policy. In a channel the bot answers only
+  when addressed by name (`donkey: …` or `donkey, …`), and the channel passes
+  the shared group allowlist (`DONKEY_TELEGRAM_ALLOWED_GROUPS`, with the
+  channel name; empty = every group).
+- `/continue` links the account to the same person on another channel; each
+  account's last nick is kept in `state/irc_nicks.json`, so reminders reach
+  them after a restart.
+- Replies are one `PRIVMSG` per line, cut under 400 bytes, paced (a burst of
+  5, then one line every 600 ms) so the network does not kick the bot.
+- The connection answers `PING`, pings a silent server after 2 minutes,
+  reconnects after 4 minutes of silence or any drop, with backoff.
+- Text only; CTCP and notices are ignored.
 
 ---
 

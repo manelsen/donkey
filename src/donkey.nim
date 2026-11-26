@@ -78,6 +78,8 @@ import donkey/adapters/channel/mattermost_runtime
 import donkey/adapters/channel/mattermost_socket
 import donkey/adapters/channel/sms
 import donkey/adapters/channel/sms_runtime
+import donkey/adapters/channel/irc
+import donkey/adapters/channel/irc_runtime
 import donkey/adapters/channel/cli_repl
 import donkey/adapters/webhook/webhook_receiver
 import donkey/domain/channels/line_policy
@@ -247,6 +249,8 @@ type DaemonEnv = object
   twilioAuthToken: string   ## TWILIO_AUTH_TOKEN: sends, and signs /webhook/sms
   twilioFromNumber: string  ## TWILIO_FROM_NUMBER: the number replies come from
   twilioWebhookUrl: string  ## TWILIO_WEBHOOK_URL: the exact URL Twilio calls
+  irc: IrcSettings          ## IRC_SERVER, IRC_NICK, IRC_PASSWORD, IRC_CHANNELS, IRC_REALNAME
+  ircProblem: string        ## why IRC_SERVER could not be read
 
 type DaemonAdapters = object
   tg: TelegramAdapter
@@ -269,6 +273,7 @@ type DaemonAdapters = object
   teams: TeamsAdapter
   mm: MattermostAdapter
   sms: SmsAdapter
+  irc: IrcAdapter
   mx: MatrixAdapter
   em: EmailAdapter
   wa: WhatsAppAdapter
@@ -314,6 +319,7 @@ proc buildRuntimeOutboundPorts(adapters: var DaemonAdapters): OutboundChannelPor
     addr adapters.em, addr adapters.sl, addr adapters.dt, addr adapters.wa,
     addr adapters.cli, signalPtr, addr adapters.ln, addr adapters.teams,
     mattermostAdapter = addr adapters.mm, smsAdapter = addr adapters.sms,
+    ircAdapter = addr adapters.irc,
     tgPick = telegramPick(adapters), dcPick = discordPick(adapters),
     waPick = whatsappPick(adapters), teamsPick = teamsPick(adapters))
 
@@ -658,6 +664,18 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
   result.twilioAuthToken = cfg.env.get("TWILIO_AUTH_TOKEN").strip()
   result.twilioFromNumber = cfg.env.get("TWILIO_FROM_NUMBER").strip()
   result.twilioWebhookUrl = cfg.env.get("TWILIO_WEBHOOK_URL").strip()
+  let ircServer = cfg.env.get("IRC_SERVER").strip()
+  if ircServer.len > 0:
+    let parsed = parseIrcServer(ircServer)
+    if parsed.isErr:
+      result.ircProblem = parsed.error
+    else:
+      let nick = cfg.env.get("IRC_NICK").strip()
+      result.irc = IrcSettings(host: parsed.get[0], port: parsed.get[1], nick: nick,
+        realName: (let r = cfg.env.get("IRC_REALNAME").strip(); if r.len > 0: r else: "Donkey"),
+        password: cfg.env.get("IRC_PASSWORD"),
+        channels: parseChatIdList(cfg.env.get("IRC_CHANNELS")),
+        tls: true)   ## always: the SASL password and every message cross it
   result.matrixWebhookToken = cfg.env.get("MATRIX_WEBHOOK_TOKEN")
   result.whatsappVerifyToken = cfg.env.get("WHATSAPP_VERIFY_TOKEN")
   result.whatsappAppSecret = cfg.env.get("WHATSAPP_APP_SECRET")
@@ -721,6 +739,8 @@ proc initDaemonAdapters(cfg: DonkeyConfig; env: DaemonEnv): DaemonAdapters =
     env.teamsTenantId, env.identityPath,
     cfg.home / "state" / "teams_conversations.json",
     serviceHosts = env.teamsServiceHosts)
+  result.irc = newIrcAdapter(env.irc.host.len > 0 and env.irc.nick.len > 0,
+    env.identityPath, cfg.home / "state" / "irc_nicks.json")
   result.sms = newSmsAdapter(env.twilioAccountSid, env.twilioAuthToken,
     env.twilioFromNumber, env.identityPath)
   result.mm = newMattermostAdapter(env.mattermostUrl, env.mattermostToken,
@@ -1315,6 +1335,7 @@ func outboundPortForChannel(ports: OutboundChannelPorts;
   of ckTeams: ports.teams
   of ckMattermost: ports.mattermost
   of ckSms: ports.sms
+  of ckIrc: ports.irc
 
 proc makeCompleteBuilder(): proc(preferencesMd: string): CompleteFn {.gcsafe.} =
   result = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
@@ -1467,6 +1488,13 @@ proc startDaemonIngress(ctx: DaemonContext;
                             slackSocketHttp, log)
   startOptionalDingTalkGateway(ctx.adapters.dt, ctx.env.dingTalkAppKey, log)
   startOptionalMattermostGateway(ctx.env.mattermostUrl, ctx.env.mattermostToken, log)
+  if ctx.env.ircProblem.len > 0:
+    log.error("irc: " & ctx.env.ircProblem)
+  elif ctx.env.irc.host.len == 0:
+    log.info("IRC_SERVER not set — IRC disabled")
+  else:
+    startIrc(ctx.env.irc, log).isOkOr:
+      log.error("irc: " & error)
   startOptionalMatrixGateway(ctx.adapters.mx, ctx.env.matrixConfigured, log)
   startOptionalWhatsAppGateway(ctx.adapters.wa, ctx.env.whatsappAccessToken,
                                ctx.env.whatsappPhoneNumberId, log)
@@ -1688,6 +1716,16 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
           err("Mattermost: outbox full, /continue reply dropped")
       drainMattermostEvents(ctx.adapters.mm, ctx.runtime.sm, fallback,
                             enqueueMattermostReply, log) > 0,
+    drainIrc = proc(): bool =
+      if ctx.env.irc.host.len == 0:
+        return false
+      let enqueueIrcReply = proc(msg: OutboundMessage): Result[void, string] {.gcsafe, raises: [].} =
+        try:
+          ctx.runtime.globalOutbox.putNoWait(msg)
+          ok()
+        except AsyncQueueFullError:
+          err("IRC: outbox full, /continue reply dropped")
+      drainIrcEvents(ctx.adapters.irc, ctx.runtime.sm, fallback, enqueueIrcReply, log) > 0,
     drainSms = proc(): bool =
       if ctx.env.twilioAuthToken.len == 0 or ctx.env.twilioWebhookUrl.len == 0:
         return false
@@ -2122,6 +2160,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
       discard await ctx.runtime.ledgerCompaction
     stopSlackSocketMode()
     stopMattermostSocket()
+    stopIrc()
     discord.stopGateway()
     stopQQOfficialGateway()
     stopWebhookReceiver()

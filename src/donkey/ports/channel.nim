@@ -60,6 +60,7 @@ type
     teams*:     OutboundChannelPort
     mattermost*: OutboundChannelPort
     sms*:       OutboundChannelPort
+    irc*:       OutboundChannelPort
 
 # ── pure helpers ──────────────────────────────────────────────────────────────
 
