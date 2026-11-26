@@ -185,6 +185,8 @@ type DaemonToolBundle = object
   tools:   seq[ToolDescription]
   browserRuntime: BrowserExecutor
   mcpStdio: seq[McpClient]   ## listed asynchronously at startup (E5.0)
+  mcpHttp:  seq[McpHttpClient]
+  skills:   SkillClients     ## one client per skill, shared by sessions
 
 type GlobalProviderBundle = object
   completeFn:    CompleteFn
@@ -306,6 +308,8 @@ type DaemonServices = object
   tools:            seq[ToolDescription]
   browserRuntime:   BrowserExecutor
   mcpStdio:         seq[McpClient]
+  mcpHttp:          seq[McpHttpClient]
+  skills:           SkillClients
   globalCompleteFn: CompleteFn
   globalStreamFactory: StreamFactory
   tgTypingFn:       TypingFn
@@ -377,6 +381,17 @@ type DaemonBootstrap = object
   memory: MdFileAdapter
   ctx:    DaemonContext
 
+proc offLoopMcpPost(url, body: string; headers: seq[HttpHeader]):
+    Future[Result[HttpResponse, string]] {.async: (raises: []).} =
+  ## An MCP POST on the blocking executor, from plain data.
+  try:
+    return await runOffLoop(mcpHttpPostJob, McpHttpPostJob(url: url, body: body,
+      headers: headers, timeoutSec: McpHttpTimeoutSec))
+  except CancelledError:
+    return err("mcp: cancelled")
+  except CatchableError as e:
+    return err("mcp: " & e.msg)
+
 proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
   for entry in loadToolRegistry(cfg.home / "tools.toml"):
     var port: ToolRuntimePort
@@ -397,9 +412,12 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
           mcpTokenSource(cfg.home / "state" / McpOAuthDirName, entry.url,
             secretOf = proc(name: string): string {.gcsafe.} = cfg.env.get(name))
         else: nil
-      var client = newMcpHttpClient(entry.url, bearer = bearer, tokenFn = tokenFn)
-      schemasRes = client.listTools()
-      port = client.toRuntimePort()
+      ## The POST runs on the blocking executor; listed by startDaemon.
+      let client = newMcpHttpClient(entry.url, bearer = bearer, tokenFn = tokenFn,
+                                    postAsync = offLoopMcpPost)
+      result.mcpHttp.add client
+      result.clients.add client.toRuntimePort()
+      continue
     if schemasRes.isOk:
       for s in schemasRes.value:
         result.tools.add(ToolDescription(
@@ -411,17 +429,17 @@ proc loadDaemonToolBundle(cfg: DonkeyConfig; log: Logger): DaemonToolBundle =
       log.warn("mcp: " & (if entry.kind == tkMcpHttp: entry.url else: entry.command) &
                ": " & schemasRes.error)
     result.clients.add(port)
+  ## Skills are MCP servers in Deno: listed with them by startDaemon, and
+  ## their clients kept for the sessions' own skills too.
+  result.skills = newSkillClients()
   for manifest in loadSkillRegistry(cfg.home / "skills.toml"):
-    let runtimeRes = buildDenoSkillRuntime(
+    let client = result.skills.clientFor(
       manifest.script, manifest.permissions, buildSkillRuntimePolicy(cfg, manifest.name))
-    if runtimeRes.isOk:
-      for s in runtimeRes.value.schemas:
-        result.tools.add(ToolDescription(
-          name:        s.name,
-          description: s.description,
-          schemaJson:  if s.inputSchema != nil: $s.inputSchema else: "",
-        ))
-      result.clients.add(runtimeRes.value.port)
+    if client.isErr:
+      log.warn("skill " & manifest.name & ": " & client.error)
+      continue
+    result.mcpStdio.add client.get
+    result.clients.add client.get.toRuntimePort()
 
   ## Browser tools are opt-in: no process is spawned until the first
   ## browser_navigate call. Backend selection is pure/strategy-based.
@@ -535,6 +553,8 @@ proc initDaemonServices(cfg: DonkeyConfig;
   result.tools = toolBundle.tools
   result.browserRuntime = toolBundle.browserRuntime
   result.mcpStdio = toolBundle.mcpStdio
+  result.mcpHttp = toolBundle.mcpHttp
+  result.skills = toolBundle.skills
 
   let providerBundle = buildGlobalProviderBundle(cfg.env)
   result.globalCompleteFn = providerBundle.completeFn
@@ -1161,7 +1181,7 @@ func buildDaemonSessionServices(ctx: DaemonContext;
     newStdHttpAdapter(allowlist = cfg.webAllowlist,
                       proxy = cfg.env.get("DONKEY_WEB_PROXY").strip()).toRuntimePort(),
     buildProviderBundle,
-    buildDenoSkillRuntime,
+    ctx.services.skills.builder(),
     buildSkillRuntimePolicyResolver(cfg),
     routeRecordHook = proc(selection: ProviderSelection) {.gcsafe, raises: [].} =
       ctx.runtime.routeHealth.recordChoice(selection),
@@ -1815,13 +1835,18 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   ## here, before any session is built from the catalog.
   ## All at once: a slow server delays only itself.
   var listings: seq[Future[Result[seq[ToolSchema], string]]]
+  var labels: seq[string]
   for client in ctx.services.mcpStdio:
     listings.add client.listToolsAsync()
+    labels.add client.command & " " & client.args.join(" ")
+  for client in ctx.services.mcpHttp:
+    listings.add client.listToolsAsync()
+    labels.add client.url
   await allFutures(listings)
-  for i, client in ctx.services.mcpStdio:
+  for i in 0 ..< listings.len:
     let listed = listings[i].read()
     if listed.isErr:
-      log.warn("mcp: " & client.command & ": " & listed.error)
+      log.warn("mcp: " & labels[i] & ": " & listed.error)
       continue
     for s in listed.get:
       ctx.services.tools.add(ToolDescription(

@@ -189,6 +189,10 @@ e a aprovação da pessoa precisa do laço). Daí a E5.0.
   servidor e ignora notificações enquanto espera a própria resposta. A
   lista de ferramentas é pedida com `await` na subida. O cliente HTTP fica
   como está nesta etapa; o sampling começa pelo stdio.
+  *Depois:* o cliente HTTP manda cada POST ao executor de bloqueantes, e os
+  skills Deno usam o cliente assíncrono, um por skill para o processo todo,
+  listados em segundo plano (um skill novo aparece a partir da mensagem
+  seguinte).
 - **E5.1 Protocolo.** O cliente MCP (stdio e Streamable HTTP) anuncia a
   capacidade `sampling` e atende o pedido do servidor: mensagens, preferências
   de modelo, `maxTokens`; a chamada vai pela rota do usuário, sem ferramentas.
