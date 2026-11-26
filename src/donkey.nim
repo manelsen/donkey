@@ -468,13 +468,12 @@ proc offLoopMcpPost(url, body: string; headers: seq[HttpHeader]):
 
 proc offLoopMcpToken(dir, serverUrl: string; env: Environment): McpHttpTokenAsync =
   ## A server's OAuth token, read and refreshed on the blocking executor.
-  ## Only the secret the login names travels, as a plain pair: the record
-  ## (a small file) is read here just to learn which variable it is.
+  ## The environment snapshot travels as plain pairs, so the worker finds
+  ## whichever secret the login names and nothing is read on the loop.
+  var secrets: seq[(string, string)]
+  for name, value in env.pairs:
+    secrets.add (name, value)
   result = proc(forceRefresh: bool): Future[Result[string, string]] {.async: (raises: []), gcsafe.} =
-    var secrets: seq[(string, string)]
-    let rec = loadMcpOAuth(dir, serverUrl)
-    if rec.isOk and rec.get.clientSecretEnv.len > 0:
-      secrets.add (rec.get.clientSecretEnv, env.get(rec.get.clientSecretEnv))
     try:
       return await runOffLoop(mcpTokenJob, McpTokenJob(dir: dir, serverUrl: serverUrl,
         forceRefresh: forceRefresh, secrets: secrets))
