@@ -5,7 +5,7 @@
 ##
 ## Requires illwill. Runs in foreground (no Chronos).
 
-import std/[os, options, strutils, times]
+import std/[algorithm, json, os, options, strutils, times]
 import ../core/pipeops
 import illwill as ill
 import terminal as term
@@ -16,6 +16,13 @@ import ../adapters/memory/md_file
 import ../adapters/state/schedule_store
 import ../domain/automation/schedule_view
 import ../ports/provider
+import ../ports/approval
+import ../adapters/state/pairing_store
+import ../adapters/state/approval_store
+import ../adapters/state/standing_approvals
+import ../app/turn_traces
+import ../admin_ops
+import ../ctl_handler
 
 # Helper for drawing boxes
 proc repeatChar*(n: int; c: char): string =
@@ -33,7 +40,10 @@ type
     asHooks
     asPlugins
     asUsers
-    asSchedules  ## read-only: schedules change through `donkey ctl schedule`
+    asSchedules  ## Enter pauses/resumes, D removes (E6.3)
+    asPairings   ## A approves, X rejects (E6.1)
+    asApprovals  ## pending: A/X; standing: D revokes (E6.5)
+    asTraces     ## read-only: recent turns (E6.4)
 
   AdminItem* = object
     name*: string
@@ -267,6 +277,7 @@ const
 
 proc newAdminState*(cfg: DonkeyConfig = defaultConfig("")): AdminState =
   AdminState(
+    memory: MdFileAdapter(paddocksDir: cfg.paddocks),
     section: asConfig,
     selectedIndex: 0,
     items: @[],
@@ -292,6 +303,9 @@ func sectionLabel*(s: AdminSection): string =
   of asPlugins:    "[Plugins]"
   of asUsers:     "[Users]"
   of asSchedules: "[Schedules]"
+  of asPairings:  "[Pairings]"
+  of asApprovals: "[Approvals]"
+  of asTraces:    "[Traces]"
 
 func sectionLabels*(): seq[string] =
   for s in AdminSection:
@@ -453,6 +467,152 @@ proc loadScheduleItems*(st: var AdminState; nowMs = -1'i64) =
     st.items.add(AdminItem(name: row.name, description: row.description,
                            enabled: record.spec.enabled, status: row.status))
 
+proc loadPairingItems*(st: var AdminState) =
+  st.items = @[]
+  if st.config.home.len == 0: return
+  let requests = newPairingStore(st.config.home / "state" / "pairings.json").load()
+  if requests.isErr:
+    st.items.add AdminItem(name: "error", description: requests.error, status: "error")
+    return
+  for r in requests.get:
+    st.items.add AdminItem(name: r.code, description: $r.channel & " " & r.rawId,
+      enabled: true, status: "pending " & $int(max(0.0, r.expiresAt - epochTime())) & "s")
+
+const StandingPrefix = "standing:"
+
+proc loadApprovalItems*(st: var AdminState) =
+  ## Pending tool approvals first (A approves, X denies), then the approvals
+  ## people made stand with "always" (D revokes).
+  st.items = @[]
+  if st.config.home.len == 0: return
+  let pending = newApprovalStore(st.config.home / "state" / "approvals.json").listPending()
+  if pending.isErr:
+    st.items.add AdminItem(name: "error", description: pending.error, status: "error")
+  else:
+    for r in pending.get:
+      st.items.add AdminItem(name: r.id, description: r.userId & " · " & r.toolName &
+        " · " & r.summary, enabled: true, status: "pending")
+  for (user, key) in newStandingApprovals(st.config.home / "state" /
+                                          StandingApprovalsFile).entries():
+    st.items.add AdminItem(name: StandingPrefix & user & " " & key,
+      description: user & " · " & key, enabled: true, status: "standing")
+
+const TraceRows = 100
+
+proc loadTraceItems*(st: var AdminState) =
+  ## The latest turns, newest first, as `ctl traces` exports them.
+  st.items = @[]
+  if st.config.paddocks.len == 0: return
+  let dir = tracesDir(st.config.paddocks)
+  if not dirExists(dir): return
+  var files: seq[string]
+  for kind, path in walkDir(dir):
+    if kind == pcFile and path.endsWith(".jsonl"): files.add path
+  files.sort(order = SortOrder.Descending)
+  var rows: seq[AdminItem]
+  for path in files:
+    var lines: seq[string]
+    try: lines = readFile(path).splitLines()
+    except CatchableError: continue
+    for i in countdown(lines.high, 0):
+      if rows.len >= TraceRows: break
+      let j =
+        try: parseJson(lines[i])
+        except CatchableError: continue
+      var tools: seq[string]
+      for t in j{"tools"}.getElems:
+        tools.add t{"name"}.getStr
+      rows.add AdminItem(
+        name: fromUnix(j{"ts"}.getBiggestInt div 1000).utc.format("yyyy-MM-dd HH:mm") &
+              " " & j{"user"}.getStr,
+        description: j{"channel"}.getStr & " · " & j{"kind"}.getStr & " · " &
+                     $j{"duration_ms"}.getBiggestInt & " ms" &
+                     (if tools.len > 0: " · " & tools.join(", ") else: ""),
+        enabled: j{"outcome"}.getStr == "ok", status: j{"outcome"}.getStr)
+    if rows.len >= TraceRows: break
+  st.items = rows
+
+proc loadSection*(st: var AdminState)
+
+type
+  AdminKey* = enum
+    akToggle    ## Enter
+    akApprove   ## A
+    akReject    ## X
+    akDelete    ## D
+
+func adminKeyFor*(section: AdminSection; view: ViewMode; key: char): Option[AdminKey] =
+  ## The action a key means in the dashboard's admin panel ('E' is Enter),
+  ## keeping what keys already did there: on Users, Enter opens the detail
+  ## and D in the detail is the delete confirmation.
+  case section
+  of asUsers:
+    if view == vmDetail and key == 'E': some(akToggle) else: none(AdminKey)
+  of asSchedules:
+    case key
+    of 'E': some(akToggle)
+    of 'D': some(akDelete)
+    else: none(AdminKey)
+  of asPairings, asApprovals:
+    case key
+    of 'A': some(akApprove)
+    of 'X': some(akReject)
+    of 'D': some(akDelete)
+    else: none(AdminKey)
+  else: none(AdminKey)
+
+proc applyAdminKey*(st: var AdminState; key: AdminKey): Result[string, string] =
+  ## One action on the selected item, through the same operation its `ctl`
+  ## command runs (admin_ops, the stores); the section is reloaded after.
+  ## In a person's detail view the action is on that person.
+  if st.section == asUsers and st.viewMode == vmDetail and st.selectedUserId.isSome:
+    for i, it in st.items:
+      if it.name == $st.selectedUserId.get:
+        st.selectedIndex = i
+  if st.selectedIndex < 0 or st.selectedIndex >= st.items.len:
+    return err("nothing selected")
+  let item = st.items[st.selectedIndex]
+  let home = st.config.home
+  let done: Result[string, string] =
+    case st.section
+    of asUsers:
+      if key != akToggle: err("Enter revokes or restores a person")
+      else: setUserAccess(st.memory, item.name, revoked = item.status != "revoked")
+    of asSchedules:
+      case key
+      of akToggle: ctlScheduleSetEnabled(home / "state", item.name, not item.enabled)
+      of akDelete: ctlScheduleRemove(home / "state", item.name)
+      else: err("Enter pauses or resumes, D removes")
+    of asPairings:
+      let store = newPairingStore(home / "state" / "pairings.json")
+      case key
+      of akApprove: approvePairing(st.config, st.memory, store, item.name)
+      of akReject: rejectPairing(store, item.name)
+      else: err("A approves, X rejects")
+    of asApprovals:
+      if item.status == "error":
+        err("the approvals file cannot be read: " & item.description)
+      elif item.status == "standing":
+        let rest = item.name[min(StandingPrefix.len, item.name.len) .. ^1]
+        let space = rest.find(' ')
+        if key != akDelete: err("D revokes an approval that stands")
+        elif space <= 0: err("not a standing approval: " & item.name)
+        else:
+          let standing = newStandingApprovals(home / "state" / StandingApprovalsFile).toStandingPort()
+          standing.revoke(rest[0 ..< space], rest[space + 1 .. ^1]).map(
+            proc(): string = "Revoked " & rest[space + 1 .. ^1] & " for " & rest[0 ..< space])
+      elif key in {akApprove, akReject}:
+        newApprovalStore(home / "state" / "approvals.json").decide(
+          item.name, "", key == akApprove, admin = true).map(
+            proc(): string = (if key == akApprove: "Approved " else: "Denied ") & item.name)
+      else: err("A approves, X denies")
+    else:
+      err("no actions in " & sectionLabel(st.section))
+  if done.isOk:
+    st.loadSection()
+    st.selectedIndex = max(0, min(st.selectedIndex, st.items.high))
+  done
+
 proc loadSection*(st: var AdminState) =
   case st.section
   of asConfig:    st.loadConfigItems()
@@ -464,6 +624,9 @@ proc loadSection*(st: var AdminState) =
   of asPlugins:   st.loadPluginItems()
   of asUsers:     st.loadUsersItems()
   of asSchedules: st.loadScheduleItems()
+  of asPairings:  st.loadPairingItems()
+  of asApprovals: st.loadApprovalItems()
+  of asTraces:    st.loadTraceItems()
 
 proc showToast*(st: var AdminState; msg: string; kind = tkInfo) =
   st.toast = some(Toast(message: msg, kind: kind, timestamp: int64(times.epochTime())))
@@ -647,7 +810,14 @@ proc drawList*(tb: var ill.TerminalBuffer; st: AdminState; startY: int; width, h
 proc drawFooter*(tb: var ill.TerminalBuffer; st: AdminState; y, width: int) =
   tb.setForegroundColor(ill.fgCyan)
   tb.write(2, y, "Items: " & $st.items.len & "  |  Selected: " & $st.selectedIndex)
-  tb.write(width - 20, y, "ESC: back  Enter: toggle")
+  let keys =
+    case st.section
+    of asUsers: "Enter: revoke/restore"
+    of asSchedules: "Enter: pause/resume  D: remove"
+    of asPairings: "A: approve  X: reject"
+    of asApprovals: "A/X: decide  D: revoke"
+    else: "ESC: quit"
+  tb.write(max(2, width - keys.len - 2), y, keys)
 
 # ── Main TUI loop ───────────────────────────────────────────────────────────
 
@@ -697,8 +867,17 @@ proc runAdminTui*(cfg: DonkeyConfig = defaultConfig("")) =
     of ill.Key.Down:
       if st.selectedIndex < st.items.high:
         inc st.selectedIndex
-    of ill.Key.Enter:
-      if st.items.len > 0 and st.selectedIndex < st.items.len:
+    of ill.Key.Enter, ill.Key.A, ill.Key.X, ill.Key.D:
+      if st.section in {asUsers, asSchedules, asPairings, asApprovals}:
+        let action =
+          case key
+          of ill.Key.A: akApprove
+          of ill.Key.X: akReject
+          of ill.Key.D: akDelete
+          else: akToggle
+        let done = applyAdminKey(st, action)
+        if done.isOk: st.showToast(done.get) else: st.showToast(done.error, tkError)
+      elif key == ill.Key.Enter and st.items.len > 0 and st.selectedIndex < st.items.len:
         st.items[st.selectedIndex].enabled = not st.items[st.selectedIndex].enabled
     of ill.Key.Tab:
       st.section = AdminSection((ord(st.section) + 1) mod (high(AdminSection).ord + 1))

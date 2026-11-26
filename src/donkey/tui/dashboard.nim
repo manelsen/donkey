@@ -7,6 +7,7 @@
 ## Requires illwill. Runs in foreground (no Chronos).
 
 import ../config/environment
+import ../config/types
 import std/[os, sequtils, strformat, strutils, times, options]
 import illwill
 import ../core/pipeops
@@ -67,9 +68,7 @@ proc fetchData(st: var TuiState) =
   let lr = queryLogs(st.sockPath, MaxLogLines)
   if lr.isOk:
     st.logs = lr.value
-  let homeDir = st.sockPath.parentDir()
-  let memory = MdFileAdapter(paddocksDir: homeDir / "paddocks")
-  st.memory = memory
+  ## The configured paddocks, set at start (admin state and this one).
   st.users = st.memory.listUsers()
 
   ## Wire IPC status into admin panel state.
@@ -318,8 +317,11 @@ proc drawAdmin(tb: var TerminalBuffer; st: TuiState; y0: int) =
   tb.setForegroundColor(fgCyan)
   let footerHint = case admin.section
     of asConfig: "[Enter] cycle value  [^ v] navigate"
-    of asUsers: "[Enter] view detail  [Esc] back"
-    of asSchedules: "read-only  ·  change with: donkey ctl schedule  [<- ->] section"
+    of asUsers: "[Enter] detail; in detail: [Enter] revoke/restore  [D] delete  [Esc] back"
+    of asSchedules: "[Enter] pause/resume  [D] remove  [<- ->] section"
+    of asPairings: "[A] approve  [X] reject  [<- ->] section"
+    of asApprovals: "pending: [A] approve  [X] deny  ·  standing: [D] revoke"
+    of asTraces: "read-only  [<- ->] section"
     else: "[Enter] toggle  [^ v] navigate  [<- ->] section"
   tb.write(2, height - 2, footerHint)
 proc render(tb: var TerminalBuffer; st: TuiState) =
@@ -339,11 +341,12 @@ proc render(tb: var TerminalBuffer; st: TuiState) =
 
 # ── entry point ───────────────────────────────────────────────────────────────
 
-proc runTui*(sockPath: string; env: Environment) =
+proc runTui*(sockPath: string; env: Environment; cfg: DonkeyConfig) =
   illwillInit(fullScreen = true)
   defer: illwillDeinit()
 
-  var st = TuiState(sockPath: sockPath, panel: pSessions, admin: newAdminState(), memory: MdFileAdapter(paddocksDir: sockPath.parentDir() / "paddocks"))
+  var st = TuiState(sockPath: sockPath, panel: pSessions, admin: newAdminState(cfg),
+                    memory: MdFileAdapter(paddocksDir: cfg.paddocks))
   fetchData(st)
   st.admin.catalogLoader = buildModelCatalogLoader(env)
   st.lastFetch = epochTime()
@@ -409,26 +412,34 @@ proc runTui*(sockPath: string; env: Environment) =
       if st.panel == pAdmin:
         if st.admin.selectedIndex < st.admin.items.high:
           inc st.admin.selectedIndex
-    of Key.Enter:
-      if st.panel == pAdmin:
-        if st.admin.section == asUsers and st.admin.items.len > 0 and st.admin.selectedIndex < st.admin.items.len:
-          if st.admin.viewMode == vmList:
-            st.admin.selectedUserId = some(UserId(st.admin.items[st.admin.selectedIndex].name))
-            st.admin.viewMode = vmDetail
-          else:
-            ## Toggle access
-            st.admin.items[st.admin.selectedIndex].enabled = not st.admin.items[st.admin.selectedIndex].enabled
-        elif st.admin.section != asSchedules and
-             st.admin.items.len > 0 and st.admin.selectedIndex < st.admin.items.len:
-          st.admin.items[st.admin.selectedIndex].enabled = not st.admin.items[st.admin.selectedIndex].enabled
-    of Key.D:
-      if st.panel == pAdmin:
-        if st.admin.viewMode == vmDetail and st.admin.selectedUserId.isSome:
-          st.admin.confirmMode = cmDelete
-    of Key.A:
-      if st.panel != pAdmin:
+    of Key.Enter, Key.D, Key.X, Key.A:
+      let ch =
+        case key
+        of Key.Enter: 'E'
+        of Key.D: 'D'
+        of Key.X: 'X'
+        else: 'A'
+      let action =
+        if st.panel == pAdmin: adminKeyFor(st.admin.section, st.admin.viewMode, ch)
+        else: none(AdminKey)
+      if action.isSome:
+        ## The same operation as its `ctl` command (admin_tui.applyAdminKey).
+        let done = applyAdminKey(st.admin, action.get)
+        if done.isOk: st.admin.showToast(done.get) else: st.admin.showToast(done.error, tkError)
+      elif key == Key.A and st.panel != pAdmin:
         st.panel = pAdmin
         st.admin.loadSection()
+      elif key == Key.D and st.panel == pAdmin:
+        if st.admin.viewMode == vmDetail and st.admin.selectedUserId.isSome:
+          st.admin.confirmMode = cmDelete
+      elif key == Key.Enter and st.panel == pAdmin:
+        if st.admin.section == asUsers and st.admin.viewMode == vmList and
+            st.admin.items.len > 0 and st.admin.selectedIndex < st.admin.items.len:
+          st.admin.selectedUserId = some(UserId(st.admin.items[st.admin.selectedIndex].name))
+          st.admin.viewMode = vmDetail
+        elif st.admin.section notin {asUsers, asSchedules, asPairings, asApprovals, asTraces} and
+             st.admin.items.len > 0 and st.admin.selectedIndex < st.admin.items.len:
+          st.admin.items[st.admin.selectedIndex].enabled = not st.admin.items[st.admin.selectedIndex].enabled
     else:
       discard
 

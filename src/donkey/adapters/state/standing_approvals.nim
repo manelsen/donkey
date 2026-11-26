@@ -53,3 +53,9 @@ proc toStandingPort*(s: StandingApprovals): StandingApprovalPort =
       s.save(),
     list: proc(userId: string): seq[string] {.gcsafe, raises: [].} =
       s.byUser.getOrDefault(userId))
+
+proc entries*(s: StandingApprovals): seq[(string, string)] =
+  ## Every (user, key) that stands, for the admin TUI.
+  for user, keys in s.byUser:
+    for k in keys:
+      result.add (user, k)
