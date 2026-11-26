@@ -144,7 +144,8 @@ proc agentRequest(loaded: LoadedAgent; history: ConversationHistory;
     messages: history,
     tools: tools,
     providerOverride: loaded.agent.provider,
-    modelOverride: loaded.agent.model)
+    modelOverride: loaded.agent.model,
+    providerStrict: loaded.agent.providerIsStrict)
 
 proc consultLoop(callModel: AsyncCompleteFn; loaded: LoadedAgent; text: string;
                  consult: ConsultTools): Future[Result[string, string]] {.async.} =
