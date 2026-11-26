@@ -60,17 +60,25 @@ O que cada frente deixou de fora ao ser implementada. Nenhum está agendado.
 |---|---|---|
 | Teams com anexos e cartões | E2 | só texto entra e sai |
 | MCP sampling por HTTP | E5 | só servidores stdio podem pedir sampling |
-| Estado de conexão dos canais por webhook e long poll | E6 | Discord, Mattermost, IRC e Slack e QQ em modo socket mostram se estão conectados (`connected`, `reconnecting c/r`, `stopped`); os demais aparecem como `active`, sem saber da conexão |
 | Skill novo de usuário | E5 | as ferramentas aparecem a partir da mensagem seguinte (listagem em segundo plano) |
 | Escrita no GitHub (abrir issue, comentar) | 2ª rodada, frente 2 | fora de propósito: o agente lê texto de terceiros; pede decisão sobre aprovação |
 | Mattermost, SMS, IRC e Google Chat com mídia | 2ª rodada, frente 1 | só texto; no IRC, só quem tem conta nos serviços da rede é atendido |
-| Mensagens do Mattermost com o socket caído | 2ª rodada, frente 1 | não são reapresentadas ao reconectar |
 | Fila de mensagens mortas para ferramentas | 2ª rodada, frente 4 | só envios entram na fila: a falha de uma ferramenta volta ao modelo no mesmo turno, e um reenvio depois não teria quem recebesse o resultado |
 | Resposta longa reenviada pela fila | 2ª rodada, frente 4 | uma resposta dividida que falhou no meio volta inteira, e os primeiros pedaços podem se repetir |
-| Promover uma skill para todas as pessoas | E7 | estava na decisão (o operador promove à mão) e não foi feito: as skills são só por pessoa |
 | Revisão de memória | E7.4 | a revisão cuida só de skills; os fatos ficam com o MAGMA, que já guarda cada turno relevante |
-| `/insights` no chat e custo | E7.8 | só `donkey ctl insights`, e sem custo estimado (o Donkey não mantém tabela de preços) |
 | Jornada como grafo | E7.7 | só em texto (`ctl` e TUI); o Hermes desenha um grafo no desktop |
+| Custo nos insights | E7.8 | o Donkey não mantém tabela de preços; `/insights` (chat) e `ctl insights` mostram tokens |
+
+Fechados em 26/11 (PR de itens abertos): promover uma skill para todas as
+pessoas (`ctl skill promote`), `/insights` no chat (ferramenta `insights`), o
+status dos canais sem socket contado (há quanto tempo chegou a última
+mensagem) e, no Mattermost, os posts escritos com o socket caído (buscados ao
+reconectar). Os que ficam: anexos no Teams, mídia nos canais novos e escrita
+no GitHub são candidatas (§6) ou pedem decisão; sampling por HTTP exige o
+transporte do MCP receber pedidos do servidor; a repetição de pedaços exige
+que cada canal diga quais entregou; a skill Deno nova na mesma mensagem
+esbarra na montagem síncrona da sessão; a revisão de memória e a jornada em
+grafo são escolhas de desenho.
 
 ## 4. Segunda rodada (aprovada em 25/11)
 

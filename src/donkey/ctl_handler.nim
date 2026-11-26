@@ -957,7 +957,7 @@ proc dispatchCtl*(cfg: DonkeyConfig;
 
   # ── skill ──
   let skillsPath = cfg.home / "skills.toml"
-  if args[1] == "skill" and args.len >= 4 and args[2] in ["learned", "rollback"] and
+  if args[1] == "skill" and args.len >= 4 and args[2] in ["learned", "rollback", "promote"] and
       not validPaddockId(args[3]):
     echo "not a person id: " & args[3]
     return 1
@@ -982,6 +982,14 @@ proc dispatchCtl*(cfg: DonkeyConfig;
       return 0
     echo "usage: donkey ctl skill learned <uuid> [show|archive|restore <name>]"
     return 1
+  if args[1] == "skill" and args.len >= 5 and args[2] == "promote":
+    ## One person's learned skill to everyone (shared, read only).
+    let promoted = promoteSkill(newFsAdapter(), cfg.home, args[3], args[4], epochMs())
+    if promoted.isErr:
+      echo promoted.error
+      return 1
+    echo "promoted " & args[4] & " to every person"
+    return 0
   if args[1] == "skill" and args.len >= 4 and args[2] == "rollback":
     ## The newest curator backup of a person's learned skills (E7.6).
     let rolled = rollbackSkills(newFsAdapter(), cfg.paddocks / args[3], epochMs())

@@ -9,7 +9,7 @@
 ## go into the post's thread (`root_id`). Formats from the Mattermost API
 ## reference ("WebSocket", "Create a post").
 
-import std/[json, options, strutils]
+import std/[algorithm, json, options, strutils]
 import ../../core/pipeops
 
 const
@@ -24,6 +24,7 @@ type
     senderName*: string
     isGroup*:   bool   ## any channel but a direct message
     mentioned*: bool   ## the bot is among the post's mentions
+    createdMs*: int64  ## when it was written (create_at)
 
   MattermostMe* = object
     id*, username*: string
@@ -58,7 +59,8 @@ proc parsePostedEvent*(frame, botUserId: string): Option[MattermostPost] =
     id: post{"id"}.getStr, userId: userId, channelId: post{"channel_id"}.getStr,
     rootId: post{"root_id"}.getStr, text: text,
     senderName: data{"sender_name"}.getStr,
-    isGroup: data{"channel_type"}.getStr != "D", mentioned: mentioned))
+    isGroup: data{"channel_type"}.getStr != "D", mentioned: mentioned,
+    createdMs: post{"create_at"}.getBiggestInt))
 
 func shouldAnswer*(p: MattermostPost): bool =
   ## A direct message always; in a channel, only when the bot is mentioned.
@@ -141,3 +143,44 @@ proc authRefused*(frame: string; challengeSeq: int): bool =
 proc pingAction*(seq: int): string =
   ## The client-side keepalive; the server answers with a pong reply.
   $(%* {"seq": seq, "action": "ping"})
+
+# ── Catching up after a drop ─────────────────────────────────────────────────
+
+proc parseChannels*(body: string): seq[(string, string)] =
+  ## `GET /users/me/teams/{team}/channels`: each channel's id and type
+  ## (D direct, G group, O open, P private).
+  try:
+    for c in parseJson(body).getElems:
+      let id = c{"id"}.getStr
+      if id.len > 0: result.add (id, c{"type"}.getStr)
+  except CatchableError: discard
+
+func mentions(text, username: string): bool =
+  stripMention(text, username) != text.strip
+
+proc postsSince*(body, channelType: string; me: MattermostMe;
+                 sinceMs: int64): seq[MattermostPost] =
+  ## `GET /channels/{id}/posts?since=`: the posts written after `sinceMs`
+  ## that the bot should answer, oldest first, under the live rules: none of
+  ## its own, no system posts, a mention needed outside a direct message.
+  let j =
+    try: parseJson(body)
+    except CatchableError: return @[]
+  let isGroup = channelType != "D"
+  for id in j{"order"}.getElems:
+    let p = j{"posts"}{id.getStr}
+    if p.isNil or p.kind != JObject: continue
+    let userId = p{"user_id"}.getStr
+    let text = p{"message"}.getStr
+    let created = p{"create_at"}.getBiggestInt
+    if created <= sinceMs or p{"type"}.getStr.len > 0 or userId.len == 0 or
+        userId == me.id or text.strip.len == 0:
+      continue
+    let mentioned = mentions(text, me.username)
+    if isGroup and not mentioned: continue
+    let cleaned = stripMention(text, me.username)
+    if cleaned.len == 0: continue
+    result.add MattermostPost(id: p{"id"}.getStr, userId: userId,
+      channelId: p{"channel_id"}.getStr, rootId: p{"root_id"}.getStr, text: cleaned,
+      isGroup: isGroup, mentioned: mentioned, createdMs: created)
+  result.sort(proc(a, b: MattermostPost): int = cmp(a.createdMs, b.createdMs))

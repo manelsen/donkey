@@ -597,10 +597,9 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   ## The skills this person's agent learned (E7.2): what each is for, so the
   ## model loads the right one with skill_view. Read each turn: one written
   ## during the conversation is in the next turn's prompt.
-  let learned = newLearnedSkills(fs, paddockDir).list()
-  if learned.len > 0:
-    var docs: seq[SkillDoc]
-    for s in learned: docs.add s.doc
+  ## The shared skills the operator promoted come in too; theirs win on a name.
+  let docs = availableSkills(fs, paddockDir)
+  if docs.len > 0:
     systemBase = systemBase & "\n\n" & skillsIndex(docs)
 
   let route =

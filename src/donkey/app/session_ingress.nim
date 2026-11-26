@@ -5,6 +5,7 @@
 ##
 ## Strict hexagonal architecture: no direct imports from adapters/.
 
+import ../infra/connection_state
 import chronos
 import chronos/asyncsync
 import std/strutils
@@ -602,6 +603,7 @@ proc handleSessionFallback*(sm:           var SessionManager;
                            msg:          InboundMessage;
                            services:     SessionIngressServices) {.gcsafe.} =
   ## Handles fallback message dispatch; rejects if user is revoked.
+  noteInbound(msg.channel, epochMs())   ## for the status: when this channel last spoke
   if services.access.revoked(msg.userId):
     if services.globalOutbox != nil:
       services.globalOutbox.putNoWait(OutboundMessage(

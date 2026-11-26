@@ -355,7 +355,9 @@ personal access token, and add it to the teams and channels it should serve.
   messages get a plain post. Long replies go in pieces. Each person's last
   direct channel is kept in `state/mattermost_channels.json`, so reminders
   reach them after a restart.
-- Posts made while the socket is down are not replayed.
+- After a drop, the posts written meanwhile in the bot's channels (at most a
+  day back, 100 posts) are fetched on reconnection and answered under the same
+  rules, oldest first.
 - Text only: no attachments or edits yet.
 
 ---

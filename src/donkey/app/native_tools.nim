@@ -88,6 +88,7 @@ import ./approval_runtime
 import ./offloop_io
 import ./tools/github_git_tools
 import ./skill_tools
+import ./insights_tool
 import ./provider_executor
 
 const
@@ -906,6 +907,12 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
                                    int64(epochTime() * 1000)).valueOr:
       return handledError("Error: " & error)
     return handledText(reply)
+  of InsightsToolName:
+    let days = max(1, j{"days"}.getInt(30))
+    let report = performInsights(ctx.fs, ctx.paddockDir, $ctx.uid,
+      int64(epochTime() * 1000) - int64(days) * 86_400_000).valueOr:
+      return handledError("Error: " & error)
+    return handledText(report)
   of SkillViewToolName:
     let shown = performSkillView(ctx.fs, ctx.paddockDir, j{"name"}.getStr,
                                  int64(epochTime() * 1000)).valueOr:

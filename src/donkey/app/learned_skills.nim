@@ -234,3 +234,26 @@ proc journey*(store: LearnedSkills): string =
   let archived = store.archived()
   if archived.len > 0: parts.add "archived: " & archived.join(", ")
   if parts.len == 0: "No learned skills yet." else: parts.join("\n")
+
+# ── Shared skills: promoted by the operator to everyone ──────────────────────
+
+func homeOfPaddock*(paddockDir: string): string =
+  ## `{home}/paddocks/<uuid>` → `{home}`: where the shared store lives.
+  parentDir(parentDir(paddockDir.strip(leading = false, chars = {'/'})))
+
+proc promoteSkill*(fs: FsRuntimePort; home, userId, name: string; nowMs: int64): Result[void, string] =
+  ## One person's skill, copied to the instance's store for every person,
+  ## through the guard again and recorded as the operator's.
+  if not validPaddockId(userId): return err("not a person id: " & userId)
+  let doc = ? newLearnedSkills(fs, home / "paddocks" / userId).read(name)
+  newLearnedSkills(fs, home).create(renderSkillMd(doc), by = "operator",
+                                    note = "promoted from " & userId, nowMs = nowMs)
+
+proc availableSkills*(fs: FsRuntimePort; paddockDir: string): seq[SkillDoc] =
+  ## The person's skills and the shared ones; theirs win on a name.
+  var names: seq[string]
+  for s in newLearnedSkills(fs, paddockDir).list():
+    result.add s.doc
+    names.add s.doc.name
+  for s in newLearnedSkills(fs, homeOfPaddock(paddockDir)).list():
+    if s.doc.name notin names: result.add s.doc

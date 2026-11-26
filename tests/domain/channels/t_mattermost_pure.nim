@@ -111,5 +111,32 @@ proc runTests*() =
       check me.get.id == "botuid" and me.get.username == "donkey"
       check parseMe("""{"message":"invalid token","status_code":401}""").isErr
 
+  suite "mattermost — catching up after a drop":
+
+    test "a live post carries when it was written":
+      let post = %* {"id": "p9", "user_id": "alice-id", "channel_id": "chan-1",
+                     "message": "oi", "type": "", "create_at": 1_700_000_000_123}
+      let frame = $(%* {"event": "posted", "data": {"channel_type": "D", "post": $post}})
+      check parsePostedEvent(frame, Bot).get.createdMs == 1_700_000_000_123
+
+    test "the bot's channels: id and type":
+      let chans = parseChannels("""[{"id":"c1","type":"D"},{"id":"c2","type":"O"},{"x":1}]""")
+      check chans == @[("c1", "D"), ("c2", "O")]
+
+    test "posts since a time: oldest first, the bot's own and system posts out, mentions required in a channel":
+      let me = MattermostMe(id: Bot, username: "donkey")
+      let body = $(%* {"order": ["p3", "p2", "p1", "p0"], "posts": {
+        "p0": {"id": "p0", "user_id": "alice-id", "channel_id": "c2", "message": "bom dia", "type": "", "create_at": 30},
+        "p1": {"id": "p1", "user_id": "alice-id", "channel_id": "c2", "message": "@donkey resume", "type": "", "create_at": 10},
+        "p2": {"id": "p2", "user_id": Bot, "channel_id": "c2", "message": "@donkey eco", "type": "", "create_at": 20},
+        "p3": {"id": "p3", "user_id": "x", "channel_id": "c2", "message": "joined", "type": "system_join_channel", "create_at": 40}}})
+      let posts = postsSince(body, "O", me, sinceMs = 5)
+      check posts.len == 1
+      check posts[0].id == "p1" and posts[0].text == "resume" and posts[0].isGroup
+      let dm = postsSince(body.replace("\"c2\"", "\"d1\""), "D", me, sinceMs = 5)
+      check dm.len == 2 and dm[0].id == "p1" and dm[1].id == "p0"   ## a DM needs no mention
+      check postsSince(body, "O", me, sinceMs = 15).len == 0          ## p1 is older
+      check postsSince("not json", "O", me, 0).len == 0
+
 when isMainModule:
   runTests()

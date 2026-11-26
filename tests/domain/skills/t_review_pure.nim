@@ -76,6 +76,10 @@ proc runTests*() =
       let p = learningCommandPrompt("/refine").get
       check "skill_manage" in p and "Worth a skill" in p
 
+    test "/insights asks for the person's report, with the days when given":
+      check "insights tool" in learningCommandPrompt("/insights").get
+      check "7" in learningCommandPrompt("/insights 7").get
+
     test "any whitespace separates the command from its source":
       check "some/path" in learningCommandPrompt("/learn\tsome/path").get
 
