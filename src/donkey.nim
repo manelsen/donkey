@@ -105,6 +105,7 @@ import donkey/app/dead_letters
 import donkey/app/tools/web_tools
 import donkey/app/tools/audio_tools
 import donkey/web_tool_jobs
+import donkey/core/cli_args
 import donkey/adapters/tools/offloop_jobs
 import donkey/domain/memory/query_policy_pure
 import donkey/adapters/embedding/openrouter_embed
@@ -2352,7 +2353,10 @@ proc main =
           configPathPending = true
       of "cat":     logsCat    = true
       of "dev-mode": devMode   = true
-      else: discard
+      else:
+        ## The command's own option (`ctl traces --since 7d`): back into its
+        ## arguments, in order; it was dropped before.
+        args.add passThroughOption(key, val)
     of cmdShortOption:
       case key
       of "v": printVersion(); quit(0)

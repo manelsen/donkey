@@ -45,6 +45,7 @@ Commands:
                                         Register an MCP server over HTTP
   ctl traces [--since 7d] [--user UUID]  per-turn traces (DONKEY_TRACES=on), as JSON lines
   ctl deliveries                         replies a channel refused: waiting for a retry, or dead
+  ctl insights [--since 30d] [--user UUID]  turns, tokens, tools, providers, skills, from the traces
   ctl mcp login <url> [--client-id ID [--client-secret-env NAME]]
                                         OAuth login for an HTTP MCP server
   ctl skill search <query>              Search remote skills on ClawHub
