@@ -9,6 +9,7 @@
 ##     that is NOT exposed to the user (CompletionResponse has no field for it).
 ##   - Streaming via SSE is supported.
 
+import ../../domain/providers/cache_usage_pure
 import std/[json, streams, strutils]
 import ../../domain/message
 import ../../domain/providers/compat
@@ -112,6 +113,7 @@ proc parseDeepSeekResponse*(body: JsonNode): Result[CompletionResponse, string] 
       reasoning:    reasoning,
       inputTokens:  promptTokens,
       outputTokens: completionTokens,
+      cacheReadTokens:  openAiUsage(usage).cacheRead,
       toolCalls:    toolCalls,
     )
   except JsonKindError, KeyError, ValueError:

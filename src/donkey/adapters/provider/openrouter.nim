@@ -7,6 +7,7 @@
 ## Format: OpenAI-compatible (system as first message with role=system,
 ## messages array with role/content pairs).
 
+import ../../domain/providers/cache_usage_pure
 import std/[json, streams, strutils, tables]
 import ../../domain/message
 import ../../domain/providers/compat
@@ -140,6 +141,8 @@ func parseOpenRouterResponse*(j: JsonNode): Result[CompletionResponse, string] =
     text:         msg{"content"}.getStr(""),
     reasoning:    reasoning,
     inputTokens:  usage.jInt("prompt_tokens"),
+    cacheReadTokens:  openAiUsage(usage).cacheRead,
+    cacheWriteTokens: openAiUsage(usage).cacheWrite,
     outputTokens: usage.jInt("completion_tokens"),
     toolCalls:    toolCalls,
   )

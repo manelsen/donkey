@@ -20,6 +20,7 @@
 ##
 ## `proc` where parseJson is used (ADR-007 allows it).
 
+import ./cache_usage_pure
 import std/[json, strutils, tables]
 import ../../core/pipeops
 import ../message
@@ -211,7 +212,11 @@ proc converseStreamResponse*(body: string;
     of "messageStop":
       stopped = true
     of "metadata":
-      resp.inputTokens = j{"usage"}{"inputTokens"}.getInt(resp.inputTokens)
+      if j{"usage"}{"inputTokens"}.getInt(0) > 0:
+        let cache = bedrockUsage(j{"usage"})
+        resp.inputTokens = cache.inputTokens
+        resp.cacheReadTokens = cache.cacheRead
+        resp.cacheWriteTokens = cache.cacheWrite
       resp.outputTokens = j{"usage"}{"outputTokens"}.getInt(resp.outputTokens)
     else:
       discard

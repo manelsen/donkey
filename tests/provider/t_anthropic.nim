@@ -149,6 +149,13 @@ proc runTests*() =
       check resp.inputTokens  == 8
       check resp.outputTokens == 4
 
+    test "cached tokens, input as the whole prompt (E8.3)":
+      let j = %* {"content": [{"type": "text", "text": "Hi"}],
+                  "usage": {"input_tokens": 8, "cache_read_input_tokens": 4000,
+                            "cache_creation_input_tokens": 100, "output_tokens": 4}}
+      let resp = parseAnthropicResponse(j).get()
+      check resp.inputTokens == 4108 and resp.cacheReadTokens == 4000 and resp.cacheWriteTokens == 100
+
     test "handles missing usage gracefully":
       let j = %* {"content": [{"type": "text", "text": "Hi"}]}
       let resp = parseAnthropicResponse(j).get()

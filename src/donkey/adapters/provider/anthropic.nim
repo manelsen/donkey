@@ -15,6 +15,7 @@
 ##   - Response parsing must extract both text blocks and tool_use blocks
 ##   - max_tokens is REQUIRED by the API (no default)
 
+import ../../domain/providers/cache_usage_pure
 import std/[json, streams, strutils]
 import ../../domain/message
 import ../../domain/providers/media_pure
@@ -196,9 +197,12 @@ func parseAnthropicResponse*(j: JsonNode): Result[CompletionResponse, string] =
     else:
       discard
   let usage = j.getOrDefault("usage")
+  let cache = anthropicUsage(usage)
   ok CompletionResponse(
     text:         textParts.join("\n"),
-    inputTokens:  usage.jInt("input_tokens"),
+    inputTokens:  cache.inputTokens,
+    cacheReadTokens:  cache.cacheRead,
+    cacheWriteTokens: cache.cacheWrite,
     outputTokens: usage.jInt("output_tokens"),
     toolCalls:    toolCalls,
   )
