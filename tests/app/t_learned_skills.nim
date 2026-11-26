@@ -112,5 +112,27 @@ proc runTests*() =
       store.recordUse("../x", 1)
       check store.list().len == 0
 
+  suite "learned skills — the journey (E7.7)":
+
+    test "a line per skill: who wrote it, when, how often it was loaded":
+      let p = paddock()
+      let store = newLearnedSkills(newFsAdapter(), p)
+      check store.create(Skill, by = "review", note = "after the deploy", nowMs = 86_400_000).isOk
+      store.recordUse("deploy-staging", 2 * 86_400_000)
+      let line = journeyLine(store.list()[0])
+      check "deploy-staging" in line and "review" in line and "loaded 1×" in line
+      check "1970-01-02" in line   ## the day it was written
+      check "after the deploy" in line
+
+    test "the journey lists the active skills and the archived ones":
+      let p = paddock()
+      let store = newLearnedSkills(newFsAdapter(), p)
+      check store.create(Skill, by = "agent", nowMs = 1).isOk
+      check store.create(Skill.replace("deploy-staging", "other"), by = "agent", nowMs = 1).isOk
+      check store.archive("other", nowMs = 2).isOk
+      let j = journey(store)
+      check "deploy-staging" in j and "archived: other" in j
+      check journey(newLearnedSkills(newFsAdapter(), paddock())) == "No learned skills yet."
+
 when isMainModule:
   runTests()

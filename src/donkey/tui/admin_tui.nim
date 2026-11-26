@@ -25,6 +25,7 @@ import ../admin_ops
 import ../ports/ipc
 import ../adapters/filesystem/fs_adapter
 import ../app/named_agents
+import ../app/learned_skills
 import ../core/tooling/native_tool_args
 import ../domain/agents/named_agent_pure
 import ./agent_form
@@ -841,6 +842,18 @@ proc drawUserDetail*(tb: var ill.TerminalBuffer; st: AdminState; adapter: MdFile
       tb.write(4, y, line[0 .. min(line.high, width - 6)])
       inc y
     inc y
+
+  ## What the agent learned for this person (E7.7): the journey.
+  let learned = journey(newLearnedSkills(newFsAdapter(), adapter.paddocksDir / $userId))
+  tb.setForegroundColor(ill.fgBlue)
+  tb.write(2, y, "Learned skills:")
+  inc y
+  for line in learned.splitLines:
+    if y >= height - 2: break
+    tb.setForegroundColor(ill.fgWhite)
+    tb.write(4, y, line[0 .. min(line.high, width - 6)])
+    inc y
+  inc y
 
   if ctx.preferencesMd.len > 0:
     tb.setForegroundColor(ill.fgBlue)

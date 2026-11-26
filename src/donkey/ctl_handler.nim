@@ -17,6 +17,7 @@ import domain/turn_trace_pure
 import domain/dead_letters_pure
 import app/turn_traces
 import app/curator
+import app/learned_skills
 import config/skills_registry
 import config/clawhub_registry
 import config/dotenv
@@ -929,6 +930,27 @@ proc dispatchCtl*(cfg: DonkeyConfig;
 
   # ── skill ──
   let skillsPath = cfg.home / "skills.toml"
+  if args[1] == "skill" and args.len >= 4 and args[2] == "learned":
+    ## A person's learned skills (E7.7): the journey, or one skill, or
+    ## archive and restore.
+    let store = newLearnedSkills(newFsAdapter(), cfg.paddocks / args[3])
+    if args.len == 4:
+      echo journey(store)
+      return 0
+    if args.len >= 6:
+      let done =
+        case args[4]
+        of "show": store.read(args[5]).map(proc(d: SkillDoc): string = renderSkillMd(d))
+        of "archive": store.archive(args[5], epochMs()).map(proc(): string = "archived " & args[5])
+        of "restore": store.restore(args[5]).map(proc(): string = "restored " & args[5])
+        else: err(Result[string, string], "usage: donkey ctl skill learned <uuid> [show|archive|restore <name>]")
+      if done.isErr:
+        echo done.error
+        return 1
+      echo done.get
+      return 0
+    echo "usage: donkey ctl skill learned <uuid> [show|archive|restore <name>]"
+    return 1
   if args[1] == "skill" and args.len >= 4 and args[2] == "rollback":
     ## The newest curator backup of a person's learned skills (E7.6).
     let rolled = rollbackSkills(newFsAdapter(), cfg.paddocks / args[3], epochMs())
