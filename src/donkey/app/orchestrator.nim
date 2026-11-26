@@ -652,6 +652,11 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
                             attachmentPaths)
     else:
       addUserTurn(result.history, userPayload.text, "")
+  ## E8.1, append-only: the turn's context stays with the person's message,
+  ## sent with it on every later request, never edited (the newer models
+  ## check earlier turns, and the prompt cache reads the whole history).
+  if context.len > 0 and history.len > 0:
+    history[^1].turnContext = context
   ## A message about the past starts with the search already made
   ## (app/presearch). Only the person's own messages: a schedule or a
   ## heartbeat is not asking about the conversation.
@@ -683,7 +688,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   let loopResult = await runToolLoop(
     globalOutbox, toolInbox, toolOut, memory, completeFn, errorExplainFn, turnStreamFactory, turnSetup.nativeCtx,
     state, history, turnSetup.uid, msg.channel, msg.replyTo, msg.id, turnSetup.streamId,
-    systemBase, context, tools, providerLabel,
+    systemBase, "", tools, providerLabel,
     suppressProgress, result.debugMode, result.showReasoning, log,
     asyncCompleteFn, bridgeToken = msg.bridgeToken,
     providerOverride = routeProvider, modelOverride = routeModel,
