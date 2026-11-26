@@ -22,10 +22,16 @@ const
   TokenRenewMarginSec = 300
 
 type
+  ChatAttachment* = object
+    resourceName*: string   ## for media.download; empty for a Drive file
+    name*, mimeType*: string
+    drive*: bool            ## a Drive file: named only (no Drive access)
+
   ChatEvent* = object
     kind*, id*, sender*, displayName*, senderType*: string
     text*, space*, thread*: string
     isGroup*: bool
+    attachments*: seq[ChatAttachment]   ## E9.2
 
   ServiceAccount* = object
     clientEmail*, privateKey*, tokenUri*: string
@@ -33,6 +39,18 @@ type
   AccessToken* = object
     token*:     string
     renewAtMs*: int64
+
+proc attachmentsOf(msg: JsonNode): seq[ChatAttachment] =
+  ## Uploaded files carry the resource name media.download needs; a Drive
+  ## file only a Drive reference.
+  for a in msg{"attachment"}.getElems:
+    let name = a{"contentName"}.getStr
+    let mime = a{"contentType"}.getStr
+    let resource = a{"attachmentDataRef"}{"resourceName"}.getStr
+    if resource.len > 0:
+      result.add ChatAttachment(resourceName: resource, name: name, mimeType: mime)
+    elif a{"source"}.getStr == "DRIVE_FILE" or a{"driveDataRef"} != nil:
+      result.add ChatAttachment(name: name, mimeType: mime, drive: true)
 
 proc parseChatEvent*(body: string): Result[ChatEvent, string] =
   let j =
@@ -51,11 +69,27 @@ proc parseChatEvent*(body: string): Result[ChatEvent, string] =
     senderType: msg{"sender"}{"type"}.getStr,
     text: text.strip, space: space{"name"}.getStr,
     thread: msg{"thread"}{"name"}.getStr,
-    isGroup: "DM" notin spaceType and "DIRECT_MESSAGE" notin spaceType))
+    isGroup: "DM" notin spaceType and "DIRECT_MESSAGE" notin spaceType,
+    attachments: attachmentsOf(msg)))
 
 func isTurn*(e: ChatEvent): bool =
   e.kind == "MESSAGE" and e.senderType != "BOT" and e.sender.len > 0 and
-    e.space.len > 0 and e.text.len > 0
+    e.space.len > 0 and (e.text.len > 0 or e.attachments.len > 0)
+
+func validResourceName(r: string): bool =
+  ## Google's resource name (it may hold slashes); never a `..` segment or
+  ## anything outside a safe set, since it goes into the URL path.
+  if r.len == 0 or r.len > 1024 or r[0] == '/' or r.endsWith("/"): return false
+  for c in r:
+    if c notin {'A'..'Z', 'a'..'z', '0'..'9', '_', '-', '=', '.', '+', '/'}: return false
+  for part in r.split('/'):
+    if part.len == 0 or part == "." or part == "..": return false
+  true
+
+func mediaUrl*(resourceName: string): Result[string, string] =
+  if not validResourceName(resourceName):
+    return err("Google Chat: not an attachment resource name")
+  ok("https://chat.googleapis.com/v1/media/" & resourceName & "?alt=media")
 
 proc checkChatClaims*(claims: JsonNode; projectNumber: string; nowSec: int64): Result[void, string] =
   if projectNumber.len == 0: return err("no project number configured")
