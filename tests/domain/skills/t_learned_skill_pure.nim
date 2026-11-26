@@ -4,7 +4,7 @@
 ## what reads like exfiltration or prompt injection. Patterns derived from
 ## hermes-agent (MIT), tools/skills_guard.py.
 
-import std/[json, strutils, unittest]
+import std/[json, strutils, unicode, unittest]
 import donkey/core/pipeops
 import donkey/domain/skills/learned_skill_pure
 
@@ -100,6 +100,10 @@ proc runTests*() =
       let idx = skillsIndex(many)
       check idx.count("\n- ") == MaxIndexedSkills + 1   ## the skills, and the "more" line
       check "more skills" in idx
+
+    test "a long description is cut at a character, never inside one":
+      let idx = skillsIndex(@[SkillDoc(name: "x", description: "a" & "ç".repeat(300))])   ## odd offset: a byte cut would split a "ç"
+      check validateUtf8(idx) == -1
 
     test "skill_manage: each action and what it needs":
       check parseSkillManage(parseJson("""{"action":"create","content":"---"}""")).get.action == "create"
