@@ -112,18 +112,19 @@ comandos destrutivos.
 | E7.7 Jornada | `ctl skill learned` e o detalhe da pessoa na TUI | **Feito** (#226) |
 | E7.8 Insights | `donkey ctl insights`: turnos, tokens, ferramentas e falhas, providers, skills mais carregadas | **Feito** (#227); correções das revisões em #228 |
 
-## 6. Candidatas para a próxima rodada
+## 6. Quarta rodada (proposta em 26/11, aguardando aprovação)
 
-Nenhuma decidida. Do comparativo de 26/11 e do que as rodadas deixaram.
+As seis candidatas do comparativo, agora épicos E8 a E13 no PRD, em ordem
+de ganho. Nenhuma está aprovada; cada uma lista as decisões que pede.
 
-| Ordem | Frente | Por quê | Referência |
-|---:|---|---|---|
-| 1 | Cache de prompt | O Donkey não usa nenhum: paga o contexto inteiro a cada turno. Marcadores `cache_control` na Anthropic, leitura de tokens cacheados, compactação antes de expirar | Hermes `caching`, `compression` |
-| 2 | Mídia nos canais novos e no Teams | Google Chat, Mattermost, SMS (MMS), IRC e Teams só com texto | Hermes `plugins/platforms` |
-| 3 | Interface para editores (ACP) | A maior distância restante (Interfaces, 72% contra 97%) | Hermes `acp_adapter` |
-| 4 | Canais restantes do Hermes | SimpleX, BlueBubbles, ntfy, A2A | Hermes `plugins/platforms` |
-| 5 | Escrita no GitHub com aprovação | Pede decisão sobre aprovação | Pincer `tools/github` |
-| 6 | Supervisão de adapters | Um `Defect` num adapter derruba o daemon | Pincer, árvore OTP |
+| Épico | Frente | O que entrega | Decisões pendentes |
+|---|---|---|---|
+| E8 | Cache de prompt | Prefixo estável (o que muda a cada turno vai para o fim), marcadores `cache_control` na Anthropic, tokens cacheados no uso e nos insights, aviso de cache que nunca acerta, compactação em degrau | TTL padrão; onde fica o conteúdo volátil |
+| E9 | Mídia nos canais novos | Anexos de entrada e saída no Mattermost, Google Chat, SMS (MMS) e Teams; cartões de aprovação no Google Chat e no Teams; IRC só com links | URL pública assinada para MMS de saída |
+| E10 | Interface para editores (ACP) | `donkey acp`: sessões, streaming, ferramentas e aprovações no Zed e afins, pela IPC do daemon | Identidade do editor; memória compartilhada com os outros canais |
+| E11 | Canais restantes | ntfy, SimpleX, BlueBubbles (iMessage), A2A | A2A nesta rodada; cliente A2A |
+| E12 | Escrita no GitHub | Abrir e fechar issues, comentar, rotular; cada escrita aprovada; repositórios permitidos | Aprovação sempre ou por política; token da instância ou da pessoa |
+| E13 | Supervisão de adapters | Trocar fontes de `Defect` por erro como valor, reinício por adapter, adapters de socket fora do processo (opcional) | Se adapters fora do processo valem o custo |
 
 ## 7. Decidido não fazer
 
