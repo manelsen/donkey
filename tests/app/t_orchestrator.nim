@@ -432,7 +432,7 @@ proc runTests*() =
               toolCancelled = true,
         )
         proc complete(req: CompletionRequest): Result[CompletionResponse, string] {.gcsafe.} =
-          if req.messages.len > 0 and req.messages[^1].text == "browse":
+          if req.messages.len > 0 and req.messages[^1].text.endsWith("browse"):
             return ok(CompletionResponse(toolCalls: @[
               ToolCallRequest(id: "browser", name: "browser_navigate", inputJson: "{}")]))
           stubComplete(req)
@@ -502,7 +502,7 @@ proc runTests*() =
       check "revisor" in req.system and "Revisa código com rigor." in req.system
       check "prefere PRs pequenos" in req.system
       check req.providerOverride == "anthropic"
-      check req.messages[^1].text == "@revisor olha esse diff"
+      check req.messages[^1].text.endsWith("@revisor olha esse diff")   ## after the turn context (E8.1)
 
       seen = @[]
       discard waitFor doTest(tmpDir, "@desconhecido oi")

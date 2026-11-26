@@ -361,9 +361,11 @@ compacta antes de ele expirar, aprende como cada rota cacheia).
 *Aceite geral:* nenhuma mudança no que o modelo recebe, só na ordem; custo
 por turno medido antes e depois numa conversa de referência com ferramentas.
 
-*Decisões a tomar:* TTL padrão (5m é o mais barato para conversas ativas);
-onde fica o volátil (fim do sistema ou começo da mensagem do turno: o
-primeiro é mais simples, o segundo deixa o sistema inteiro cacheável).
+*Decisões (26/11):* TTL padrão de 5 minutos; o volátil vai com a mensagem
+do turno, num bloco `<turn_context>` só no pedido (o histórico guarda a
+mensagem como a pessoa escreveu). Consequência: entre turnos, o cache lido
+vai até a mensagem anterior da pessoa (que perde o bloco dela); nas rodadas
+de ferramenta de um mesmo turno, vai até a cauda.
 
 ---
 

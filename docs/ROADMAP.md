@@ -127,7 +127,7 @@ de ganho. Nenhuma está aprovada; cada uma lista as decisões que pede.
 
 | Épico | Frente | O que entrega | Decisões pendentes |
 |---|---|---|---|
-| E8 | Cache de prompt | Prefixo estável (o que muda a cada turno vai para o fim), marcadores `cache_control` na Anthropic, tokens cacheados no uso e nos insights, aviso de cache que nunca acerta, compactação em degrau | TTL padrão; onde fica o conteúdo volátil |
+| E8 | Cache de prompt | Prefixo estável (o que muda a cada turno vai para o fim), marcadores `cache_control` na Anthropic, tokens cacheados no uso e nos insights, aviso de cache que nunca acerta, compactação em degrau | Decididas: TTL de 5 minutos; o volátil vai com a mensagem do turno |
 | E9 | Mídia nos canais novos | Anexos de entrada e saída no Mattermost, Google Chat, SMS (MMS) e Teams; cartões de aprovação no Google Chat e no Teams; IRC só com links | URL pública assinada para MMS de saída |
 | E10 | Interface para editores (ACP) | `donkey acp`: sessões, streaming, ferramentas e aprovações no Zed e afins, pela IPC do daemon | Identidade do editor; memória compartilhada com os outros canais |
 | E11 | Canais restantes | ntfy, SimpleX, BlueBubbles (iMessage), A2A | A2A nesta rodada; cliente A2A |
