@@ -34,14 +34,15 @@
 ## Pure: no I/O, no network. The `JsonNode` is profile data, not transport code.
 
 import std/json
+import ../../core/app_meta
 import ../../core/providers/provider_defaults
 import ./compat
 import ./descriptors
 import ./openai_pure
 
 const
-  FireworksReferer*   = "https://github.com/donkey-ai/donkey"
-  FireworksTitle*     = "Donkey"
+  FireworksReferer*   = ProjectUrl
+  FireworksTitle*     = AppName
   FireworksUserAgent* = "Donkey"
 
   FireworksReasoningNoneModels* = [DefaultModelFireworks]

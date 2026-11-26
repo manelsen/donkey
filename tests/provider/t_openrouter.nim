@@ -3,6 +3,7 @@
 
 import std/[json, strutils, unittest]
 import donkey/adapters/provider/openrouter
+import donkey/domain/providers/profile_fireworks
 import donkey/core/pipeops
 import donkey/domain/message
 
@@ -94,6 +95,10 @@ proc runTests*() =
       check msgs[1]["role"].getStr() == "assistant"
 
   suite "OpenRouterAdapter required headers":
+
+    test "the project's own address identifies Donkey to OpenRouter and Fireworks":
+      check OpenRouterReferer == "https://github.com/manelsen/donkey"
+      check FireworksReferer == OpenRouterReferer
 
     test "HTTP-Referer header is set":
       let a = newOpenRouterAdapter("key")
