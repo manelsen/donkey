@@ -41,6 +41,13 @@ proc runTests*() =
                                                   "cache_control": {"type": "ephemeral"}}]
       check msgs[1]["content"].kind == JString   ## the earlier turns are untouched
 
+    test "a single message without a system prompt still carries the marker":
+      var h = newHistory()
+      h.addUser("oi")
+      let body = newOpenRouterAdapter("key", model = "anthropic/claude-sonnet-5.5").buildBody(
+        CompletionRequest(messages: h))
+      check body["messages"][0]["content"][0]["cache_control"] == %* {"type": "ephemeral"}
+
     test "other models: no markers (their caches are automatic)":
       let body = newOpenRouterAdapter("key", model = "openai/gpt-5").buildBody(req())
       check "cache_control" notin $body
