@@ -22,6 +22,12 @@ import ../adapters/state/approval_store
 import ../adapters/state/standing_approvals
 import ../app/turn_traces
 import ../admin_ops
+import ../ports/ipc
+import ../adapters/filesystem/fs_adapter
+import ../app/named_agents
+import ../core/tooling/native_tool_args
+import ../domain/agents/named_agent_pure
+import ./agent_form
 import ../ctl_handler
 
 # Helper for drawing boxes
@@ -65,6 +71,8 @@ type
     lastRefresh*: float
     catalogLoader*: ModelCatalogLoader
     runtimeProviders*: seq[string]
+    runtimeProviderMetrics*: seq[ProviderMetric]  ## the daemon's recent window
+    runtimeCooldowns*: seq[string]                ## "provider (time left)"
     runtimeChannels*: seq[string]
     runtimeSessionCount*: int
     memory*: MdFileAdapter
@@ -325,11 +333,30 @@ proc loadConfigItems*(st: var AdminState) =
   ]
 
 proc loadAgentItems*(st: var AdminState) =
-  st.items = @[
-    AdminItem(name: "default", description: "Default agent", enabled: true, status: "active"),
-    AdminItem(name: "coder", description: "Code-specialized agent", enabled: true, status: "active"),
-    AdminItem(name: "researcher", description: "Research-focused agent", enabled: false, status: "idle"),
-  ]
+  ## The instance's agents, `{home}/agents/*.toml`: the personas the
+  ## `[[bots]]` entries answer with (E3). N creates, Enter edits, D deletes.
+  st.items = @[]
+  if st.config.home.len == 0: return
+  for a in listNamedAgents(newFsAdapter(), st.config.home):
+    st.items.add AdminItem(name: a.name, description: a.description, enabled: true,
+      status: (if a.provider.len > 0: a.provider & (if a.model.len > 0: "/" & a.model else: "")
+               else: "default route"))
+
+proc agentAt*(st: AdminState; index: int): Option[NamedAgent] =
+  ## The agent behind a row, read whole (for the edit form).
+  if st.section != asAgents or index < 0 or index >= st.items.len:
+    return none(NamedAgent)
+  let loaded = loadNamedAgent(newFsAdapter(), st.config.home, st.items[index].name)
+  if loaded.isErr: none(NamedAgent) else: some(loaded.get.agent)
+
+proc saveAgentForm*(st: var AdminState; form: AgentForm): Result[string, string] =
+  ## What the form holds, saved as `manage_agents` would (create or update).
+  let a = form.agent()
+  let done = ? performManageAgents(newFsAdapter(), st.config.home, ManageAgentsContext(
+    action: (if form.editing: "update" else: "create"), name: a.name,
+    description: a.description, provider: a.provider, model: a.model))
+  st.loadAgentItems()
+  ok(done)
 
 proc loadChannelItems*(st: var AdminState) =
   ## Load channels from runtime daemon status when available.
@@ -353,17 +380,37 @@ func tuiKnownProviders*(): seq[string] =
   for descriptor in providerDescriptors():
     result.add descriptor.id
 
+func cooldownLeft(provider: string; cooldowns: seq[string]): string =
+  ## The time left of a "provider (time left)" label; empty when none.
+  let prefix = provider & " ("
+  for label in cooldowns:
+    if label.startsWith(prefix) and label.endsWith(")"):
+      return label[prefix.len ..< label.len - 1]
+
+func providerHealthText*(provider: string; metrics: seq[ProviderMetric];
+                         cooldowns: seq[string]): string =
+  ## A provider's health in the daemon's recent window (E6.4): a cooldown
+  ## first, then successful calls and mean latency.
+  var parts: seq[string]
+  let left = cooldownLeft(provider, cooldowns)
+  if left.len > 0:
+    parts.add "cooldown " & left
+  for m in metrics:
+    if m.providerName == provider and m.calls > 0:
+      parts.add $m.okCalls & "/" & $m.calls & " ok · " & $m.avgLatencyMs & " ms"
+  if parts.len == 0: "no recent calls" else: parts.join(" · ")
+
 proc loadProviderItems*(st: var AdminState) =
-  ## Load providers from runtime daemon status when available,
-  ## otherwise fall back to all known providers.
+  ## Load providers from runtime daemon status when available, with their
+  ## recent health; otherwise fall back to all known providers.
   if st.runtimeProviders.len > 0:
     st.items = @[]
     for p in st.runtimeProviders:
       st.items.add(AdminItem(
         name: p,
         description: "Active provider",
-        enabled: true,
-        status: "connected"
+        enabled: cooldownLeft(p, st.runtimeCooldowns).len == 0,
+        status: providerHealthText(p, st.runtimeProviderMetrics, st.runtimeCooldowns)
       ))
   else:
     st.items = @[]
@@ -553,6 +600,8 @@ func adminKeyFor*(section: AdminSection; view: ViewMode; key: char): Option[Admi
     of 'E': some(akToggle)
     of 'D': some(akDelete)
     else: none(AdminKey)
+  of asAgents:
+    if key == 'D': some(akDelete) else: none(AdminKey)
   of asPairings, asApprovals:
     case key
     of 'A': some(akApprove)
@@ -589,6 +638,10 @@ proc applyAdminKey*(st: var AdminState; key: AdminKey): Result[string, string] =
       of akApprove: approvePairing(st.config, st.memory, store, item.name)
       of akReject: rejectPairing(store, item.name)
       else: err("A approves, X rejects")
+    of asAgents:
+      if key != akDelete: err("N creates, Enter edits, D deletes")
+      else: performManageAgents(newFsAdapter(), home,
+                                ManageAgentsContext(action: "delete", name: item.name))
     of asApprovals:
       if item.status == "error":
         err("the approvals file cannot be read: " & item.description)
