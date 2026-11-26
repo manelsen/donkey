@@ -6,14 +6,19 @@
 ## the thread they answer. A person's last channel is kept on disk, for sends
 ## without a target (reminders, schedules).
 
-import std/[json, os, strutils, tables]
+import std/[json, os, strutils, sysrand, tables]
+import ../../core/media_download
 import ../../core/pipeops
 import ../../core/types
 import ../../domain/message
 import ../../domain/channels/mattermost_pure
+import ../../domain/media/audio_pure
+import ../../ports/channel
 import ../../infra/event_queue
 import ../../ports/http
 import ../../ports/link_codes
+import ../filesystem/confined_read
+import ../filesystem/paths
 import ../http/std_http
 import ../identity/identity_resolver
 import ../state/durable_file
@@ -94,23 +99,80 @@ func apiBase(serverUrl: string): string =
   result = serverUrl.strip
   while result.endsWith("/"): result.setLen(result.len - 1)
 
+const
+  MattermostMaxUploadBytes* = 50 * 1024 * 1024
+  MattermostMaxDownloadBytes* = 25 * 1024 * 1024
+  MediaUnavailableNote = "(o arquivo não pôde ser enviado)"
+
+proc uploadFile(a: MattermostAdapter; channelId, path, mediaRoot: string): Result[string, string] =
+  ## A local file, read only inside the paddock (confined_read, the same rule
+  ## as Telegram), uploaded to the channel; its new file id.
+  let safePath = ? resolveConfinedMediaPath(mediaRoot, path)
+  var opened = ? openPathComponent(mediaRoot, safePath)
+  let data = opened.readPathComponent(MattermostMaxUploadBytes)
+  opened.closeComponent()
+  let bytes = ? data
+  var raw: array[16, byte]
+  if not urandom(raw):
+    return err("Mattermost: no randomness for the upload boundary")
+  var boundary = "donkey-"
+  for b in raw: boundary.add b.toHex(2).toLowerAscii
+  let body = buildMultipartBody(boundary, "files", opened.name,
+    (let m = extractMimeType(opened.name); if m.len > 0: m else: "application/octet-stream"),
+    bytes, @[("channel_id", channelId)])
+  let resp = ? a.http.post(apiBase(a.serverUrl) & "/api/v4/files", body,
+    @[("Content-Type", "multipart/form-data; boundary=" & boundary),
+      ("Authorization", "Bearer " & a.token)])
+  if resp.status notin 200 .. 299:
+    return err("Mattermost: upload status " & $resp.status)
+  uploadedFileId(resp.body)
+
 proc send*(a: MattermostAdapter; msg: OutboundMessage): Result[void, string] =
-  ## Text, in the thread it answers. Media and keyboards are not offered for
-  ## Mattermost (channel_capability), so they are refused, not dropped.
+  ## Text, in the thread it answers; a local file goes up first and the post
+  ## carries its id (E9.1). A file that cannot be read inside the paddock
+  ## becomes a neutral note, never a path. Keyboards are not offered.
   if a.configError.len > 0:
     return err("Mattermost: " & a.configError)
-  if msg.mediaUrl.len > 0 or msg.keyboard.len > 0:
-    return err("Mattermost: only text is supported")
-  if msg.text.strip.len == 0:
-    return ok()
+  if msg.keyboard.len > 0:
+    return err("Mattermost: keyboards are not supported")
   let target = ? a.targetFor(msg)
+  var fileIds: seq[string]
+  var text = msg.text
+  if msg.mediaUrl.len > 0:
+    let uploaded = a.uploadFile(channelOf(target), msg.mediaUrl, msg.mediaRoot)
+    if uploaded.isOk:
+      fileIds.add uploaded.get
+    else:
+      text = (if text.strip.len > 0: text & "\n\n" else: "") & MediaUnavailableNote
+  if text.strip.len == 0 and fileIds.len == 0:
+    return ok()
   let url = apiBase(a.serverUrl) & "/api/v4/posts"
-  for piece in splitForMattermost(msg.text):
-    let resp = ? a.http.post(url, postBody(target, piece),
+  let pieces = if text.strip.len > 0: splitForMattermost(text) else: @[""]
+  for i, piece in pieces:
+    ## The files ride on the first post.
+    let resp = ? a.http.post(url, postBody(target, piece, if i == 0: fileIds else: @[]),
       @[("Content-Type", "application/json"), ("Authorization", "Bearer " & a.token)])
     if resp.status notin 200 .. 299:
       return err("Mattermost: send status " & $resp.status)
   ok()
+
+proc downloadFile*(a: MattermostAdapter; fileId: string): Result[FileDownload, string] =
+  ## An attachment of a post, with the bot's token. Only a well-formed id
+  ## reaches the URL.
+  if a.configError.len > 0:
+    return err("Mattermost: " & a.configError)
+  if not validFileId(fileId):
+    return err("Mattermost: not a file id")
+  let resp = ? a.http.get(apiBase(a.serverUrl) & "/api/v4/files/" & fileId,
+                          @[("Authorization", "Bearer " & a.token)])
+  if resp.status != 200:
+    return err("Mattermost: download status " & $resp.status)
+  if resp.body.len > MattermostMaxDownloadBytes:
+    return err("Mattermost: attachment larger than " &
+               $(MattermostMaxDownloadBytes div (1024 * 1024)) & " MB")
+  var data = newSeq[byte](resp.body.len)
+  for i in 0 ..< resp.body.len: data[i] = byte(resp.body[i])
+  ok(FileDownload(fileName: fileId, fileSize: data.len.int64, data: data))
 
 func hostOf(serverUrl: string): string =
   var rest = apiBase(serverUrl)

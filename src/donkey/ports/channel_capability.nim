@@ -92,10 +92,18 @@ const
 
   # Teams: text replies in the thread (Markdown); no edits or media yet
   # Mattermost: text posts in the thread; no edits or media yet
-  MattermostCapability = ChannelCapabilityDescriptor(
+  ## Text only, in the thread: SMS, IRC, Google Chat (until E9 gives them
+  ## attachments).
+  TextOnlyCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: false, editMessage: false,
     sendKeyboard: false, editKeyboard: false, setMessageReaction: false,
     downloadFile: false, sendMedia: false, sendVoice: false)
+
+  ## Mattermost: text and attachments both ways (E9.1).
+  MattermostCapability = ChannelCapabilityDescriptor(
+    send: true, sendReturnId: false, editMessage: false,
+    sendKeyboard: false, editKeyboard: false, setMessageReaction: false,
+    downloadFile: true, sendMedia: true, sendVoice: false)
 
   TeamsCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: false, editMessage: false,
@@ -137,9 +145,9 @@ proc channelCapabilityRegistry*(): ChannelCapabilityRegistry =
   result[ckLine]       = LineCapability
   result[ckTeams]      = TeamsCapability
   result[ckMattermost] = MattermostCapability
-  result[ckSms]        = MattermostCapability   ## SMS: text only, the same shape
-  result[ckIrc]        = MattermostCapability   ## IRC: text only, the same shape
-  result[ckGoogleChat] = MattermostCapability   ## Google Chat: text in the thread, the same shape
+  result[ckSms]        = TextOnlyCapability
+  result[ckIrc]        = TextOnlyCapability
+  result[ckGoogleChat] = TextOnlyCapability
   for kind in [ckWeCom, ckWeChat, ckFeishu, ckSlack, ckWhatsApp]:
     result[kind].repliesToRequester = true
 

@@ -2,9 +2,10 @@
 ## queued become session turns on the daemon loop, through the shared
 ## inbound gate; `/continue` is answered locally.
 
-import std/[os, unittest]
+import std/[os, strutils, unittest]
 import donkey/adapters/channel/mattermost
 import donkey/adapters/channel/mattermost_runtime
+import donkey/domain/channels/mattermost_pure
 import donkey/app/session_manager
 import donkey/core/log
 import donkey/core/pipeops
@@ -99,5 +100,39 @@ proc runTests*() =
       check s.turns.len == 0
       check s.replies.len == 1 and s.replies[0].replyTo == "chan-1"
 
+proc runMediaTests*() =
+  suite "mattermost runtime — attachments (E9.1)":
+    setup:
+      while tryRecvPost()[0]: discard
+
+    test "the first file goes to the turn by its id, name and type; the others are named":
+      var a = newAdapter()
+      var sm: SessionManager
+      sm.init()
+      let s = Sink()
+      var p = post("p1", "olha")
+      p.files = @[MattermostFile(id: "f1aaaaaaaaaaaaaaaaaaaaaaaa", name: "foto.png",
+                                 mimeType: "image/png", size: 2048),
+                  MattermostFile(id: "f2bbbbbbbbbbbbbbbbbbbbbbbb", name: "nota.pdf")]
+      pushPost(p)
+      check drainMattermostEvents(a, sm, fallbackFor(s), replyFor(s), rtLog) == 1
+      let m = s.turns[0]
+      check m.mediaUrl == "f1aaaaaaaaaaaaaaaaaaaaaaaa"
+      check m.mediaFileName == "foto.png" and m.mediaMimeType == "image/png"
+      check m.text.startsWith("olha") and "nota.pdf" in m.text
+
+    test "a file over the download limit is named, not downloaded":
+      var a = newAdapter()
+      var sm: SessionManager
+      sm.init()
+      let s = Sink()
+      var p = post("p2", "")
+      p.files = @[MattermostFile(id: "f1aaaaaaaaaaaaaaaaaaaaaaaa", name: "video.mp4",
+                                 size: MattermostMaxDownloadBytes + 1)]
+      pushPost(p)
+      check drainMattermostEvents(a, sm, fallbackFor(s), replyFor(s), rtLog) == 1
+      check s.turns[0].mediaUrl == "" and "video.mp4" in s.turns[0].text
+
 when isMainModule:
   runTests()
+  runMediaTests()

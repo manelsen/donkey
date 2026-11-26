@@ -15,10 +15,10 @@ import donkey/adapters/channel/google_chat
 proc runTests*() =
   suite "mattermost capability":
 
-    test "the registry says: send only":
+    test "the registry says: send, attachments both ways (E9.1)":
       let c = channelCapabilityRegistry()[ckMattermost]
       check c.send and not c.editMessage and not c.sendKeyboard
-      check not c.sendMedia and not c.downloadFile
+      check c.sendMedia and c.downloadFile
 
     test "the channel's name round-trips":
       check $ckMattermost == "mattermost"

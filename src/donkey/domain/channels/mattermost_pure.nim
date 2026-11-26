@@ -18,8 +18,13 @@ const
     ## multi-byte ones.
 
 type
+  MattermostFile* = object
+    id*, name*, mimeType*: string
+    size*: int64
+
   MattermostPost* = object
     id*, userId*, channelId*, rootId*: string
+    files*:     seq[MattermostFile]   ## attachments (E9.1), first is downloaded
     text*:      string
     senderName*: string
     isGroup*:   bool   ## any channel but a direct message
@@ -28,6 +33,28 @@ type
 
   MattermostMe* = object
     id*, username*: string
+
+func validFileId*(id: string): bool =
+  ## A Mattermost id: 26 lowercase letters and digits. Anything else never
+  ## reaches a URL path.
+  if id.len != 26: return false
+  for c in id:
+    if c notin {'a'..'z', '0'..'9'}: return false
+  true
+
+proc filesOf(post: JsonNode): seq[MattermostFile] =
+  ## From `metadata.files` (name, type, size), else the bare `file_ids`.
+  let meta = post{"metadata"}{"files"}
+  if not meta.isNil and meta.kind == JArray and meta.len > 0:
+    for f in meta:
+      let id = f{"id"}.getStr
+      if validFileId(id):
+        result.add MattermostFile(id: id, name: f{"name"}.getStr,
+                                  mimeType: f{"mime_type"}.getStr,
+                                  size: f{"size"}.getBiggestInt)
+    return
+  for id in post{"file_ids"}.getElems:
+    if validFileId(id.getStr): result.add MattermostFile(id: id.getStr)
 
 proc parsePostedEvent*(frame, botUserId: string): Option[MattermostPost] =
   ## A post someone else wrote, with text; none for any other frame (the
@@ -46,7 +73,8 @@ proc parsePostedEvent*(frame, botUserId: string): Option[MattermostPost] =
     return none(MattermostPost)
   let userId = post{"user_id"}.getStr
   let text = post{"message"}.getStr
-  if userId.len == 0 or userId == botUserId or text.strip.len == 0:
+  let files = filesOf(post)
+  if userId.len == 0 or userId == botUserId or (text.strip.len == 0 and files.len == 0):
     return none(MattermostPost)
   var mentioned = false
   let mentions = data{"mentions"}.getStr
@@ -57,7 +85,7 @@ proc parsePostedEvent*(frame, botUserId: string): Option[MattermostPost] =
     except CatchableError: discard
   some(MattermostPost(
     id: post{"id"}.getStr, userId: userId, channelId: post{"channel_id"}.getStr,
-    rootId: post{"root_id"}.getStr, text: text,
+    rootId: post{"root_id"}.getStr, text: text, files: files,
     senderName: data{"sender_name"}.getStr,
     isGroup: data{"channel_type"}.getStr != "D", mentioned: mentioned,
     createdMs: post{"create_at"}.getBiggestInt))
@@ -103,7 +131,7 @@ proc inboundPost*(frame: string; me: MattermostMe): Option[MattermostPost] =
     return none(MattermostPost)
   var p = parsed.get
   p.text = stripMention(p.text, me.username)
-  if p.text.len == 0: none(MattermostPost) else: some(p)
+  if p.text.len == 0 and p.files.len == 0: none(MattermostPost) else: some(p)
 
 func replyTarget*(p: MattermostPost): string =
   ## `channel` for a direct message; `channel:root` in a channel, the root
@@ -111,13 +139,26 @@ func replyTarget*(p: MattermostPost): string =
   if not p.isGroup: p.channelId
   else: p.channelId & ":" & (if p.rootId.len > 0: p.rootId else: p.id)
 
-proc postBody*(target, text: string): string =
+func channelOf*(target: string): string =
   let colon = target.find(':')
-  var body = %* {"channel_id": (if colon >= 0: target[0 ..< colon] else: target),
-                 "message": text}
+  if colon >= 0: target[0 ..< colon] else: target
+
+proc postBody*(target, text: string; fileIds: seq[string] = @[]): string =
+  let colon = target.find(':')
+  var body = %* {"channel_id": channelOf(target), "message": text}
   if colon >= 0 and colon < target.high:
     body["root_id"] = %target[colon + 1 .. ^1]
+  if fileIds.len > 0:
+    body["file_ids"] = %fileIds
   $body
+
+proc uploadedFileId*(body: string): Result[string, string] =
+  ## `POST /files`: the id of the first file stored.
+  try:
+    let id = parseJson(body){"file_infos"}{0}{"id"}.getStr
+    if validFileId(id): ok(id) else: err("Mattermost: upload without a file id")
+  except CatchableError as e:
+    err("Mattermost: upload answer unreadable: " & e.msg)
 
 func splitForMattermost*(text: string): seq[string] =
   splitChunks(text, MattermostPostChars)
@@ -174,13 +215,14 @@ proc postsSince*(body, channelType: string; me: MattermostMe;
     let text = p{"message"}.getStr
     let created = p{"create_at"}.getBiggestInt
     if created <= sinceMs or p{"type"}.getStr.len > 0 or userId.len == 0 or
-        userId == me.id or text.strip.len == 0:
+        userId == me.id or (text.strip.len == 0 and filesOf(p).len == 0):
       continue
     let mentioned = mentions(text, me.username)
     if isGroup and not mentioned: continue
     let cleaned = stripMention(text, me.username)
-    if cleaned.len == 0: continue
+    let files = filesOf(p)
+    if cleaned.len == 0 and files.len == 0: continue
     result.add MattermostPost(id: p{"id"}.getStr, userId: userId,
       channelId: p{"channel_id"}.getStr, rootId: p{"root_id"}.getStr, text: cleaned,
-      isGroup: isGroup, mentioned: mentioned, createdMs: created)
+      isGroup: isGroup, mentioned: mentioned, createdMs: created, files: files)
   result.sort(proc(a, b: MattermostPost): int = cmp(a.createdMs, b.createdMs))

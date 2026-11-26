@@ -160,7 +160,7 @@ proc whatsappOutboundPort*(wa: ptr WhatsAppAdapter;
   )
 
 proc mattermostOutboundPort*(mm: ptr MattermostAdapter): OutboundChannelPort =
-  ## Send only, or unsupported without an adapter.
+  ## Text and attachments (E9.1), or unsupported without an adapter.
   OutboundChannelPort(
     send: if mm != nil:
             proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
@@ -172,7 +172,11 @@ proc mattermostOutboundPort*(mm: ptr MattermostAdapter): OutboundChannelPort =
     sendKeyboard: unsupportedSendKeyboard,
     editKeyboard: unsupportedEditKeyboard,
     setMessageReaction: unsupportedSetMessageReaction,
-    downloadFile: unsupportedDownloadFile,
+    downloadFile: if mm != nil:
+                    proc(fileId: string): Result[FileDownload, string] {.gcsafe.} =
+                      mm[].downloadFile(fileId)
+                  else:
+                    unsupportedDownloadFile,
   )
 
 proc smsOutboundPort*(a: ptr SmsAdapter): OutboundChannelPort =
