@@ -59,5 +59,17 @@ proc runTests*() =
           """{"usage":{"inputTokens":952,"outputTokens":5,"cacheReadInputTokens":2048,"cacheWriteInputTokens":0}}""")
       check converseStreamResponse(body, nil).get.check2048
 
+proc runZeroInputTests*() =
+  suite "cached tokens with no uncached input":
+    test "Bedrock ConverseStream: metadata with only cached tokens":
+      let body =
+        encodeEventMessage(@[(":event-type", "messageStart"), (":message-type", "event")], """{"role":"assistant"}""") &
+        encodeEventMessage(@[(":event-type", "messageStop"), (":message-type", "event")], """{"stopReason":"end_turn"}""") &
+        encodeEventMessage(@[(":event-type", "metadata"), (":message-type", "event")],
+          """{"usage":{"inputTokens":0,"outputTokens":5,"cacheReadInputTokens":2048}}""")
+      let r = converseStreamResponse(body, nil).get
+      check r.cacheReadTokens == 2048 and r.inputTokens == 2048
+
 when isMainModule:
   runTests()
+  runZeroInputTests()

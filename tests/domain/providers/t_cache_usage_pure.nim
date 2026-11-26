@@ -40,6 +40,10 @@ proc runTests*() =
                                "cacheWriteInputTokens": 1000})
       check u == CacheUsage(inputTokens: 6040, cacheRead: 5000, cacheWrite: 1000)
 
+    test "what was read from the cache never exceeds the prompt":
+      let u = openAiUsage(%* {"prompt_tokens": 100, "prompt_cache_hit_tokens": 900})
+      check u.cacheRead == 100
+
     test "missing or malformed usage is zero":
       check anthropicUsage(nil) == CacheUsage()
       check openAiUsage(%* "x") == CacheUsage()

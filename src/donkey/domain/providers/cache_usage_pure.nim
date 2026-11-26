@@ -27,8 +27,10 @@ func anthropicUsage*(usage: JsonNode): CacheUsage =
 func openAiUsage*(usage: JsonNode): CacheUsage =
   let details = if usage.isNil or usage.kind != JObject: nil
                 else: usage.getOrDefault("prompt_tokens_details")
-  let read = max(num(details, "cached_tokens"), num(usage, "prompt_cache_hit_tokens"))
-  CacheUsage(inputTokens: num(usage, "prompt_tokens"), cacheRead: read,
+  let total = num(usage, "prompt_tokens")
+  ## Never more than the prompt, whichever field a provider fills.
+  let read = min(total, max(num(details, "cached_tokens"), num(usage, "prompt_cache_hit_tokens")))
+  CacheUsage(inputTokens: total, cacheRead: read,
              cacheWrite: num(details, "cache_write_tokens"))
 
 func geminiUsage*(usageMetadata: JsonNode): CacheUsage =

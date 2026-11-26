@@ -212,7 +212,7 @@ proc converseStreamResponse*(body: string;
     of "messageStop":
       stopped = true
     of "metadata":
-      if j{"usage"}{"inputTokens"}.getInt(0) > 0:
+      if bedrockUsage(j{"usage"}).inputTokens > 0:   ## any of the three counts
         let cache = bedrockUsage(j{"usage"})
         resp.inputTokens = cache.inputTokens
         resp.cacheReadTokens = cache.cacheRead
