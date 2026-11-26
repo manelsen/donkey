@@ -363,6 +363,11 @@ compacta antes de ele expirar, aprende como cada rota cacheia).
   cache por N turnos seguidos numa mesma sessão gera um aviso no log e no
   `doctor`, com o tamanho do prefixo (pode ser só um prefixo abaixo do
   mínimo).
+  *Feito:* dos traços, não do log: um provider com 5 ou mais prompts de
+  2048 tokens ou mais e nenhuma leitura do cache aparece no `/insights` e no
+  `doctor` (últimos 7 dias). Sem filtro por provider (o rótulo pode ser uma
+  rota inteligente); o aviso cita as duas causas, provider sem cache ou
+  começo do prompt que muda.
 - **E8.5 Compactação ciente do cache.** Quando o histórico precisar
   encolher, encolher de uma vez, em degrau, e de preferência quando o cache
   já teria expirado (sessão parada por mais que o TTL), nunca um pouco a cada

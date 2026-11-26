@@ -45,6 +45,17 @@ proc runTests*() =
       check "Prompt cache: 800 of 3000 input tokens (26%)" in text
       check "openrouter 40%" in text and "groq 0%" in text
 
+    test "a provider whose large prompts never hit the cache is flagged (E8.4)":
+      var lines: seq[string]
+      for i in 0 ..< 5: lines.add line(provider = "anthropic", inTok = 5000, cacheRead = 0)
+      for i in 0 ..< 5: lines.add line(provider = "openrouter", inTok = 5000, cacheRead = 3000)
+      for i in 0 ..< 4: lines.add line(provider = "groq", inTok = 5000, cacheRead = 0)  ## too few
+      for i in 0 ..< 9: lines.add line(provider = "deepseek", inTok = 900, cacheRead = 0) ## too small
+      for i in 0 ..< 9: lines.add line(provider = "gemini", inTok = 5000)               ## before E8.3
+      let r = aggregateInsights(lines)
+      check r.cacheSilent == @[("anthropic", 5)]
+      check "anthropic: 5 large prompts" in formatInsights(r, "x")
+
     test "no cached tokens: no cache line":
       check "Prompt cache" notin formatInsights(aggregateInsights(@[line()]), "x")
 

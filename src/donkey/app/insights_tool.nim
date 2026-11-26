@@ -4,7 +4,7 @@
 ## the person's turns, and sums them (domain/insights_pure); the learned
 ## skills they loaded most come after. `/insights` asks the agent to use it.
 
-import std/[algorithm, json, os, strutils]
+import std/[algorithm, os, strutils]
 import ../core/pipeops
 import ../domain/insights_pure
 import ../ports/fs
@@ -24,20 +24,8 @@ const
 
 proc performInsights*(fs: FsRuntimePort; paddockDir, userId: string;
                       sinceMs: int64): Result[string, string] =
-  let dir = tracesDir(parentDir(paddockDir.strip(leading = false, chars = {'/'})))
-  var files: seq[string]
-  for e in fs.listDir(dir).get(@[]):
-    if e.path.endsWith(".jsonl"): files.add e.path
-  files.sort()
-  var lines: seq[string]
-  for f in files:
-    for raw in fs.readFile(f).get("").splitLines:
-      if raw.strip.len == 0: continue
-      try:
-        let j = parseJson(raw)
-        if j{"user"}.getStr == userId and j{"ts"}.getBiggestInt >= sinceMs:
-          lines.add raw
-      except CatchableError: discard
+  let lines = traceLines(fs, parentDir(paddockDir.strip(leading = false, chars = {'/'})),
+                         sinceMs, userId)
   var report = formatInsights(aggregateInsights(lines),
     if sinceMs > 0: "the last " & $max(1, (epochMs() - sinceMs) div DayMs) & " days"
     else: "all kept traces")

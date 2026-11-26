@@ -109,7 +109,9 @@ be re-run from one.
 ### Insights
 
 The traces summed into a report: turns, tokens in and out (and the share of
-the input served from the prompt cache, per provider), the tools used most
+the input served from the prompt cache, per provider, and a warning for a
+provider whose large prompts never hit it; `donkey doctor` checks the same
+over the last 7 days), the tools used most
 and how often each failed, providers, channels and outcomes; for one person,
 also the learned skills they loaded most.
 
