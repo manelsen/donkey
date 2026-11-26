@@ -50,6 +50,7 @@ func parseChannelName(name: string; kind: var ChannelKind): bool =
   of "cli":      kind = ckCli
   of "line":     kind = ckLine
   of "teams":    kind = ckTeams
+  of "mattermost": kind = ckMattermost
   else: return false
   true
 

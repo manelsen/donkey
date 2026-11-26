@@ -75,6 +75,7 @@ proc channelPortFor(ports: OutboundChannelPorts;
   of ckCli:       ports.cli
   of ckLine:      ports.line
   of ckTeams:     ports.teams
+  of ckMattermost: ports.mattermost
 
 proc setOutboundReaction*(channel: ChannelKind;
                           userId: UserId;
@@ -98,7 +99,7 @@ proc setOutboundReaction*(channel: ChannelKind;
   case channel
   of ckTelegram: log.warn("tg setMessageReaction: " & error)
   of ckDiscord:  log.warn("dc setMessageReaction: " & error)
-  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli, ckLine, ckTeams:
+  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli, ckLine, ckTeams, ckMattermost:
     discard
   false
 
@@ -133,6 +134,7 @@ proc sendImmediateOutbound*(msg: OutboundMessage;
     of ckCli:       log.error("cli send: " & error)
     of ckLine:      log.error("ln send: " & error)
     of ckTeams:     log.error("teams send: " & error)
+    of ckMattermost: log.error("mm send: " & error)
     finishDeliveryFailed(ledger, delivery.id, error, log)
   else:
     finishDeliverySent(ledger, delivery.id, log)
@@ -154,7 +156,7 @@ proc editImmediateOutbound*(msg: OutboundMessage;
   case msg.channel
   of ckTelegram: log.warn("tg editImmediate: " & error)
   of ckDiscord:  log.warn("dc editImmediate: " & error)
-  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli, ckLine, ckTeams:
+  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli, ckLine, ckTeams, ckMattermost:
     discard
   false
 
@@ -172,7 +174,7 @@ proc editStreamOutbound*(msg: OutboundMessage;
   case msg.channel
   of ckTelegram: log.warn("tg editMessage: " & error)
   of ckDiscord:  log.warn("dc editMessage: " & error)
-  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli, ckLine, ckTeams: discard
+  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli, ckLine, ckTeams, ckMattermost: discard
   false
 
 proc createStreamOutbound*(msg: OutboundMessage;
@@ -193,7 +195,7 @@ proc createStreamOutbound*(msg: OutboundMessage;
   case msg.channel
   of ckTelegram: log.error("tg sendReturnId: " & error)
   of ckDiscord:  log.error("dc sendReturnId: " & error)
-  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli, ckLine, ckTeams: discard
+  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli, ckLine, ckTeams, ckMattermost: discard
   finishDeliveryFailed(ledger, delivery.id, error, log)
   ""
 
@@ -215,7 +217,7 @@ proc createReplacementOutbound*(msg: OutboundMessage;
   case msg.channel
   of ckTelegram: log.error("tg sendReturnId replacement: " & error)
   of ckDiscord:  log.error("dc sendReturnId replacement: " & error)
-  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli, ckLine, ckTeams:
+  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli, ckLine, ckTeams, ckMattermost:
     discard
   finishDeliveryFailed(ledger, delivery.id, error, log)
   ""

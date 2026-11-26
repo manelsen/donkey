@@ -58,6 +58,7 @@ type
     cli*:       OutboundChannelPort
     line*:      OutboundChannelPort
     teams*:     OutboundChannelPort
+    mattermost*: OutboundChannelPort
 
 # ── pure helpers ──────────────────────────────────────────────────────────────
 
