@@ -82,7 +82,28 @@ revalida; a guarda do Pincer analisa o texto de um `SKILL.md`, e o skill do
 Donkey é código num sandbox do Deno, onde essa análise vale pouco); OCR é
 coberto por `inspect_image`, que usa um modelo com visão.
 
-## 5. Decidido não fazer
+## 5. Terceira rodada: auto-aprimoramento (aprovada em 26/11)
+
+Os sistemas de aprendizado do Hermes, todos (épico E7 no PRD). Decisões do
+mantenedor: as skills aprendidas são **por pessoa** (nada aprendido com uma
+pessoa chega a outra; o operador pode promover uma skill à mão); a revisão
+em segundo plano usa um **modelo auxiliar barato** configurável (sem
+configuração, a rota da sessão); toda skill nova ou alterada passa por uma
+**guarda que bloqueia** exfiltração, injeção, caracteres invisíveis e
+comandos destrutivos.
+
+| História | Entrega | Estado |
+|---|---|---|
+| E7.1 Skills aprendidas | `SKILL.md` por pessoa no paddock, validação, guarda, proveniência, arquivar em vez de apagar | Em andamento |
+| E7.2 `skill_manage` e `skill_view` | O agente cria, edita, corrige, arquiva e restaura; índice no prompt, com nota quando muda na sessão | — |
+| E7.3 Uso | Contagem e último uso por skill | — |
+| E7.4 Revisão em segundo plano | A cada N turnos, uma cópia do agente com o modelo auxiliar relê a conversa e salva skills e memória | — |
+| E7.5 `/refine` e `/learn` | Revisão imediata; uma fonte vira skill | — |
+| E7.6 Curador | Ocioso: consolida e arquiva, nunca apaga; backup e rollback | — |
+| E7.7 Jornada | Listar, ver, arquivar e restaurar o aprendido (`ctl`, TUI, comando) | — |
+| E7.8 Insights | `/insights`: uso de ferramentas e skills, tokens e custo | — |
+
+## 6. Decidido não fazer
 
 | Item | Motivo |
 |---|---|
@@ -93,7 +114,7 @@ coberto por `inspect_image`, que usa um modelo com visão.
 | Replay de traço | O traço não guarda conteúdo, por decisão de privacidade ("nunca o que foi dito"); reproduzir um turno exigiria guardar mensagens e saídas de ferramentas. A frente 3 da segunda rodada ficou na exportação OpenTelemetry. |
 | Bots isolados (usuários e memória por bot) | Multi-bot é só fachada (E3); isolamento total seria uma instância por cliente. |
 
-## 6. Pendências fora do código
+## 7. Pendências fora do código
 
 - Revogar a chave da OpenRouter que foi colada numa conversa (criar outra) e
   conferir no painel o uso desde então.
@@ -103,7 +124,7 @@ coberto por `inspect_image`, que usa um modelo com visão.
 - Confirmar na documentação da Meta se um BSUID (`BR.…`) pode ser destinatário
   de resposta (WA-009).
 
-## 7. Como cada frente é executada
+## 8. Como cada frente é executada
 
 As regras de sempre: TDD com vermelho visível; suíte completa, build e
 checagem de fronteiras verdes antes do primeiro push de cada PR; nas
