@@ -67,7 +67,7 @@ proc feed*(acc: var AnthropicStream; line: string): Result[string, string] =
     acc.outputTokens = intField(usage, "output_tokens")
   of "message_delta":
     let usage = j{"usage"}
-    if intField(usage, "input_tokens") > 0:
+    if anthropicUsage(usage).inputTokens > 0:   ## any of the three counts
       acc.cache = anthropicUsage(usage)
       acc.inputTokens = acc.cache.inputTokens
     if intField(usage, "output_tokens") > 0:
