@@ -20,6 +20,7 @@ import ../../domain/message
 import ../../domain/channels/teams_pure
 import ../../infra/event_queue
 import ../../infra/fixed
+import ../../ports/channel
 import ../../ports/http
 import ../../ports/link_codes
 import ../http/std_http
@@ -227,6 +228,27 @@ proc send*(a: TeamsAdapter; msg: OutboundMessage): Result[void, string] =
       return err("Teams: send status " & $resp.status)
   ok()
 
+const TeamsMaxDownloadBytes* = 25 * 1024 * 1024
+
+proc downloadFile*(a: TeamsAdapter; fileId: string): Result[FileDownload, string] =
+  ## An attachment (E9.4): a SharePoint file by its pre-authenticated URL, no
+  ## token; an inline image from the Bot Framework service with the bot's
+  ## token. Anything else is refused before a request (teamsDownload).
+  if a.configError.len > 0:
+    return err("Teams: " & a.configError)
+  let where = ? teamsDownload(fileId, a.serviceHosts)
+  var headers: seq[HttpHeader]
+  if where.withToken:
+    headers.add ("Authorization", "Bearer " & (? a.appToken()))
+  let resp = ? a.http.get(where.url, headers)
+  if resp.status != 200:
+    return err("Teams: download status " & $resp.status)
+  if resp.body.len > TeamsMaxDownloadBytes:
+    return err("Teams: attachment larger than " & $(TeamsMaxDownloadBytes div (1024 * 1024)) & " MB")
+  var data = newSeq[byte](resp.body.len)
+  for i in 0 ..< resp.body.len: data[i] = byte(resp.body[i])
+  ok(FileDownload(fileName: "attachment", fileSize: data.len.int64, data: data))
+
 proc newTeamsAdapter*(appId, appPassword, tenantId, identityPath,
                       conversationsPath: string;
                       http: HttpRuntimePort = HttpRuntimePort();
@@ -238,7 +260,7 @@ proc newTeamsAdapter*(appId, appPassword, tenantId, identityPath,
   var transport = http
   if transport.post.isNil:
     transport = newStdHttpAdapter(timeout = TeamsTimeoutSec,
-      allowlist = @["login.microsoftonline.com"] & serviceHosts,
+      allowlist = @["login.microsoftonline.com", "sharepoint.com"] & serviceHosts,
       retryNonIdempotent = false, retryConflict = false).toRuntimePort()
   var now = clock
   if now == nil:

@@ -322,7 +322,15 @@ nothing is queued.
 - Replies are Markdown in the thread of the message they answer; long ones
   go in pieces. Each person's last conversation is kept in
   `state/teams_conversations.json`, so reminders reach them after a restart.
-- Text only: no attachments, cards or edits yet.
+- Attachments come in (E9.4): a file sent in a personal chat (its
+  pre-authenticated SharePoint URL, fetched without the token) or an inline
+  image (from the Bot Framework service, fetched with the bot's token); the
+  first one (25 MB at most) reaches the turn, the others are named. The
+  token only goes to the Bot Framework service; a file only from
+  SharePoint. With several apps (`[[bots]]`), an inline image is fetched
+  with the default app's token. The app manifest needs `supportsFiles` for
+  files in personal chats.
+- Nothing goes out as a file, and no cards or edits yet.
 
 ---
 

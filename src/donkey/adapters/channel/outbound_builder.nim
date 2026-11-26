@@ -235,7 +235,9 @@ type TeamsPick* = proc(userId: UserId): ptr TeamsAdapter {.gcsafe.}
   ## The adapter of the Teams app a person last wrote to (teams_bots).
 
 proc teamsOutboundPort*(tm: ptr TeamsAdapter; pick: TeamsPick = nil): OutboundChannelPort =
-  ## Send only: through the person's app, or unsupported without an adapter.
+  ## Text out through the person's app, attachments in (E9.4), or
+  ## unsupported without an adapter. An inline image is fetched with the
+  ## default app's token: the port does not know which app received it.
   OutboundChannelPort(
     send: if tm != nil:
             proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
@@ -247,7 +249,11 @@ proc teamsOutboundPort*(tm: ptr TeamsAdapter; pick: TeamsPick = nil): OutboundCh
     sendKeyboard: unsupportedSendKeyboard,
     editKeyboard: unsupportedEditKeyboard,
     setMessageReaction: unsupportedSetMessageReaction,
-    downloadFile: unsupportedDownloadFile,
+    downloadFile: if tm != nil:
+                    proc(fileId: string): Result[FileDownload, string] {.gcsafe.} =
+                      tm[].downloadFile(fileId)
+                  else:
+                    unsupportedDownloadFile,
   )
 
 proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;

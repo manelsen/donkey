@@ -64,7 +64,7 @@ O que cada frente deixou de fora ao ser implementada. Nenhum está agendado.
 
 | Item | Frente | Limite atual |
 |---|---|---|
-| Teams com anexos e cartões | E2 | só texto entra e sai |
+| Teams: arquivos de saída e cartões | E2 | anexos entram (E9.4); nada sai como arquivo (pede cartão de consentimento) e não há Adaptive Cards |
 | MCP sampling por HTTP | E5 | só servidores stdio podem pedir sampling |
 | Skill novo de usuário | E5 | as ferramentas aparecem a partir da mensagem seguinte (listagem em segundo plano) |
 | Escrita no GitHub (abrir issue, comentar) | 2ª rodada, frente 2 | fora de propósito: o agente lê texto de terceiros; pede decisão sobre aprovação |
