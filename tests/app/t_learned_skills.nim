@@ -78,6 +78,17 @@ proc runTests*() =
       check store.restore("deploy-staging").isOk
       check store.list().len == 1 and store.archived().len == 0
 
+    test "archiving the same skill twice in one millisecond keeps both copies":
+      let p = paddock()
+      let store = newLearnedSkills(newFsAdapter(), p)
+      check store.create(Skill, by = "agent", nowMs = 1).isOk
+      check store.archive("deploy-staging", nowMs = 7).isOk
+      check store.create(Skill, by = "agent", nowMs = 8).isOk
+      check store.archive("deploy-staging", nowMs = 7).isOk
+      var copies = 0
+      for kind, path in walkDir(p / "learned_skills" / ".archive"): inc copies
+      check copies == 2
+
     test "a name that could leave the store is refused":
       let store = newLearnedSkills(newFsAdapter(), paddock())
       check store.read("../USER").isErr
