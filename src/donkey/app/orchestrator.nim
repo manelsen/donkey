@@ -41,6 +41,7 @@ import ../domain/memory/capture_pure
 import ../domain/turn_trace_pure
 import ./turn_traces
 import ./otlp_export
+import ./learned_skills
 import ./offloop_io
 import ../domain/memory/provenance_pure
 import ../domain/message
@@ -561,6 +562,15 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   ## Backtrail classifies the person's message once: its route sets recall's
   ## policy now and decides the pre-search below. A schedule or a heartbeat
   ## is not asking about the conversation.
+  ## The skills this person's agent learned (E7.2): what each is for, so the
+  ## model loads the right one with skill_view. Read each turn: one written
+  ## during the conversation is in the next turn's prompt.
+  let learned = newLearnedSkills(fs, paddockDir).list()
+  if learned.len > 0:
+    var docs: seq[SkillDoc]
+    for s in learned: docs.add s.doc
+    systemBase = systemBase & "\n\n" & skillsIndex(docs)
+
   let route =
     if msg.taskKind == tkUserMsg:
       await classifyMessage(result.backtrail, userPayload.text, log)

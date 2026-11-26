@@ -87,6 +87,7 @@ import ./session_manager
 import ./approval_runtime
 import ./offloop_io
 import ./tools/github_git_tools
+import ./skill_tools
 import ./provider_executor
 
 const
@@ -898,6 +899,17 @@ proc executeSessionNativeTool(tc: ToolCallRequest;
                                        schedCtx, int64(epochTime() * 1000)).valueOr:
       return handledError(error)
     return handledText(reply)
+  of SkillManageToolName:
+    let skillCtx = parseSkillManage(j).valueOr:
+      return handledError(error)
+    let reply = performSkillManage(ctx.fs, ctx.paddockDir, skillCtx,
+                                   int64(epochTime() * 1000)).valueOr:
+      return handledError("Error: " & error)
+    return handledText(reply)
+  of SkillViewToolName:
+    let shown = performSkillView(ctx.fs, ctx.paddockDir, j{"name"}.getStr).valueOr:
+      return handledError("Error: " & error)
+    return handledText(shown)
   of ManageTasksToolName:
     let tasksCtx = parseManageTasksContext(j).valueOr:
       return handledError(error)

@@ -10,7 +10,7 @@
 ## hermes-agent (MIT), tools/skills_guard.py; plain text checks, no regex
 ## engine, so the domain stays free of PCRE.
 
-import std/[strutils, unicode]
+import std/[json, strutils, unicode]
 import ../../core/pipeops
 
 const
@@ -170,3 +170,77 @@ func guardReport*(findings: seq[GuardFinding]): string =
   for f in findings:
     if f.reason notin reasons: reasons.add f.reason
   "blocked: " & reasons.join("; ")
+
+# ── The index in the system prompt, and the tools (E7.2) ─────────────────────
+
+const
+  MaxIndexedSkills* = 40
+  IndexDescChars = 200
+  SkillManageActions = ["create", "edit", "patch", "archive", "restore", "list"]
+
+func skillsIndex*(skills: seq[SkillDoc]): string =
+  ## The section the system prompt carries: what each learned skill is for.
+  ## Empty without skills.
+  if skills.len == 0: return ""
+  result = "## Skills you learned\n" &
+    "Procedures you wrote down earlier for this person. Before doing what one " &
+    "describes, load it with skill_view and follow it; fix it with skill_manage " &
+    "when it turns out wrong or incomplete.\n"
+  for i, s in skills:
+    if i >= MaxIndexedSkills:
+      result.add "- (" & $(skills.len - MaxIndexedSkills) & " more skills: skill_manage list)\n"
+      break
+    var d = s.description.replace("\n", " ")
+    if d.len > IndexDescChars: d = d[0 ..< IndexDescChars] & "…"
+    result.add "- " & s.name & ": " & d & "\n"
+
+type
+  SkillManageContext* = object
+    action*, name*, content*, oldText*, newText*, note*: string
+
+proc parseSkillManage*(j: JsonNode): Result[SkillManageContext, string] =
+  let action = j{"action"}.getStr.strip.toLowerAscii
+  if action notin SkillManageActions:
+    return err("Error: unknown action '" & action & "' (" & SkillManageActions.join(", ") &
+               "; a skill is archived, never deleted)")
+  let c = SkillManageContext(action: action, name: j{"name"}.getStr.strip,
+    content: j{"content"}.getStr, oldText: j{"old_text"}.getStr,
+    newText: j{"new_text"}.getStr, note: j{"note"}.getStr.strip)
+  case action
+  of "create":
+    if c.content.strip.len == 0: return err("Error: 'content' (the whole SKILL.md) is required")
+  of "edit":
+    if c.name.len == 0 or c.content.strip.len == 0:
+      return err("Error: 'name' and 'content' are required")
+  of "patch":
+    if c.name.len == 0 or c.oldText.len == 0:
+      return err("Error: 'name' and 'old_text' are required")
+  of "archive", "restore":
+    if c.name.len == 0: return err("Error: 'name' is required")
+  else: discard
+  ok(c)
+
+const
+  SkillManageToolName* = "skill_manage"
+  SkillManageToolDescription* =
+    "Write down how to do something, so you do it right next time: your skills " &
+    "for this person. After a task that took several steps, a fix, or a workflow " &
+    "the person taught you, create a skill: a SKILL.md with a frontmatter (name: " &
+    "lowercase-with-dashes; description: when to use it) and then the steps. " &
+    "Patch or edit a skill that turned out wrong or incomplete; archive one that no " &
+    "longer applies (restore brings it back; nothing is deleted). Never write " &
+    "secrets or the person's private data into a skill."
+  SkillManageToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"action\":{\"type\":\"string\",\"enum\":[\"create\",\"edit\",\"patch\",\"archive\",\"restore\",\"list\"]}," &
+    "\"name\":{\"type\":\"string\",\"description\":\"The skill (edit, patch, archive, restore)\"}," &
+    "\"content\":{\"type\":\"string\",\"description\":\"The whole SKILL.md (create, edit)\"}," &
+    "\"old_text\":{\"type\":\"string\",\"description\":\"patch: the passage to replace, exactly\"}," &
+    "\"new_text\":{\"type\":\"string\",\"description\":\"patch: what replaces it\"}," &
+    "\"note\":{\"type\":\"string\",\"description\":\"create: where this came from\"}" &
+    "},\"required\":[\"action\"]}"
+  SkillViewToolName* = "skill_view"
+  SkillViewToolDescription* =
+    "Load one of your learned skills (listed in the system prompt) to follow it."
+  SkillViewToolSchema* =
+    "{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}},\"required\":[\"name\"]}"
