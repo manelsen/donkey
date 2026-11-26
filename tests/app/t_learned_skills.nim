@@ -151,6 +151,8 @@ proc runTests*() =
       check not validPaddockId("../..")
       check not validPaddockId("a/b")
       check not validPaddockId("")
+      check not validPaddockId(".")          ## the paddocks directory itself
+      check not validPaddockId(".hidden")
 
 when isMainModule:
   runTests()

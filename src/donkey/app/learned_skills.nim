@@ -43,7 +43,7 @@ type
 func validPaddockId*(id: string): bool =
   ## A person's id as it names their paddock: no separator, no '..', so it
   ## cannot leave the paddocks directory.
-  id.len > 0 and id.len <= 128 and ".." notin id and
+  id.len > 0 and id.len <= 128 and id[0] != '.' and ".." notin id and
     id.allCharsInSet({'a'..'z', 'A'..'Z', '0'..'9', '-', '_', ':', '.'})
 
 proc newLearnedSkills*(fs: FsRuntimePort; paddockDir: string): LearnedSkills =
