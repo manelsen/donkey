@@ -41,8 +41,10 @@ proc channelStatesOf*(channels: ActiveChannels): seq[ChannelConnection] =
   for kind in ChannelKind:
     if kind notin channels: continue
     let (running, connected) = connectionCounts(kind)
+    let tracked = kind in SocketChannels or running > 0
     result.add ChannelConnection(name: $kind,
-      state: connectionLabel(kind in SocketChannels or running > 0, running, connected))
+      state: if tracked: connectionLabel(true, running, connected)
+             else: activeLabel(lastInboundMs(kind), epochMs()))
 
 func activeChannelNames*(channels: ActiveChannels): seq[string] =
   for kind in ChannelKind:

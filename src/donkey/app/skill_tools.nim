@@ -41,6 +41,12 @@ proc performSkillManage*(fs: FsRuntimePort; paddockDir: string; c: SkillManageCo
 proc performSkillView*(fs: FsRuntimePort; paddockDir, name: string;
                        nowMs: int64): Result[string, string] =
   let store = newLearnedSkills(fs, paddockDir)
-  let doc = ? store.read(name.strip)
-  store.recordUse(name.strip, nowMs)
+  let own = store.read(name.strip)
+  if own.isOk:
+    store.recordUse(name.strip, nowMs)
+    return ok(renderSkillMd(own.get))
+  ## A skill the operator shared with everyone: read only.
+  let shared = newLearnedSkills(fs, homeOfPaddock(paddockDir))
+  let doc = ? shared.read(name.strip)
+  shared.recordUse(name.strip, nowMs)
   ok(renderSkillMd(doc))

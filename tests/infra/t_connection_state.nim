@@ -34,6 +34,17 @@ proc runTests*() =
       socketEnded(ckSlack)
       check connectionCounts(ckSlack) == (running: 0, connected: 0)
 
+    test "the last message of a channel without a counted socket":
+      resetConnections()
+      check lastInboundMs(ckTelegram) == 0
+      noteInbound(ckTelegram, 1_000)
+      check lastInboundMs(ckTelegram) == 1_000
+      check activeLabel(0, 10_000) == "active, no message yet"
+      check activeLabel(1_000, 1_000 + 30_000) == "active, last message 30s ago"
+      check activeLabel(1_000, 1_000 + 5 * 60_000) == "active, last message 5m ago"
+      check activeLabel(1_000, 1_000 + 3 * 3_600_000) == "active, last message 3h ago"
+      check activeLabel(1_000, 1_000 + 2 * 86_400_000) == "active, last message 2d ago"
+
     test "a label for the status views":
       check connectionLabel(true, 1, 1) == "connected"
       check connectionLabel(true, 2, 1) == "reconnecting 1/2"

@@ -2,7 +2,7 @@
 ## the wiring: the status snapshot, the access policy and the dashboard's
 ## session action. No sockets, no daemon.
 
-import std/unittest
+import std/[strutils, unittest]
 import donkey/core/pipeops
 import donkey/core/types
 import donkey/core/security/dm_policy
@@ -69,7 +69,7 @@ proc runTests*() =
       check stateOf("discord") == "connected"
       check stateOf("irc") == "connecting"
       check stateOf("mattermost") == "stopped"   ## a socket channel with no socket running
-      check stateOf("telegram") == "active"
+      check stateOf("telegram").startsWith("active")
       check fromJsonStatus(st.toJson()).channelStates == st.channelStates
 
     test "every provider with recent calls is in the snapshot, not only the busiest five":

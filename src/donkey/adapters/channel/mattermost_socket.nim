@@ -7,7 +7,7 @@
 ## queue the posts it should answer, keep the link alive with the API's
 ## ping action. A refused token stops the thread: reconnecting cannot help.
 
-import std/[net, options, strutils]   ## net: persistent_socket compares socket handles here
+import std/[algorithm, net, options, strutils]   ## net: persistent_socket compares socket handles here
 import ../../core/log
 import ../../core/pipeops
 import ../../ports/http
@@ -38,6 +38,7 @@ type
     me:         MattermostMe
     seq:        int
     lastPingMs: int64
+    lastPostMs: int64   ## the newest post seen: where a catch-up starts
 
 var gMattermostSocket: PersistentSocket[MattermostSocketConfig, MattermostSocketState]
   ## Pointers only: gcsafe to touch from the daemon.
@@ -62,6 +63,33 @@ proc whoAmI(cfg: MattermostSocketConfig; http: HttpRuntimePort): Result[Mattermo
     return err("users/me HTTP " & $r.status)
   parseMe(r.body)
 
+const
+  CatchUpWindowMs = 86_400_000'i64   ## never more than a day back
+  CatchUpMaxPosts = 100
+
+proc apiGet(http: HttpRuntimePort; url, token: string): string {.gcsafe, raises: [].} =
+  ## The body of a 2xx answer, or "" (a catch-up is best effort).
+  try:
+    let r = http.get(url, @[("Authorization", "Bearer " & token)])
+    if r.isOk and r.get.status in 200 .. 299: r.get.body else: ""
+  except Exception:  ## effect boundary: callee raises are unannotated
+    ""
+
+proc catchUpPosts*(http: HttpRuntimePort; serverUrl, token: string; me: MattermostMe;
+                   sinceMs, nowMs: int64): seq[MattermostPost] {.gcsafe, raises: [].} =
+  ## The posts written in the bot's channels after `sinceMs` (at most a day
+  ## back) that it should answer, oldest first, at most CatchUpMaxPosts.
+  let since = max(sinceMs, nowMs - CatchUpWindowMs)
+  for (team, _) in parseChannels(apiGet(http, apiUrl(serverUrl, "/api/v4/users/me/teams"), token)):
+    for (channel, kind) in parseChannels(apiGet(http,
+        apiUrl(serverUrl, "/api/v4/users/me/teams/" & team & "/channels"), token)):
+      result.add postsSince(apiGet(http,
+        apiUrl(serverUrl, "/api/v4/channels/" & channel & "/posts?since=" & $since), token),
+        kind, me, since)
+  result.sort(proc(a, b: MattermostPost): int = cmp(a.createdMs, b.createdMs))
+  if result.len > CatchUpMaxPosts:
+    result = result[result.len - CatchUpMaxPosts .. ^1]
+
 proc mmLocate(cfg: MattermostSocketConfig; state: var MattermostSocketState;
               log: Logger): Result[SocketTarget, string] {.nimcall, gcsafe, raises: [CatchableError].} =
   if not state.httpBuilt:
@@ -80,6 +108,15 @@ proc mmOpened(cfg: MattermostSocketConfig; state: var MattermostSocketState; ws:
               log: Logger): SessionStep {.nimcall, gcsafe, raises: [CatchableError].} =
   state.seq = ChallengeSeq
   ws.sendFrame(authChallenge(cfg.token, ChallengeSeq))
+  ## After a drop, what was written meanwhile (the socket does not replay it).
+  if state.lastPostMs > 0:
+    let missed = catchUpPosts(state.http, cfg.serverUrl, cfg.token, state.me,
+                              state.lastPostMs, epochMs())
+    for p in missed:
+      if not pushPost(p): break
+      state.lastPostMs = max(state.lastPostMs, p.createdMs)
+    if missed.len > 0:
+      log.info("mattermost: caught up on " & $missed.len & " posts from while it was down")
   ssKeep
 
 proc mmFrame(cfg: MattermostSocketConfig; state: var MattermostSocketState; ws: WsClient;
@@ -89,6 +126,9 @@ proc mmFrame(cfg: MattermostSocketConfig; state: var MattermostSocketState; ws: 
   if authRefused(frame.data, ChallengeSeq):
     log.error("mattermost: the server refused the token; check MATTERMOST_TOKEN")
     return ssStop
+  let seenPost = parsePostedEvent(frame.data, state.me.id)
+  if seenPost.isSome:
+    state.lastPostMs = max(state.lastPostMs, seenPost.get.createdMs)
   let post = inboundPost(frame.data, state.me)
   if post.isSome and not pushPost(post.get):
     log.warn("mattermost: queue full, post " & post.get.id & " dropped")

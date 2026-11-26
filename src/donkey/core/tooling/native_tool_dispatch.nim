@@ -72,6 +72,7 @@ const
     "manage_tasks",
     "skill_manage",
     "skill_view",
+    "insights",
     "session_search",
     "memory_ingest",
   ]

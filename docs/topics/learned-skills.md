@@ -124,3 +124,24 @@ donkey ctl skill learned <uuid> archive <name>   # or restore <name>
 
 The TUI shows the same journey in a person's detail view (Admin → Users →
 Enter). The person can ask the agent too (`skill_manage list`).
+
+## Sharing a skill with everyone
+
+Skills are per person. The operator can share one person's skill with every
+person:
+
+```sh
+donkey ctl skill promote <uuid> <name>
+```
+
+It is copied (through the guard again) into the instance's store,
+`{home}/learned_skills/`, recorded as the operator's. Everyone then sees it in
+their index and can load it with `skill_view`; nobody's agent can change it
+with `skill_manage`, and a person's own skill of the same name wins.
+
+## /insights
+
+`/insights [days]` asks the agent for the person's own usage report (the
+`insights` tool): their turns, tokens, tools and failures, providers,
+channels, and the learned skills they loaded most, over the last 30 days by
+default. It reads the traces (`DONKEY_TRACES=on`) and only that person's turns.

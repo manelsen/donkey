@@ -23,6 +23,7 @@ import ../domain/more_tools
 import ../domain/tools/github_pure
 import ../domain/tools/git_inspect_pure
 import ../domain/skills/learned_skill_pure
+import ./insights_tool
 import ../domain/providers/media_pure
 import ../domain/reminder
 import ../ports/attachment_store
@@ -580,6 +581,7 @@ proc nativeSessionTools*(): seq[ToolDescription] {.gcsafe, raises: [].} =
     (ManageTasksToolName,   ManageTasksToolDescription,   ManageTasksToolSchema),
     (SkillManageToolName,   SkillManageToolDescription,   SkillManageToolSchema),
     (SkillViewToolName,     SkillViewToolDescription,     SkillViewToolSchema),
+    (InsightsToolName,      InsightsToolDescription,      InsightsToolSchema),
     (AskAgentToolName,      AskAgentToolDescription,      AskAgentToolSchema),
     (ConveneAgentsToolName, ConveneAgentsToolDescription, ConveneAgentsToolSchema),
     (SessionSearchToolName, SessionSearchToolDescription, SessionSearchToolSchema),
