@@ -41,6 +41,7 @@ func deadLetterEligible*(m: OutboundMessage): bool =
 
 func schedule(l: var DeadLetter; error: string; nowMs: int64) =
   l.lastError = error
+  l.attempts = max(1, l.attempts)
   if l.attempts > RetryDelaysMs.len:
     l.dead = true
     l.nextAtMs = 0
@@ -113,7 +114,7 @@ proc decodeDeadLetters*(text: string): Result[seq[DeadLetter], string] =
     letters.add DeadLetter(
       id: it{"id"}.getStr, userId: it{"user"}.getStr, channel: kind,
       replyTo: it{"reply_to"}.getStr, text: it{"text"}.getStr, isHtml: it{"html"}.getBool,
-      attempts: it{"attempts"}.getInt,
+      attempts: max(1, it{"attempts"}.getInt),   ## a hand-edited 0 cannot index the schedule
       createdMs: it{"created_ms"}.getBiggestInt, nextAtMs: it{"next_at_ms"}.getBiggestInt,
       lastError: it{"last_error"}.getStr, dead: it{"dead"}.getBool)
   ok(letters)

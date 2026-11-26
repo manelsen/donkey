@@ -82,6 +82,11 @@ proc runTests*() =
       check back.len == 1 and back[0].text == "olá \"aspas\"" and back[0].channel == ckTelegram
       check decodeDeadLetters("").get.len == 0
       check decodeDeadLetters("{broken").isErr
+      let zero = decodeDeadLetters("""[{"id":"z","channel":"telegram","text":"x","attempts":0,"next_at_ms":5}]""").get
+      check zero[0].attempts == 1
+      var again = zero
+      again.retryFailed("z", "e", 10)       ## no out-of-bounds schedule
+      check again[0].attempts == 2
 
     test "a line for the operator: when, where, why, and the start of the text":
       var letters: seq[DeadLetter]

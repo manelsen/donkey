@@ -27,7 +27,9 @@ proc newDeadLetterBox*(fs: FsRuntimePort; path: string): DeadLetterBox =
   result = DeadLetterBox(fs: fs, path: path)
   let text = fs.readFile(path)
   if text.isErr:
-    return   ## no file yet
+    if fs.entryKind != nil and fs.entryKind(path) != fekMissing:
+      result.problem = text.error   ## there but unreadable: never saved over
+    return
   let decoded = decodeDeadLetters(text.get)
   if decoded.isErr:
     result.problem = decoded.error
@@ -54,7 +56,9 @@ proc retryDue*(box: DeadLetterBox; nowMs: int64; send: DeadLetterSend): int =
   if box.isNil: return 0
   for l in dueLetters(box.letters, nowMs):
     inc result
-    let sent = send(l.message)
+    let sent =
+      try: send(l.message)
+      except CatchableError as e: Result[void, string].err(e.msg)
     if sent.isOk: box.letters.retrySucceeded(l.id)
     else: box.letters.retryFailed(l.id, sent.error, nowMs)
   box.letters.prune(nowMs)

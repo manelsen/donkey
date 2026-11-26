@@ -2,7 +2,7 @@
 ## across restarts; retried when due through the send it is given; a retry
 ## that goes through takes the letter out, one that fails waits longer.
 
-import std/[os, unittest]
+import std/[os, strutils, unittest]
 import donkey/adapters/filesystem/fs_adapter
 import donkey/app/dead_letters
 import donkey/core/pipeops
@@ -62,6 +62,29 @@ proc runTests*() =
       check box.problem.len > 0
       box.keep(reply(), "e", 0)
       check readFile(path) == "{broken"
+
+  suite "dead letter box — what goes wrong":
+
+    test "a file that exists but cannot be read is not overwritten":
+      let path = freshPath()
+      createDir(parentDir(path))
+      writeFile(path, "[]")
+      setFilePermissions(path, {})
+      let box = newDeadLetterBox(newFsAdapter(), path)
+      setFilePermissions(path, {fpUserRead, fpUserWrite})
+      check box.problem.len > 0
+      box.keep(reply(), "e", 0)
+      check readFile(path) == "[]"
+
+    test "a send that raises is a failed retry, and the box is still saved":
+      let box = newDeadLetterBox(newFsAdapter(), freshPath())
+      box.keep(reply("a"), "e", 0)
+      box.keep(reply("b"), "e", 0)
+      let send = proc(m: OutboundMessage): Result[void, string] {.gcsafe.} =
+        if m.text == "a": raise newException(ValueError, "boom")
+        ok()
+      check box.retryDue(Min, send) == 2
+      check box.letters.len == 1 and box.letters[0].text == "a" and "boom" in box.letters[0].lastError
 
 when isMainModule:
   runTests()
