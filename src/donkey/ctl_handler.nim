@@ -16,6 +16,7 @@ import domain/memory/conversation_search_pure
 import domain/turn_trace_pure
 import domain/dead_letters_pure
 import app/turn_traces
+import app/curator
 import config/skills_registry
 import config/clawhub_registry
 import config/dotenv
@@ -928,6 +929,14 @@ proc dispatchCtl*(cfg: DonkeyConfig;
 
   # ── skill ──
   let skillsPath = cfg.home / "skills.toml"
+  if args[1] == "skill" and args.len >= 4 and args[2] == "rollback":
+    ## The newest curator backup of a person's learned skills (E7.6).
+    let rolled = rollbackSkills(newFsAdapter(), cfg.paddocks / args[3], epochMs())
+    if rolled.isErr:
+      echo rolled.error
+      return 1
+    echo rolled.get
+    return 0
   if args[1] == "skill" and args[2] == "install" and args.len >= 5:
     let r = ctlSkillInstall(cfg, skillsPath, args[3], args[4], args[5 ..^ 1])
     if r.isErr: return 1

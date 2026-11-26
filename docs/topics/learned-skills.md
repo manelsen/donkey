@@ -87,3 +87,25 @@ that matters.
 
 Both are ordinary turns with a prompt of their own (as in Hermes), so they use
 the session's route and you see what happens.
+
+## The curator
+
+At most every 7 days, riding on a background review (same auxiliary route,
+still off the turn), a pass looks after each person's skills:
+
+1. The skills are backed up into `{paddock}/.curator_backups/<ms>/` (the five
+   newest backups are kept).
+2. Skills neither loaded nor created in the last 90 days are archived — never
+   one the person wrote themselves, and never deleted.
+3. A copy of the agent sees every skill in full and merges near-duplicates
+   (folds one into the other with `skill_manage edit`, archives the emptied
+   one), recorded as the curator's.
+
+```sh
+DONKEY_CURATOR=off                      # on by default
+DONKEY_CURATOR_INTERVAL_DAYS=7
+DONKEY_CURATOR_STALE_DAYS=90
+donkey ctl skill rollback <uuid>        # the skills as the newest backup had them
+```
+
+A rollback backs up the skills it replaces first, so it can be undone too.
