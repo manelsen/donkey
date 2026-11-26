@@ -45,12 +45,13 @@ proc drainMattermostEvents*(a: var MattermostAdapter;
         userId: auth.userId, channel: ckMattermost, channelId: target,
         chatId: post.channelId, rawChannelId: post.userId,
         messageId: post.id, text: post.text, isGroup: post.isGroup)
-      ## E9.1: the first file is downloaded for the turn (by its id, through
-      ## the port's downloadFile); the others, or one too large, are named.
+      ## E9.1: the first file that fits is downloaded for the turn (by its id,
+      ## through the port's downloadFile); the others, or one too large, are
+      ## named.
       var unread: seq[string]
-      for i, f in post.files:
+      for f in post.files:
         let name = if f.name.len > 0: f.name else: f.id
-        if i == 0 and f.size <= MattermostMaxDownloadBytes:
+        if msg.mediaUrl.len == 0 and f.size <= MattermostMaxDownloadBytes:
           msg.mediaUrl = f.id
           msg.mediaFileName = f.name
           msg.mediaMimeType = f.mimeType
