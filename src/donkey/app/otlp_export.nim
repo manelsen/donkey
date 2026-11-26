@@ -8,7 +8,7 @@
 ## so a slow collector never delays an answer; a failure is returned for it
 ## to log.
 
-import std/[strutils, sysrand, uri]
+import std/[monotimes, strutils, sysrand, uri]
 import chronos
 import ../config/environment
 import ../core/pipeops
@@ -20,10 +20,28 @@ func otlpEnabled*(env: Environment): bool =
   otlpTracesUrl(env.get("OTEL_EXPORTER_OTLP_ENDPOINT"),
                 env.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")).isOk
 
+var gFallbackCounter {.threadvar.}: uint64
+
+func fallbackHex*(bytes: int; seed: uint64): string =
+  ## Without the system's random source: a splitmix64 stream from the seed,
+  ## never all zeros (an invalid id).
+  var x = seed
+  while result.len < bytes * 2:
+    x += 0x9E3779B97F4A7C15'u64
+    var z = x
+    z = (z xor (z shr 30)) * 0xBF58476D1CE4E5B9'u64
+    z = (z xor (z shr 27)) * 0x94D049BB133111EB'u64
+    z = z xor (z shr 31)
+    result.add z.toHex(16).toLowerAscii
+  result.setLen(bytes * 2)
+  if result == "0".repeat(bytes * 2):
+    result[^1] = '1'
+
 proc randomHex(bytes: int): string =
   var raw = newSeq[byte](bytes)
   if not urandom(raw):
-    return "0".repeat(bytes * 2 - 1) & "1"   ## never all zeros: an invalid id
+    inc gFallbackCounter
+    return fallbackHex(bytes, uint64(getMonoTime().ticks) xor (gFallbackCounter shl 32))
   for b in raw: result.add b.toHex(2).toLowerAscii
 
 proc exportTurnTrace*(env: Environment; trace: TurnTrace; io: OffLoopIo):

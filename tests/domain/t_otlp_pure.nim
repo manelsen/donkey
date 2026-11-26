@@ -65,6 +65,12 @@ proc runTests*() =
       check span["events"][0]["name"].getStr == "tool web_search"
       check span["events"][1]["attributes"].attr("donkey.tool.outcome")["stringValue"].getStr == "operational_error"
 
+    test "a clock that stepped back never makes the span end before it starts":
+      var odd = trace
+      odd.durationMs = -500
+      let span = parseJson(otlpTraceJson(odd, "a".repeat(32), "b".repeat(16)))["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+      check span["endTimeUnixNano"].getStr == span["startTimeUnixNano"].getStr
+
     test "a turn that did not end well is an error span":
       var failed = trace
       failed.outcome = "provider_error"

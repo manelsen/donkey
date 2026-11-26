@@ -53,6 +53,11 @@ proc runTests*() =
         parseJson(s.posts[i][1])["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["spanId"].getStr
       check idOf(0) != idOf(1) and idOf(0).len == 16
 
+    test "ids stay unique even without the system's random source":
+      check fallbackHex(8, 1) != fallbackHex(8, 2)
+      check fallbackHex(8, 1).len == 16 and fallbackHex(16, 1).len == 32
+      check fallbackHex(8, 0) != "0".repeat(16)
+
     test "a refused export or no runner is an error to log":
       let env = environmentOf({"OTEL_EXPORTER_OTLP_ENDPOINT": "https://otel.example"})
       check (waitFor exportTurnTrace(env, trace, io(Seen(), status = 400))).isErr

@@ -53,6 +53,7 @@ proc boolAttr(key: string; value: bool): JsonNode =
 func nanos(ms: int64): string = $ms & "000000"
 
 proc otlpTraceJson*(t: TurnTrace; traceIdHex, spanIdHex: string): string =
+  let endMs = t.startedMs + max(0'i64, t.durationMs)   ## a wall clock may step back
   var attrs = @[strAttr("donkey.channel", t.channel), strAttr("donkey.kind", t.kind),
                 strAttr("donkey.session", t.sessionId), strAttr("donkey.user", t.userId),
                 strAttr("donkey.provider", t.provider), boolAttr("donkey.streamed", t.streamed),
@@ -63,7 +64,7 @@ proc otlpTraceJson*(t: TurnTrace; traceIdHex, spanIdHex: string): string =
     attrs.add strAttr("donkey.agent_provider", t.agentProvider)
   var events = newJArray()
   for call in t.tools:
-    events.add(%* {"timeUnixNano": nanos(t.startedMs + t.durationMs), "name": "tool " & call.name,
+    events.add(%* {"timeUnixNano": nanos(endMs), "name": "tool " & call.name,
                    "attributes": [strAttr("donkey.tool.outcome", call.outcome)]})
   let code =
     case t.outcome
@@ -73,7 +74,7 @@ proc otlpTraceJson*(t: TurnTrace; traceIdHex, spanIdHex: string): string =
   let span = %* {
     "traceId": traceIdHex, "spanId": spanIdHex, "name": "donkey.turn " & t.kind,
     "kind": 1, "startTimeUnixNano": nanos(t.startedMs),
-    "endTimeUnixNano": nanos(t.startedMs + t.durationMs),
+    "endTimeUnixNano": nanos(endMs),
     "attributes": attrs, "events": events, "status": {"code": code}}
   $(%* {"resourceSpans": [{
     "resource": {"attributes": [strAttr("service.name", "donkey")]},
