@@ -5,16 +5,17 @@
 > [`docs/prd/PRD-roadmap.md`](prd/PRD-roadmap.md), um épico por frente.
 > Decisões abaixo tomadas pelo mantenedor em 25/11/2026.
 
-## 1. Onde estamos (26/11/2026, `master` em `be79ef4b`)
+## 1. Onde estamos (26/11/2026, `master` em `d3e20826`)
 
-- **Código:** 387 módulos e ~83 mil linhas em `src/`, 397 arquivos de teste,
-  suíte completa verde (387 alvos). Arquitetura hexagonal com as fronteiras
-  verificadas por testes de arquitetura.
-- **Cobertura estimada:** ~80,7% (faixa 78–83%), contra ~91,7% do Hermes e
+- **Código:** 398 módulos e ~85 mil linhas em `src/`, 409 arquivos de teste,
+  suíte completa verde. Arquitetura hexagonal com as fronteiras verificadas
+  por testes de arquitetura.
+- **Cobertura estimada:** ~83% (faixa 80–86%), contra ~91,9% do Hermes e
   ~73,8% do Pincer; quadro por domínio em
-  `COMPARATIVO_DONKEY_PINCER_HERMES.md` (25/11), que sucede a série
-  `COBERTURA_HERMES_VS_DONKEY_V*`. Fica abaixo dos ~84% projetados para
-  E1–E6 porque as frentes entraram com recortes (§3).
+  `COMPARATIVO_DONKEY_PINCER_HERMES.md` (26/11), que sucede a série
+  `COBERTURA_HERMES_VS_DONKEY_V*`: ~82,4% depois da segunda rodada, mais o
+  auto-aprimoramento (E7), que soma memória de procedimento às ferramentas e
+  à memória.
 - **Canais (19):** Telegram, Discord, Slack, WhatsApp (Cloud API), Microsoft
   Teams, Google Chat, Mattermost, WeCom, WeChat, QQ (OneBot e oficial),
   Feishu, DingTalk, LINE, Matrix, Signal, IRC, SMS (Twilio), Email, CLI;
@@ -32,6 +33,10 @@
   arquivo e por OpenTelemetry (OTLP/HTTP).
 - **Entregas:** respostas que um canal recusa vão para uma fila de mensagens
   mortas e são reenviadas (1, 5 e 30 minutos); `donkey ctl deliveries`.
+- **Auto-aprimoramento:** o agente escreve skills (`SKILL.md`) por pessoa,
+  guardadas por uma guarda que bloqueia antes de gravar; uma revisão em
+  segundo plano guarda o que merece, um curador consolida e arquiva, e
+  `/learn`, `/refine`, `ctl skill learned` e `ctl insights` completam o ciclo.
 
 ## 2. Primeira rodada: frentes decididas, todas feitas
 
@@ -62,6 +67,10 @@ O que cada frente deixou de fora ao ser implementada. Nenhum está agendado.
 | Mensagens do Mattermost com o socket caído | 2ª rodada, frente 1 | não são reapresentadas ao reconectar |
 | Fila de mensagens mortas para ferramentas | 2ª rodada, frente 4 | só envios entram na fila: a falha de uma ferramenta volta ao modelo no mesmo turno, e um reenvio depois não teria quem recebesse o resultado |
 | Resposta longa reenviada pela fila | 2ª rodada, frente 4 | uma resposta dividida que falhou no meio volta inteira, e os primeiros pedaços podem se repetir |
+| Promover uma skill para todas as pessoas | E7 | estava na decisão (o operador promove à mão) e não foi feito: as skills são só por pessoa |
+| Revisão de memória | E7.4 | a revisão cuida só de skills; os fatos ficam com o MAGMA, que já guarda cada turno relevante |
+| `/insights` no chat e custo | E7.8 | só `donkey ctl insights`, e sem custo estimado (o Donkey não mantém tabela de preços) |
+| Jornada como grafo | E7.7 | só em texto (`ctl` e TUI); o Hermes desenha um grafo no desktop |
 
 ## 4. Segunda rodada (aprovada em 25/11)
 
@@ -94,16 +103,29 @@ comandos destrutivos.
 
 | História | Entrega | Estado |
 |---|---|---|
-| E7.1 Skills aprendidas | `SKILL.md` por pessoa no paddock, validação, guarda, proveniência, arquivar em vez de apagar | Em andamento |
-| E7.2 `skill_manage` e `skill_view` | O agente cria, edita, corrige, arquiva e restaura; índice no prompt, com nota quando muda na sessão | — |
-| E7.3 Uso | Contagem e último uso por skill | — |
-| E7.4 Revisão em segundo plano | A cada N turnos, uma cópia do agente com o modelo auxiliar relê a conversa e salva skills e memória | — |
-| E7.5 `/refine` e `/learn` | Revisão imediata; uma fonte vira skill | — |
-| E7.6 Curador | Ocioso: consolida e arquiva, nunca apaga; backup e rollback | — |
-| E7.7 Jornada | Listar, ver, arquivar e restaurar o aprendido (`ctl`, TUI, comando) | — |
-| E7.8 Insights | `/insights`: uso de ferramentas e skills, tokens e custo | — |
+| E7.1 Skills aprendidas | `SKILL.md` por pessoa no paddock, validação, guarda, proveniência, arquivar em vez de apagar | **Feito** (#220) |
+| E7.2 `skill_manage` e `skill_view` | O agente cria, edita, corrige, arquiva e restaura; o índice entra no prompt a cada turno (sem cache de prompt, a nota de diferença do Hermes não é necessária) | **Feito** (#221) |
+| E7.3 Uso | Contagem e último uso por skill | **Feito** (#222) |
+| E7.4 Revisão em segundo plano | A cada 10 turnos ou 15 chamadas de ferramenta, uma cópia do agente com o modelo auxiliar guarda o que merece virar skill | **Feito** (#223) |
+| E7.5 `/refine` e `/learn` | Revisão imediata; uma fonte vira skill, como turnos com prompt próprio | **Feito** (#224) |
+| E7.6 Curador | No máximo a cada 7 dias: backup, arquiva o que não é usado há 90 dias (nunca o que a pessoa escreveu), funde quase duplicatas; `ctl skill rollback` | **Feito** (#225) |
+| E7.7 Jornada | `ctl skill learned` e o detalhe da pessoa na TUI | **Feito** (#226) |
+| E7.8 Insights | `donkey ctl insights`: turnos, tokens, ferramentas e falhas, providers, skills mais carregadas | **Feito** (#227); correções das revisões em #228 |
 
-## 6. Decidido não fazer
+## 6. Candidatas para a próxima rodada
+
+Nenhuma decidida. Do comparativo de 26/11 e do que as rodadas deixaram.
+
+| Ordem | Frente | Por quê | Referência |
+|---:|---|---|---|
+| 1 | Cache de prompt | O Donkey não usa nenhum: paga o contexto inteiro a cada turno. Marcadores `cache_control` na Anthropic, leitura de tokens cacheados, compactação antes de expirar | Hermes `caching`, `compression` |
+| 2 | Mídia nos canais novos e no Teams | Google Chat, Mattermost, SMS (MMS), IRC e Teams só com texto | Hermes `plugins/platforms` |
+| 3 | Interface para editores (ACP) | A maior distância restante (Interfaces, 72% contra 97%) | Hermes `acp_adapter` |
+| 4 | Canais restantes do Hermes | SimpleX, BlueBubbles, ntfy, A2A | Hermes `plugins/platforms` |
+| 5 | Escrita no GitHub com aprovação | Pede decisão sobre aprovação | Pincer `tools/github` |
+| 6 | Supervisão de adapters | Um `Defect` num adapter derruba o daemon | Pincer, árvore OTP |
+
+## 7. Decidido não fazer
 
 | Item | Motivo |
 |---|---|
@@ -114,7 +136,7 @@ comandos destrutivos.
 | Replay de traço | O traço não guarda conteúdo, por decisão de privacidade ("nunca o que foi dito"); reproduzir um turno exigiria guardar mensagens e saídas de ferramentas. A frente 3 da segunda rodada ficou na exportação OpenTelemetry. |
 | Bots isolados (usuários e memória por bot) | Multi-bot é só fachada (E3); isolamento total seria uma instância por cliente. |
 
-## 7. Pendências fora do código
+## 8. Pendências fora do código
 
 - Revogar a chave da OpenRouter que foi colada numa conversa (criar outra) e
   conferir no painel o uso desde então.
@@ -124,11 +146,13 @@ comandos destrutivos.
 - Confirmar na documentação da Meta se um BSUID (`BR.…`) pode ser destinatário
   de resposta (WA-009).
 
-## 8. Como cada frente é executada
+## 9. Como cada frente é executada
 
 As regras de sempre: TDD com vermelho visível; suíte completa, build e
 checagem de fronteiras verdes antes do primeiro push de cada PR; nas
 correções da revisão, só os testes dos arquivos tocados e o build (o CI roda
 a suíte inteira a cada push); um PR por história, merge só com CI verde e
-revisão respondida, nenhuma linha de atribuição. O que não chega ao
+revisão respondida, nenhuma linha de atribuição. Todo comando em segundo
+plano tem limite de tempo (`timeout`), e um hook do Claude Code avisa, ao
+fim de cada resposta, quais ainda rodam. O que não chega ao
 daemon não conta.
