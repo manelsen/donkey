@@ -368,10 +368,18 @@ compacta antes de ele expirar, aprende como cada rota cacheia).
   `doctor` (últimos 7 dias). Sem filtro por provider (o rótulo pode ser uma
   rota inteligente); o aviso cita as duas causas, provider sem cache ou
   começo do prompt que muda.
-- **E8.5 Compactação ciente do cache.** Quando o histórico precisar
-  encolher, encolher de uma vez, em degrau, e de preferência quando o cache
-  já teria expirado (sessão parada por mais que o TTL), nunca um pouco a cada
-  turno. Opcional, decidido depois de medir o E8.3: aquecer o cache
+- **E8.5 Compactação.** Mapeado em 26/11: o histórico nunca encolhia (o
+  `/compact` era um esboço; o módulo antigo foi apagado por não ter uso), e
+  uma sessão longa acabaria passando do contexto do modelo. *Decisões
+  (26/11):* compactar passado 40% do contexto de um modelo de 1M tokens e 60%
+  de um menor; o resumo é escrito pelo modelo da sessão; módulo novo.
+  *Feito:* no começo do turno, em degrau (nunca uma janela que desliza): a
+  parte antiga vira um resumo e a cauda recente (um quarto do limite, a
+  partir de uma mensagem da pessoa) fica como estava. Logo depois de um turno
+  o cache está quente, então um histórico pouco acima do limite espera uma
+  pausa de 5 minutos; 25% acima, compacta na hora. O tamanho do contexto vem
+  do catálogo de modelos (128k quando desconhecido). `/compact` faz o mesmo
+  passo sob pedido. Fica para depois, se a medição pedir: aquecer o cache
   (`max_tokens: 0`) antes de um agendamento.
 
 *Aceite geral:* nenhuma mudança no que o modelo recebe, só na ordem; custo

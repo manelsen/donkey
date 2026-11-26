@@ -81,6 +81,8 @@ import ./credential_runtime
 import ./onboarding_runtime
 import ./tool_loop_runtime
 import ./subagent_runtime
+import ./compaction
+import ../domain/compaction_pure
 import ./prompt_building
 import ./provider_executor
 import ./review_runtime
@@ -166,6 +168,7 @@ type OrchestratorState = object
   journal*:       TurnJournalPort ## turns in flight, for resuming after a crash
   botPersonas*:   BotPersonas     ## the operator's personas for `[[bots]]` (E3)
   turnId*:        string          ## the journal id of the turn running now
+  lastTurnEndedMs*: int64         ## when the last turn ended: is the prompt cache still warm
 
 func newOrchestratorState*(): OrchestratorState =
   OrchestratorState(
@@ -418,11 +421,6 @@ proc handleControlTask(globalOutbox: AsyncQueue[OutboundMessage];
       globalOutbox, uid, channel, replyTo, result.debugMode)
     result.handled = true
 
-  of tkCompact:
-    result.history = await onboarding_runtime.handleCompactControlTask(
-      globalOutbox, uid, channel, replyTo, result.history)
-    result.handled = true
-
   of tkNew:
     result.history = await onboarding_runtime.handleNewSessionTask(
       globalOutbox, memory, uid, channel, replyTo, sessionId, result.history)
@@ -632,6 +630,22 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
   if attachmentUrls.len > MaxAttachmentsPerTurn:
     log.warn("turn with " & $attachmentUrls.len & " attachments; keeping " &
              $MaxAttachmentsPerTurn)
+  ## E8.5: past a share of the model's context, the old part of the
+  ## conversation becomes a summary by the session's own model. A step, not a
+  ## window: the prompt cache keeps working between steps.
+  if asyncCompleteFn != nil:
+    let window = contextWindowOf(if routeModel.len > 0: routeModel else: providerLabel)
+    let idleMs =
+      if result.lastTurnEndedMs > 0: epochMs() - result.lastTurnEndedMs else: int64.high
+    if shouldCompact(estimateTokens(result.history), window, idleMs):
+      let compacted = await compactHistory(asyncCompleteFn, result.history,
+                                           compactionThreshold(window) div 4)
+      if compacted.isOk:
+        log.info($turnSetup.uid & ": compacted " & $result.history.len & " messages to " &
+                 $compacted.get.len)
+        result.history = compacted.get
+      else:
+        log.warn($turnSetup.uid & ": " & compacted.error)
   var history =
     if attachmentUrls.len > 0:
       addUserTurnWithImages(result.history, userPayload.text, attachmentUrls,
@@ -676,6 +690,7 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
     streamRoute = result.streamRouting.route,
     providerRuntime = result.streamRouting.runtime)
   let turnEndedMs = epochMs()
+  result.lastTurnEndedMs = turnEndedMs
   recordTurn(channelLabel(msg.channel), turnKindLabel(msg.taskKind),
              float(turnEndedMs - turnStartedMs), ok = not loopResult.providerFailed)
   ## The turn's own account, when traces are on (app/turn_traces): what
@@ -835,6 +850,23 @@ proc handleActorTask(globalOutbox: AsyncQueue[OutboundMessage];
         enabled = consolidationEnabled(result.env))
       if consolidation.completed:
         result.lastConsolidatedFingerprint = fingerprint
+
+  ## /compact (E8.5): the same step as the automatic one, on demand.
+  if msg.taskKind == tkCompact:
+    let window = contextWindowOf(providerLabel)
+    let compacted = await compactHistory(asyncCompleteFn, result.history,
+                                         compactionThreshold(window) div 4)
+    let reply =
+      if compacted.isOk:
+        let before = result.history.len
+        result.history = compacted.get
+        "Conversa compactada: " & $(before - compacted.get.len + 1) &
+          " mensagens antigas viraram um resumo."
+      else:
+        "Nada compactado (" & compacted.error & ")."
+    await onboarding_runtime.sendReplyText(globalOutbox, uid, msg.channel, msg.replyTo, reply)
+    saveNumberedSession(memory, uid, sessionId, state, result.history)
+    return
 
   ## /reset and /new save the transcript inside the control task.
   numberMessages(result.history, state.messageSeq)

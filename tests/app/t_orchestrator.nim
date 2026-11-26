@@ -465,6 +465,55 @@ proc runTests*() =
       check next.replyKind == rkFinalAnswer
       check next.text == "pong"
 
+    test "/compact turns the old part of the conversation into the model's summary (E8.5)":
+      let tmpDir = getTempDir() / "donkey_test_orch_compact"
+      removeDir(tmpDir)
+      defer: removeDir(tmpDir)
+
+      proc doTest(dir: string): Future[(string, string)] {.async.} =
+        let user = UserId("u-compact")
+        let userDir = dir / $user
+        createDir(userDir)
+        writeFile(userDir / "USER.md", "# Compact test user")
+        let inbox = newAsyncQueue[AgentMessage]()
+        let outbox = newAsyncQueue[OutboundMessage]()
+        let summarize: AsyncCompleteFn =
+          proc(req: CompletionRequest): Future[Result[CompletionResponse, string]] {.async.} =
+            if "compacting" in req.system:
+              return ok(CompletionResponse(text: "Resumo: falamos de Nim."))
+            return ok(CompletionResponse(text: "pong"))
+        let mem = MdFileAdapter(paddocksDir: dir)
+        var session = makeSessionEntry()
+        session.inbox = inbox
+        let actor = runOrchestrator(inbox, addr session, outbox, mem.toRuntimePort(),
+          stubComplete, newStdHttpAdapter().toRuntimePort(), StreamFactory(), @[],
+          @[], userDir, newSessionState(), env = fastDebounce(), asyncCompleteFn = summarize)
+        try:
+          for i in 0 ..< 4:
+            await inbox.put(newTaskMsg("m" & $i, tkUserMsg, $user, $i & " " & "x".repeat(30_000)))
+            while true:
+              let got = await outbox.get().wait(seconds(3))
+              if got.replyKind == rkFinalAnswer: break
+          await inbox.put(newTaskMsg("c", tkCompact, $user, ""))
+          var reply = ""
+          while true:
+            let got = await outbox.get().wait(seconds(3))
+            if "ompact" in got.text:
+              reply = got.text
+              break
+          await inbox.put(newTaskMsg("after", tkUserMsg, $user, "e agora?"))
+          var seenSummary = ""
+          while true:
+            let got = await outbox.get().wait(seconds(3))
+            if got.replyKind == rkFinalAnswer: break
+          return (reply, seenSummary)
+        finally:
+          await inbox.put(newCancelMsg())
+          await actor.wait(seconds(4))
+
+      let (reply, _) = waitFor doTest(tmpDir)
+      check reply.startsWith("Conversa compactada:")
+
     test "@name makes the turn the named agent's: persona, notes, its model":
       let tmpDir = getTempDir() / "donkey_test_orch_named_agent"
       removeDir(tmpDir)
