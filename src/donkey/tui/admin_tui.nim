@@ -485,7 +485,9 @@ proc loadApprovalItems*(st: var AdminState) =
   st.items = @[]
   if st.config.home.len == 0: return
   let pending = newApprovalStore(st.config.home / "state" / "approvals.json").listPending()
-  if pending.isOk:
+  if pending.isErr:
+    st.items.add AdminItem(name: "error", description: pending.error, status: "error")
+  else:
     for r in pending.get:
       st.items.add AdminItem(name: r.id, description: r.userId & " · " & r.toolName &
         " · " & r.summary, enabled: true, status: "pending")
@@ -562,11 +564,14 @@ proc applyAdminKey*(st: var AdminState; key: AdminKey): Result[string, string] =
       of akReject: rejectPairing(store, item.name)
       else: err("A approves, X rejects")
     of asApprovals:
-      if item.status == "standing":
+      if item.status == "error":
+        err("the approvals file cannot be read: " & item.description)
+      elif item.status == "standing":
+        let rest = item.name[min(StandingPrefix.len, item.name.len) .. ^1]
+        let space = rest.find(' ')
         if key != akDelete: err("D revokes an approval that stands")
+        elif space <= 0: err("not a standing approval: " & item.name)
         else:
-          let rest = item.name[StandingPrefix.len .. ^1]
-          let space = rest.find(' ')
           let standing = newStandingApprovals(home / "state" / StandingApprovalsFile).toStandingPort()
           standing.revoke(rest[0 ..< space], rest[space + 1 .. ^1]).map(
             proc(): string = "Revoked " & rest[space + 1 .. ^1] & " for " & rest[0 ..< space])

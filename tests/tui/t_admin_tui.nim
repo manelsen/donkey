@@ -867,6 +867,13 @@ summary: Test user detail view.
       check st.items.len == 0
       check not newStandingApprovals(cfg.home / "state" / StandingApprovalsFile).toStandingPort().has("u-1", "sampling:abc")
 
+    test "an unreadable approvals file shows an error row, not an empty list":
+      let cfg = adminHome("approvals-bad")
+      writeFile(cfg.home / "state" / "approvals.json", "{nope")
+      var st = stateAt(cfg, asApprovals)
+      check st.items.len >= 1 and st.items[0].status == "error"
+      check applyAdminKey(st, akApprove).isErr
+
     test "traces are listed, newest first, and cannot be changed":
       let cfg = adminHome("traces")
       createDir(cfg.home / "state" / "traces")
