@@ -287,7 +287,234 @@ foi feito. Tudo no §3 do roadmap.
 
 ---
 
+## Quarta rodada (proposta em 26/11, aguardando aprovação)
+
+Seis épicos, em ordem de ganho. Os números de API citados abaixo são da
+documentação dos providers em 26/11 e serão conferidos na implementação.
+
+---
+
+## E8 — Cache de prompt
+
+**Problema.** O Donkey não usa cache de prompt: a cada turno, e a cada
+rodada de ferramenta dentro do turno, o provider recebe e cobra o contexto
+inteiro (prompt de sistema, esquemas das ferramentas, histórico). Numa
+conversa longa com ferramentas, a maior parte do que se paga é texto que o
+provider acabou de ver. O cache cobra só uma fração por esse prefixo repetido
+e reduz o tempo até o primeiro token. O Hermes já faz isso (aquece o cache,
+compacta antes de ele expirar, aprende como cada rota cacheia).
+
+**Como o cache funciona (o que o desenho precisa respeitar).**
+- É casamento de prefixo, byte a byte. Na Anthropic a ordem é ferramentas →
+  sistema → mensagens; qualquer byte diferente invalida tudo o que vem
+  depois. Um horário, uma lembrança recuperada ou o índice de skills no meio
+  do prompt de sistema anulam o cache a cada turno.
+- **Anthropic** (e Bedrock, e OpenRouter para modelos `anthropic/*`):
+  - Marcação explícita: `cache_control: {type: "ephemeral"}` num bloco, até
+    4 marcadores. Também existe o modo automático (`cache_control` no topo do
+    pedido), que marca o último bloco e avança com a conversa.
+  - Prefixo mínimo por modelo: 512 tokens nos modelos 5.x e até 4096 em
+    alguns antigos. Um prefixo menor não cacheia e não dá erro.
+  - Escrita custa 1,25× a entrada (TTL de 5 minutos) ou 2× (TTL de 1 hora).
+  - Leitura custa cerca de 0,1× (0,05× no Opus 5.5 e no Sonnet 5.5).
+  - O uso vem em `cache_creation_input_tokens` e `cache_read_input_tokens`;
+    `input_tokens` é só o resto não cacheado.
+- **Caches automáticos, sem marcador:** OpenAI, DeepSeek e Gemini (implícito)
+  cacheiam sozinhos prefixos estáveis e informam no uso (respectivamente
+  `prompt_tokens_details.cached_tokens`, `prompt_cache_hit_tokens` e
+  `cachedContentTokenCount`). Para eles, o ganho vem só de o prefixo ser
+  estável.
+
+**Histórias**
+- **E8.1 Prefixo estável.** Separar o que não muda (persona, regras,
+  instruções das ferramentas, esquemas em ordem determinística) do que muda a
+  cada turno (lembranças do MAGMA e do Backtrail, índice de skills, data e
+  hora, notas da sessão). O volátil passa para depois do prefixo, como último
+  bloco do sistema ou junto da mensagem do turno. Mapear antes como o
+  histórico é limitado: uma janela que desliza a cada turno também quebra o
+  prefixo.
+  *Aceite:* dois turnos seguidos da mesma sessão produzem pedidos cujo
+  prefixo (ferramentas, sistema estável e histórico anterior) é idêntico byte
+  a byte, verificado por teste puro sobre o pedido montado.
+- **E8.2 Marcadores na Anthropic.** No dialeto Anthropic (adapter direto,
+  Bedrock e OpenRouter com modelo `anthropic/*`): um marcador explícito no
+  fim do sistema estável, mais o modo automático (ou um marcador no último
+  bloco, onde o automático não existe) para a cauda da conversa. TTL
+  configurável por rota (`cache_ttl = "5m" | "1h"`, padrão 5m).
+  *Aceite:* nas rodadas de ferramenta de um mesmo turno, a segunda chamada
+  em diante lê do cache (teste com resposta gravada e conferência manual com
+  chave real).
+- **E8.3 Tokens cacheados no uso.** `CompletionResponse` ganha `cacheRead` e
+  `cacheWrite`, lidos de cada dialeto (Anthropic, OpenAI e compatíveis,
+  DeepSeek, Gemini, Bedrock), também no streaming. Traços, métricas
+  Prometheus e `/insights` passam a mostrar a taxa de acerto por rota.
+- **E8.4 Detector de invalidação.** Uma rota que cacheia mas lê zero do
+  cache por N turnos seguidos numa mesma sessão gera um aviso no log e no
+  `doctor`, com o tamanho do prefixo (pode ser só um prefixo abaixo do
+  mínimo).
+- **E8.5 Compactação ciente do cache.** Quando o histórico precisar
+  encolher, encolher de uma vez, em degrau, e de preferência quando o cache
+  já teria expirado (sessão parada por mais que o TTL), nunca um pouco a cada
+  turno. Opcional, decidido depois de medir o E8.3: aquecer o cache
+  (`max_tokens: 0`) antes de um agendamento.
+
+*Aceite geral:* nenhuma mudança no que o modelo recebe, só na ordem; custo
+por turno medido antes e depois numa conversa de referência com ferramentas.
+
+*Decisões a tomar:* TTL padrão (5m é o mais barato para conversas ativas);
+onde fica o volátil (fim do sistema ou começo da mensagem do turno: o
+primeiro é mais simples, o segundo deixa o sistema inteiro cacheável).
+
+---
+
+## E9 — Mídia nos canais novos
+
+**Problema.** Google Chat, Mattermost, SMS, IRC e Teams entraram só com
+texto: uma foto, um áudio ou um PDF enviado ali não chega ao agente, e o
+agente não manda arquivos de volta. Os canais antigos já fazem isso pelo
+mesmo caminho (`mediaPaths` na entrada, anexos na saída, transcrição e
+`inspect_image`).
+
+**Histórias**
+- **E9.1 Mattermost.** Entrada: os `file_ids` do post são baixados pela API
+  de arquivos. Saída: o anexo é enviado com `POST /files` e citado no post.
+- **E9.2 Google Chat.** Entrada: anexos da mensagem pela API de mídia, com o
+  token da conta de serviço. Saída: upload de anexo; cartões (cardsV2) para
+  pedidos de aprovação.
+- **E9.3 SMS → MMS.** Entrada: `NumMedia` e `MediaUrlN` do webhook da Twilio,
+  baixados com autenticação. Saída: `MediaUrl` exige uma URL pública; o
+  Donkey serve o arquivo por um link assinado e com prazo, ou o canal
+  responde só com texto (decisão abaixo).
+- **E9.4 Teams.** Entrada: anexos (imagens inline e arquivos do OneDrive por
+  `downloadUrl`). Saída: arquivos e Adaptive Cards para aprovações.
+- **E9.5 IRC.** Só links: o protocolo não carrega arquivos (DCC fica fora).
+  Na entrada, uma URL de imagem pode ir ao `inspect_image` por decisão do
+  agente, como em qualquer canal.
+
+*Aceite geral:* uma foto e um áudio mandados em cada canal chegam ao agente
+como nos canais antigos (teste com servidor falso por canal); limites de
+tamanho por canal respeitados com mensagem clara.
+
+*Decisões a tomar:* servir arquivos por URL pública assinada (exige o
+endpoint HTTP do daemon exposto) ou MMS só de entrada.
+
+---
+
+## E10 — Interface para editores (ACP)
+
+**Problema.** A maior distância restante do comparativo está em Interfaces
+(72% contra 97% do Hermes). O Agent Client Protocol (ACP), usado pelo Zed e
+por extensões de outros editores, deixa o editor conversar com um agente por
+JSON-RPC sobre stdin e stdout: o editor abre sessões, manda prompts, recebe
+a resposta em pedaços, vê as chamadas de ferramenta e responde a pedidos de
+permissão.
+
+**Histórias**
+- **E10.1 `donkey acp`.** Um subcomando que fala ACP com o editor e repassa
+  ao daemon pela IPC já existente (o mesmo caminho do `ctl` e da API
+  compatível com OpenAI); nada de laço novo. `initialize`, `session/new`,
+  `session/prompt`, `session/cancel`.
+- **E10.2 Streaming e ferramentas.** Pedaços da resposta como
+  `session/update`; cada chamada de ferramenta aparece com título e estado.
+- **E10.3 Aprovações.** Os pedidos de aprovação do Donkey (ferramentas
+  perigosas, sampling) viram `session/request_permission` no editor.
+- **E10.4 Contexto do editor.** Arquivos anexados ao prompt pelo editor
+  entram como anexos do turno; leitura de arquivos pelo editor
+  (`fs/read_text_file`) só se o editor oferecer e com aprovação.
+
+*Aceite geral:* uma sessão no Zed conversa com o agente nomeado escolhido,
+vê as ferramentas rodando e aprova ou recusa uma ação perigosa.
+
+*Decisões a tomar:* que identidade o editor usa (o operador local, um
+usuário escolhido por token, ou um par por `ctl pair`); se a sessão do
+editor compartilha memória com a pessoa nos outros canais (o padrão do
+Donkey diz que sim).
+
+---
+
+## E11 — Canais restantes
+
+**Problema.** O Hermes tem 26 plataformas; o Donkey, 19. Faltam quatro
+relevantes para equipes pequenas.
+
+**Histórias, da mais simples à mais trabalhosa**
+- **E11.1 ntfy.** Publicar notificações num tópico (agendamentos, alertas,
+  respostas longas) e, opcionalmente, ouvir um tópico de entrada. HTTP
+  simples, servidor próprio ou ntfy.sh.
+- **E11.2 SimpleX.** Pelo `simplex-chat` em modo servidor (API WebSocket
+  local). Sem identificador global de usuário: o pareamento é pelo contato.
+- **E11.3 BlueBubbles (iMessage).** API REST e webhooks de um servidor
+  BlueBubbles num Mac do operador.
+- **E11.4 A2A.** O protocolo Agent2Agent: o Donkey publica um agent card e
+  recebe tarefas de outros agentes por JSON-RPC; o agente remoto vira uma
+  identidade como qualquer canal, com pareamento.
+
+*Aceite geral:* cada canal com servidor falso nos testes, documentação em
+`docs/topics/channels.md` e estado de conexão no status.
+
+*Decisões a tomar:* se A2A entra nesta rodada (é o maior e o menos pedido);
+se o Donkey também chama agentes A2A (cliente) ou só os atende.
+
+---
+
+## E12 — Escrita no GitHub com aprovação
+
+**Problema.** A ferramenta `github` só lê. Abrir uma issue, comentar num PR
+ou numa issue e pôr um rótulo são pedidos comuns de equipe, e o Pincer já os
+faz.
+
+**Histórias**
+- **E12.1 Ações de escrita.** `create_issue`, `comment` (issue ou PR),
+  `add_labels`, `close_issue`; sem merge, push ou apagar.
+- **E12.2 Aprovação.** Cada escrita passa pelo mecanismo de aprovação que já
+  existe (o mesmo das ferramentas perigosas e do sampling), mostrando à
+  pessoa o texto exato que será publicado e onde.
+- **E12.3 Escopo.** Uma lista de repositórios permitidos por instância (ou
+  por pessoa), e o token com o menor escopo que serve; recusa fora da lista.
+
+*Aceite geral:* nada é publicado sem aprovação explícita, salvo o que a
+política permitir; o texto publicado é o aprovado, byte a byte.
+
+*Decisões a tomar:* aprovação por ação sempre, ou uma política por
+repositório que libera algumas ações; token da instância ou de cada pessoa.
+
+---
+
+## E13 — Supervisão de adapters
+
+**Problema.** O Donkey compila com `--panics:on`: um `Defect` (índice fora
+do limite, nil, asserção) em qualquer adapter derruba o daemon inteiro e
+todos os canais com ele. A retomada de turno (E1) e o systemd limitam o
+estrago, mas a queda é de todos. No Pincer, a árvore OTP reinicia só o
+pedaço que falhou. Em Nim, um `Defect` com panics ligado não pode ser
+capturado; isolar exige outro processo.
+
+**Histórias**
+- **E13.1 Mapa de riscos.** Levantar onde um `Defect` pode nascer nos
+  adapters (indexação de dados externos, `get` de `Option`, conversões) e
+  trocar por erro como valor; um teste de arquitetura impede a volta dos
+  padrões mais perigosos nos parsers de canal.
+- **E13.2 Reinício por adapter.** Um laço de supervisão por canal: um erro
+  capturável derruba só o adapter, que volta com espera crescente e aparece
+  no status como `restarting`, sem afetar os outros.
+- **E13.3 Adapters fora do processo (opcional).** Para os canais de socket
+  mais arriscados, rodar o adapter num processo filho que fala com o daemon
+  pela fila de eventos; a queda dele é um reinício, não uma queda geral.
+
+*Aceite geral:* um adapter que falha repetidamente não interrompe os outros
+canais nem os turnos em curso.
+
+*Decisões a tomar:* se o E13.3 vale o custo (mais processos e IPC numa VPS
+pequena) ou se E13.1 e E13.2 bastam.
+
+---
+
 ## Ordem e dependências
 
 E1 → E2 → E3 (E3.6 depois de E2) → E4 → E5 → E6 (E6.5 depois de E5).
 E4 e E5 não dependem de E3 e podem andar em paralelo a ela se for útil.
+
+Quarta rodada (proposta): E8 → E9 → E10 → E11 → E12 → E13. Nenhum depende
+de outro; E8 vem primeiro porque reduz o custo de tudo o que vem depois, e
+E9.2 e E9.4 (cartões de aprovação) podem esperar E12.2 se a aprovação mudar
+de forma.
