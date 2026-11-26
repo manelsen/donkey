@@ -14,6 +14,8 @@ import donkey/app/route_health
 import donkey/ports/route_health_store
 import donkey/app/session_manager
 import donkey/app/daemon_endpoints
+import donkey/infra/connection_state
+import donkey/ports/ipc
 import donkey/core/providers/smart_routing
 
 var gEnqueued {.threadvar.}: seq[(InboundMessage, TaskKind, string)]
@@ -52,6 +54,23 @@ proc runTests*() =
       check st.uptimeSec == 42
       check st.routeCounts[0].route == "openrouter/a"
       check st.memoryBackend == "md"
+
+    test "each active channel has a connection state; counted sockets say how they are":
+      var sm: SessionManager
+      sm.init()
+      resetConnections()
+      socketStarted(ckDiscord); socketConnected(ckDiscord)
+      socketStarted(ckIrc)
+      let st = daemonStatus(sm, DaemonStatusInputs(channels: {ckTelegram, ckDiscord, ckIrc, ckMattermost}))
+      check st.channelStates.len == 4
+      proc stateOf(name: string): string =
+        for c in st.channelStates:
+          if c.name == name: return c.state
+      check stateOf("discord") == "connected"
+      check stateOf("irc") == "connecting"
+      check stateOf("mattermost") == "stopped"   ## a socket channel with no socket running
+      check stateOf("telegram") == "active"
+      check fromJsonStatus(st.toJson()).channelStates == st.channelStates
 
     test "every provider with recent calls is in the snapshot, not only the busiest five":
       var sm: SessionManager

@@ -11,7 +11,7 @@
 ##     POST https://api.sgroup.qq.com/v2/users/{openid}/messages
 ##     POST https://api.sgroup.qq.com/v2/groups/{group_openid}/messages
 
-import std/[json, net, os, strutils, tables, times]
+import std/[json, net, options, os, strutils, tables, times]
 import ../../core/pipeops
 import ../../domain/message
 import ../../ports/http
@@ -508,7 +508,7 @@ proc startGateway*(a: QQOfficialAdapter; intents = QQOfficialDefaultIntents;
     QQOfficialGatewayConfig(appId: a.appId, clientSecret: a.clientSecret,
                             apiBase: a.apiBase(), tokenBase: a.tokenBase(),
                             intents: intents),
-    defaultSocketPolicy(), log)
+    defaultSocketPolicy(), log, channel = some(ckQQ))
   if started.isErr:
     log.error("qq official: " & started.error)
     return

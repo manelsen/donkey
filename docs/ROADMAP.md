@@ -55,7 +55,7 @@ O que cada frente deixou de fora ao ser implementada. Nenhum está agendado.
 |---|---|---|
 | Teams com anexos e cartões | E2 | só texto entra e sai |
 | MCP sampling por HTTP | E5 | só servidores stdio podem pedir sampling |
-| Estado de conexão dos canais | E6 | o status do daemon não o informa; a TUI mostra os canais ativos (todos os 19 desde a 2ª rodada: antes a lista conhecia só 7) |
+| Estado de conexão dos canais por webhook e long poll | E6 | Discord, Mattermost, IRC e Slack e QQ em modo socket mostram se estão conectados (`connected`, `reconnecting c/r`, `stopped`); os demais aparecem como `active`, sem saber da conexão |
 | Skill novo de usuário | E5 | as ferramentas aparecem a partir da mensagem seguinte (listagem em segundo plano) |
 | Renovação de token OAuth do MCP por HTTP | E5 | ainda roda no laço (rara, com prazo próprio) |
 | Escrita no GitHub (abrir issue, comentar) | 2ª rodada, frente 2 | fora de propósito: o agente lê texto de terceiros; pede decisão sobre aprovação |

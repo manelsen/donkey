@@ -10,6 +10,7 @@ import donkey/core/log
 import donkey/core/pipeops
 import donkey/core/types
 import donkey/domain/message
+import donkey/infra/connection_state
 
 proc waitFor(cond: proc(): bool; ms = 5_000): bool =
   var waited = 0
@@ -100,6 +101,7 @@ proc runTests*() =
       check readUntil(client, "CAP END", seen)
       client.send(":srv 001 donkey :Welcome\r\n")
       check readUntil(client, "JOIN #donkey", seen)
+      check waitFor(proc(): bool = connectionCounts(ckIrc) == (running: 1, connected: 1))
       client.send("@account=belle :Belle!b@h PRIVMSG donkey :oi, tudo bem?\r\n")
       var got: IrcPrivmsg
       check waitFor(proc(): bool =
@@ -112,6 +114,7 @@ proc runTests*() =
       client.send("PING :xyz\r\n")
       check readUntil(client, "PONG :xyz", seen)
       stopIrc()
+      check connectionCounts(ckIrc) == (running: 0, connected: 0)
       client.close()
       server.close()
 

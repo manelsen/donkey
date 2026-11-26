@@ -162,7 +162,7 @@ proc runTests*() =
       st.loadChannelItems()
       let telegram = st.items.filterIt(it.name == "telegram")[0]
       check telegram.enabled == true
-      check telegram.status == "connected"
+      check telegram.status == "active"   ## no connection state reported: not claimed connected
 
     test "items can be toggled":
       var st = newAdminState()
@@ -975,6 +975,16 @@ summary: Test user detail view.
       check st.items[0].status == "4/4 ok · 900 ms"
       check st.items[1].status == "cooldown 2m"
       check not st.items[1].enabled          ## cooling down: not taking calls
+
+    test "the Channels section shows each channel's connection state":
+      var st = newAdminState()
+      st.runtimeChannels = @["discord", "irc"]
+      st.runtimeChannelStates = @[ChannelConnection(name: "discord", state: "connected"),
+                                  ChannelConnection(name: "irc", state: "reconnecting 0/1")]
+      st.section = asChannels
+      st.loadSection()
+      check st.items[0].status == "connected" and st.items[0].enabled
+      check st.items[1].status == "reconnecting 0/1"
 
     test "a section without actions says so":
       let cfg = adminHome("none")

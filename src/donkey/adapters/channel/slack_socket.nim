@@ -9,7 +9,7 @@
 ## stop) is adapters/network/persistent_socket's; this module is the
 ## protocol: find the URL, read envelopes, ack them.
 
-import std/[json, net, strutils, uri]
+import std/[json, net, options, strutils, uri]
 import ../../core/log
 import ../../core/pipeops
 import ../../ports/http
@@ -170,7 +170,7 @@ proc startSlackSocketMode*(appToken: string;
                  reconnectMaxMs: SlackSocketReconnectMaxMs,
                  idleTimeoutMs: SlackSocketIdleTimeoutMs,
                  recvTimeoutMs: 1_000),
-    logger)
+    logger, channel = some(ckSlack))
   ok()
 
 proc stopSlackSocketMode*() =

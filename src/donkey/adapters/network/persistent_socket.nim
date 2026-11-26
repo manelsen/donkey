@@ -15,13 +15,15 @@
 ## it is created on the thread and lives there across reconnections, so it
 ## may hold what the thread builds itself (an HTTP port, a logger).
 
-import std/[atomics, locks, monotimes, net, os, random, strutils, times, uri]
+import std/[atomics, locks, monotimes, net, options, os, random, strutils, times, uri]
 when defined(posix):
   import std/posix
 import ../../core/log
 import ../../core/pipeops
 import ../channel/ws_client
 import ../../infra/thread_handle
+import ../../infra/connection_state
+import ../../core/types
 
 export ws_client.WsClient, ws_client.WsFrame, ws_client.sendFrame
 export ws_client.WsOpcodeText, ws_client.WsOpcodeBin
@@ -76,6 +78,7 @@ type
     policy:   SocketPolicy
     logger:   LogSpec
     control:  ptr SocketControl
+    channel:  Option[ChannelKind]   ## counted in infra/connection_state when set
 
   PersistentSocket*[C, S] = object
     ## The daemon's handle: two pointers and no GC memory, so a channel can
@@ -141,6 +144,7 @@ proc runSession[C, S](args: SocketArgs[C, S]; state: var S; log: Logger;
     return
   opened = true
   log.info(args.name & ": connected")
+  if args.channel.isSome: socketConnected(args.channel.get)
   var lastActivity = getMonoTime()
   while not control.stop.load():
     result = args.protocol.tick(args.cfg, state, ws, epochMs(), log)
@@ -179,6 +183,9 @@ proc runSocket[C, S](args: SocketArgs[C, S]) {.thread, nimcall.} =
   let log = args.logger.toLogger
   let control = args.control
   defer: control.exited.store(true)
+  if args.channel.isSome: socketStarted(args.channel.get)
+  defer:
+    if args.channel.isSome: socketEnded(args.channel.get)
   randomize()
   var state: S
   var backoff = args.policy.reconnectMinMs
@@ -190,6 +197,8 @@ proc runSocket[C, S](args: SocketArgs[C, S]) {.thread, nimcall.} =
     except CatchableError as e:
       if not control.stop.load():
         log.warn(args.name & ": " & e.msg)
+    if opened and args.channel.isSome:
+      socketDisconnected(args.channel.get)
     if step == ssStop:
       log.error(args.name & ": stopped; reconnecting cannot fix this")
       return
@@ -205,7 +214,8 @@ proc runSocket[C, S](args: SocketArgs[C, S]) {.thread, nimcall.} =
 
 proc startPersistentSocket*[C, S](name: string; protocol: SocketProtocol[C, S];
                                   cfg: C; policy: SocketPolicy;
-                                  logger: Logger): Result[PersistentSocket[C, S], string] =
+                                  logger: Logger;
+                                  channel = none(ChannelKind)): Result[PersistentSocket[C, S], string] =
   ## Starts the connection's thread. `cfg` must be plain data: it is copied
   ## to the thread (a `ref` or a closure is refused at compile time).
   when not sharesNothing(C):
@@ -222,7 +232,7 @@ proc startPersistentSocket*[C, S](name: string; protocol: SocketProtocol[C, S];
   try:
     handle.thread = spawnThread(runSocket[C, S], SocketArgs[C, S](
       name: name, protocol: protocol, cfg: cfg, policy: policy,
-      logger: logger.spec, control: control))
+      logger: logger.spec, control: control, channel: channel))
   except CatchableError as e:
     deinitLock(control.fdLock)
     deallocShared(control)

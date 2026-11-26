@@ -15,7 +15,7 @@
 ##   Provider LLM calls (max ~10 s) block the event loop but not this thread.
 ##   Discord heartbeat interval is ~41 s; occasional missed beats are tolerated.
 
-import std/[json, net, os, random, strutils, sysrand, tables, times, uri]
+import std/[json, net, options, os, random, strutils, sysrand, tables, times, uri]
 import ../../core/log
 import ../../core/app_meta
 import ../../core/commands/command_catalog
@@ -779,7 +779,8 @@ proc startGateway*(a: DiscordAdapter; logger: Logger; bot = "") {.gcsafe.} =
                  (if bot.len > 0: bot else: "default") & " not started")
     return
   let started = startPersistentSocket("discord", DiscordGatewayProtocol,
-    DiscordGatewayConfig(token: a.token, bot: bot), defaultSocketPolicy(), logger)
+    DiscordGatewayConfig(token: a.token, bot: bot), defaultSocketPolicy(), logger,
+    channel = some(ckDiscord))
   if started.isErr:
     logger.error("discord: " & started.error)
     return
