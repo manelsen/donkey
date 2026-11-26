@@ -92,5 +92,28 @@ proc runTests*() =
       check newAdapter(Sent(), chatStatus = 403).send(
         OutboundMessage(channel: ckGoogleChat, text: "x", replyTo: "spaces/S1")).isErr
 
+proc runMediaTests*() =
+  suite "google chat adapter — attachments (E9.2)":
+
+    test "an attachment is downloaded with the app's token":
+      var gets: seq[(string, seq[HttpHeader])]
+      let http = HttpRuntimePort(
+        post: proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+          ok(HttpResponse(status: 200, body: """{"access_token":"ya29.t","expires_in":3600}""")),
+        get: proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+          {.cast(gcsafe).}: gets.add (url, headers)
+          ok(HttpResponse(status: 200, body: "PNGDATA")))
+      inc n
+      let dir = getTempDir() / ("donkey_gchat_" & $n)
+      removeDir(dir); createDir(dir)
+      let a = newGoogleChatAdapter(serviceAccountJson(), dir / "ids.tsv", dir / "spaces.json",
+        http = http, clock = proc(): int64 {.gcsafe.} = 1_800_000_000_000)
+      let d = a.downloadFile("AbC-123_xyz=")
+      check d.isOk and d.get.data.len == 7
+      check gets[0][0] == "https://chat.googleapis.com/v1/media/AbC-123_xyz=?alt=media"
+      check ("Authorization", "Bearer ya29.t") in gets[0][1]
+      check a.downloadFile("../x").isErr and gets.len == 1
+
 when isMainModule:
   runTests()
+  runMediaTests()

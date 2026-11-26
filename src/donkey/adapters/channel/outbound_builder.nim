@@ -212,7 +212,7 @@ proc ircOutboundPort*(a: ptr IrcAdapter): OutboundChannelPort =
   )
 
 proc googleChatOutboundPort*(a: ptr GoogleChatAdapter): OutboundChannelPort =
-  ## Send only, or unsupported without an adapter.
+  ## Text out, attachments in (E9.2), or unsupported without an adapter.
   OutboundChannelPort(
     send: if a != nil:
             proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
@@ -224,7 +224,11 @@ proc googleChatOutboundPort*(a: ptr GoogleChatAdapter): OutboundChannelPort =
     sendKeyboard: unsupportedSendKeyboard,
     editKeyboard: unsupportedEditKeyboard,
     setMessageReaction: unsupportedSetMessageReaction,
-    downloadFile: unsupportedDownloadFile,
+    downloadFile: if a != nil:
+                    proc(fileId: string): Result[FileDownload, string] {.gcsafe.} =
+                      a[].downloadFile(fileId)
+                  else:
+                    unsupportedDownloadFile,
   )
 
 type TeamsPick* = proc(userId: UserId): ptr TeamsAdapter {.gcsafe.}

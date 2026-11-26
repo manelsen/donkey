@@ -15,6 +15,7 @@ import ../../domain/message
 import ../../domain/channels/google_chat_pure
 import ../../infra/event_queue
 import ../../infra/fixed
+import ../../ports/channel
 import ../../ports/http
 import ../../ports/link_codes
 import ../crypto/rs256
@@ -239,6 +240,30 @@ proc send*(a: GoogleChatAdapter; msg: OutboundMessage): Result[void, string] =
     if resp.status notin 200 .. 299:
       return err("Google Chat: send status " & $resp.status)
   ok()
+
+const GoogleChatMaxDownloadBytes* = 25 * 1024 * 1024
+
+proc downloadFile*(a: GoogleChatAdapter; resourceName: string): Result[FileDownload, string] =
+  ## An uploaded attachment, through media.download with the app's own token
+  ## (scope chat.bot). Only a well-formed resource name reaches the URL; a
+  ## refused token is renewed once, as for a send.
+  if a.configError.len > 0:
+    return err("Google Chat: " & a.configError)
+  let url = ? mediaUrl(resourceName)
+  var token = ? a.accessToken()
+  var resp = ? a.http.get(url, @[("Authorization", "Bearer " & token)])
+  if resp.status == 401:
+    a.state.token = AccessToken()
+    token = ? a.accessToken()
+    resp = ? a.http.get(url, @[("Authorization", "Bearer " & token)])
+  if resp.status != 200:
+    return err("Google Chat: download status " & $resp.status)
+  if resp.body.len > GoogleChatMaxDownloadBytes:
+    return err("Google Chat: attachment larger than " &
+               $(GoogleChatMaxDownloadBytes div (1024 * 1024)) & " MB")
+  var data = newSeq[byte](resp.body.len)
+  for i in 0 ..< resp.body.len: data[i] = byte(resp.body[i])
+  ok(FileDownload(fileName: "attachment", fileSize: data.len.int64, data: data))
 
 proc newGoogleChatAdapter*(serviceAccountJson, identityPath, spacesPath: string;
                            http: HttpRuntimePort = HttpRuntimePort();

@@ -99,6 +99,13 @@ const
     sendKeyboard: false, editKeyboard: false, setMessageReaction: false,
     downloadFile: false, sendMedia: false, sendVoice: false)
 
+  ## Google Chat: text out, attachments in (E9.2); a Chat app cannot upload
+  ## (media.upload takes user authentication only).
+  GoogleChatCapability = ChannelCapabilityDescriptor(
+    send: true, sendReturnId: false, editMessage: false,
+    sendKeyboard: false, editKeyboard: false, setMessageReaction: false,
+    downloadFile: true, sendMedia: false, sendVoice: false)
+
   ## Mattermost: text and attachments both ways (E9.1).
   MattermostCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: false, editMessage: false,
@@ -147,7 +154,7 @@ proc channelCapabilityRegistry*(): ChannelCapabilityRegistry =
   result[ckMattermost] = MattermostCapability
   result[ckSms]        = TextOnlyCapability
   result[ckIrc]        = TextOnlyCapability
-  result[ckGoogleChat] = TextOnlyCapability
+  result[ckGoogleChat] = GoogleChatCapability
   for kind in [ckWeCom, ckWeChat, ckFeishu, ckSlack, ckWhatsApp]:
     result[kind].repliesToRequester = true
 
