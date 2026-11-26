@@ -3,7 +3,7 @@
 ## gets. Cadence and instructions after hermes-agent (MIT),
 ## agent/background_review.py and agent/review_signals.py.
 
-import std/[strutils, unittest]
+import std/[options, strutils, unittest]
 import donkey/config/environment
 import donkey/domain/message
 import donkey/domain/skills/review_pure
@@ -62,6 +62,24 @@ proc runTests*() =
       check "skill_manage" in ReviewInstructions
       check "secret" in ReviewInstructions.toLowerAscii
       check "nothing" in ReviewInstructions.toLowerAscii
+
+  suite "/learn and /refine (E7.5)":
+
+    test "/learn <source> asks the agent to turn the source into a skill":
+      let p = learningCommandPrompt("/learn https://docs.example.com/deploy").get
+      check "https://docs.example.com/deploy" in p and "skill_manage" in p
+
+    test "/learn alone means what we just did":
+      check "what we just did" in learningCommandPrompt("/learn").get.toLowerAscii
+
+    test "/refine asks for the review now, in the conversation":
+      let p = learningCommandPrompt("/refine").get
+      check "skill_manage" in p and "Worth a skill" in p
+
+    test "anything else is left alone; a bot mention after the command is fine":
+      check learningCommandPrompt("hello").isNone
+      check learningCommandPrompt("/learning is fun").isNone
+      check learningCommandPrompt("/refine@DonkeyBot").isSome
 
 when isMainModule:
   runTests()

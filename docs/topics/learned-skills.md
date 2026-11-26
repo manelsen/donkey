@@ -76,3 +76,14 @@ DONKEY_REVIEW_MODEL=<model>            # without them, the session's route
 
 Facts are not the review's job: the memory (MAGMA) already keeps each turn
 that matters.
+
+## /learn and /refine
+
+- `/learn <source>` — the agent turns the source (a path, a URL, pasted notes)
+  into a skill, gathering it with its own tools; `/learn` alone means what you
+  just did together. If a skill already covers it, the agent patches that one.
+- `/refine` — the review, now and in the conversation: the agent looks back
+  and keeps what deserves a skill, and tells you what it saved.
+
+Both are ordinary turns with a prompt of their own (as in Hermes), so they use
+the session's route and you see what happens.
