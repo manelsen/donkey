@@ -83,8 +83,10 @@ proc targetFor(a: MattermostAdapter; msg: OutboundMessage): Result[string, strin
   if msg.replyTo.strip.len > 0:
     return ok(msg.replyTo.strip)
   let sender = a.resolver.reverseChannel(msg.userId, ckMattermost)
+  if sender.len == 0:
+    return err("Mattermost: no channel known for user " & $msg.userId)
   let remembered = a.state.channels.getOrDefault(sender)
-  if sender.len == 0 or remembered.len == 0:
+  if remembered.len == 0:
     return err("Mattermost: no channel known for user " & $msg.userId)
   ok(remembered)
 

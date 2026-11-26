@@ -17,7 +17,8 @@
   E1–E6 porque as frentes entraram com recortes (§3).
 - **Canais (15):** Telegram, Discord, Slack, WhatsApp (Cloud API), Microsoft
   Teams, WeCom, WeChat, QQ (OneBot e oficial), Feishu, DingTalk, LINE, Matrix,
-  Signal, Email, CLI; multi-bot em Telegram, Discord, WhatsApp e Teams. Webhooks num receptor compartilhado; gateways de conexão permanente numa
+  Signal, Email, CLI; multi-bot em Telegram, Discord, WhatsApp e Teams.
+  Webhooks num receptor compartilhado; gateways de conexão permanente numa
   infraestrutura comum.
 - **Providers:** OpenRouter, Anthropic, OpenAI, DeepSeek, Gemini, MiniMax, ZAI,
   Groq, Ollama, OpenCode Go e Zen, NVIDIA, Alibaba, Fireworks, Mistral, Bedrock
@@ -37,7 +38,7 @@
 | 3 | Multi-bot | Vários bots por canal numa instância; só a fachada (token, nome, persona, modelo); usuários, memória e sessões são os da instância. Telegram, Discord, WhatsApp e Teams. **Feito** (persona do operador em `{home}/agents/`; o bot que responde é o último com que a pessoa falou) | Multiagente (~1) | E3 |
 | 4 | Kanban mínimo | Quadro de tarefas sem UI: ferramenta, comando e atribuição a agentes nomeados. **Feito** (`manage_tasks`, `/tasks`; tarefa de agente com prazo vira turno dele no dia) | Ferramentas (~1,5–2) | E4 |
 | 5 | MCP sampling | Permitido com aprovação a cada pedido, e aprovação permanente por servidor como opção. **Feito** para servidores stdio; nenhuma chamada de ferramenta segura mais o laço (MCP stdio e HTTP e skills Deno são assíncronos) | Extensibilidade (~0,5) | E5 |
-| 6 | Gestão pela TUI | Ampliar a TUI existente com ações de gestão; nada de UI web. **Feito**: usuários, pareamentos, agendamentos, aprovações (pendentes e permanentes), traços, agentes da instância (criar, editar e apagar num formulário) e saúde dos providers (chamadas, latência e cooldown da janela recente). O estado de conexão de cada canal não está no status do daemon: a seção de canais mostra os ativos | Interfaces (~1,5) | E6 |
+| 6 | Gestão pela TUI | Ampliar a TUI existente com ações de gestão; nada de UI web. **Feito**: usuários, pareamentos, agendamentos, aprovações (pendentes e permanentes), traços, agentes da instância (criar, editar e apagar num formulário) e saúde dos providers (chamadas, latência e cooldown da janela recente); o que ficou de fora está no §3 | Interfaces (~1,5) | E6 |
 
 Ganho somado estimado: ~6 pontos, para ~84%. Medido depois (comparativo de
 25/11): ~80,7%, pelos recortes do §3.
