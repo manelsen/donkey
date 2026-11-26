@@ -539,7 +539,14 @@ proc handleUserTurn(globalOutbox: AsyncQueue[OutboundMessage];
 
   var systemBase = buildSystemBase(agentTraits, agentName, toolsSuffix)
 
-  let userPayload = decodeUserPayload(msg.payload)
+  var userPayload = decodeUserPayload(msg.payload)
+  ## `/learn [source]` and `/refine` (E7.5) are turns with a prompt of their
+  ## own: the agent learns with the tools it has, in the conversation.
+  if msg.taskKind == tkUserMsg:
+    let learning = learningCommandPrompt(userPayload.text)
+    if learning.isSome:
+      userPayload.text = learning.get
+      turnSetup.userText = learning.get   ## the text the turn sends
   ## `@name` at the start makes this turn one of the user's named agents: its
   ## persona and notes, its model when it has one; the memory and the
   ## conversation stay shared (the message keeps its `@name` in the history).

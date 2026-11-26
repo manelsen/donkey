@@ -53,6 +53,13 @@ Donkey supports slash commands with semantic routing. Commands start with `/` an
 | `/agents` | Show active agents | `crUi` |
 | `/poll` | Show pending approvals | `crUi` |
 
+### Learning Commands
+
+| Command | Description | Route |
+|---------|-------------|-------|
+| `/learn [source]` | Turn a source (path, URL, notes; alone: what we just did) into a learned skill | a turn with its own prompt |
+| `/refine` | Review the conversation now and keep what deserves a skill | a turn with its own prompt |
+
 ### Memory Commands
 
 | Command | Description | Route |
