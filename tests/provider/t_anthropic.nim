@@ -44,9 +44,9 @@ proc runTests*() =
       h.addUser("hello")
       let req  = CompletionRequest(system: "You are Donkey.", messages: h)
       let body = newAnthropicAdapter("k").buildBody(req)
-      # system must be a top-level string, not inside messages array
+      # system is top-level (one block, with the cache marker), not inside messages
       check body.hasKey("system")
-      check body["system"].getStr().contains("Donkey")
+      check body["system"][0]["text"].getStr().contains("Donkey")
       # messages array should only contain user/assistant turns
       let msgs = body["messages"]
       for m in msgs:
@@ -83,12 +83,15 @@ proc runTests*() =
       let body = newAnthropicAdapter("k").buildBody(req)
       check not body.hasKey("system") or body["system"].getStr() == ""
 
-    test "content field is a string":
+    test "content field is a string (but the last, which carries the cache marker)":
       var h = newHistory()
       h.addUser("test")
+      h.addAssistant("ok")
+      h.addUser("again")
       let body = newAnthropicAdapter("k").buildBody(
         CompletionRequest(system: "", messages: h))
       check body["messages"][0]["content"].kind == JString
+      check body["messages"][1]["content"].kind == JString
 
     test "tools are serialized at top level":
       let req = CompletionRequest(
@@ -136,6 +139,47 @@ proc runTests*() =
       check body["messages"][0]["content"][0]["type"].getStr() == "tool_result"
       check body["messages"][0]["content"][0]["tool_use_id"].getStr() == "call_1"
       check body["messages"][0]["content"][0]["content"].getStr() == "4"
+
+  suite "AnthropicAdapter prompt cache markers (E8.2)":
+
+    proc toolTurn(): CompletionRequest =
+      var h = newHistory()
+      h.addUser("pesquisa")
+      h.addAssistantWithToolCalls("", @[ToolCallRequest(id: "c1", name: "web_search", inputJson: "{}")])
+      h.addToolResult("c1", "web_search", "achei", trkOutput)
+      CompletionRequest(system: "Você é o Donkey.", messages: h,
+                        tools: @[ToolDescription(name: "web_search", schemaJson: "{}")])
+
+    test "the system prompt is one block with a 5-minute marker":
+      let body = newAnthropicAdapter("k").buildBody(toolTurn())
+      check body["system"].kind == JArray and body["system"].len == 1
+      check body["system"][0]["text"].getStr == "Você é o Donkey."
+      check body["system"][0]["cache_control"] == %* {"type": "ephemeral"}
+
+    test "the last message's last block carries the moving marker":
+      let body = newAnthropicAdapter("k").buildBody(toolTurn())
+      let last = body["messages"][body["messages"].len - 1]
+      check last["content"][last["content"].len - 1]["type"].getStr == "tool_result"
+      check last["content"][last["content"].len - 1]["cache_control"] == %* {"type": "ephemeral"}
+      var marks = 0
+      for m in body["messages"]:
+        if m["content"].kind == JArray:
+          for b in m["content"]:
+            if b.hasKey("cache_control"): inc marks
+      check marks == 1                      ## two markers in all, of the four allowed
+
+    test "a plain text turn becomes a block to carry the marker":
+      var h = newHistory()
+      h.addUser("oi")
+      let body = newAnthropicAdapter("k").buildBody(CompletionRequest(system: "S", messages: h))
+      check body["messages"][0]["content"] == %* [{"type": "text", "text": "oi",
+                                                   "cache_control": {"type": "ephemeral"}}]
+
+    test "a compatible endpoint gets no markers":
+      let a = newAnthropicAdapter("k", baseUrl = "https://open.bigmodel.cn/api/anthropic")
+      let body = a.buildBody(toolTurn())
+      check body["system"].kind == JString
+      check "cache_control" notin $body
 
   suite "AnthropicAdapter parseResponse":
 
@@ -256,8 +300,8 @@ proc runTests*() =
       h.addUserWithImage("look", "data:image/png;base64,@@@")
       let body = newAnthropicAdapter("k").buildBody(
         CompletionRequest(system: "", messages: h))
-      check body["messages"][0]["content"].kind == JString
-      check body["messages"][0]["content"].getStr() == "look"
+      check body["messages"][0]["content"].len == 1   ## only the text, as one block
+      check body["messages"][0]["content"][0]["text"].getStr() == "look"
 
 when isMainModule:
   runTests()

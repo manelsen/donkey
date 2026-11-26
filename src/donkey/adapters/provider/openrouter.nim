@@ -98,12 +98,35 @@ func profileFor*(a: OpenRouterAdapter): CompatProfile =
 
 # ── JSON serialisation ────────────────────────────────────────────────────────
 
+proc markText(msg: JsonNode) =
+  ## The text of `msg` as one part carrying a 5-minute cache marker.
+  let content = msg{"content"}
+  if content.isNil: return
+  if content.kind == JString:
+    if content.getStr.len == 0: return
+    msg["content"] = %* [{"type": "text", "text": content.getStr,
+                          "cache_control": {"type": "ephemeral"}}]
+  elif content.kind == JArray and content.len > 0:
+    content[content.len - 1]["cache_control"] = %* {"type": "ephemeral"}
+
+proc withClaudeCacheMarkers(a: OpenRouterAdapter; body: JsonNode) =
+  ## E8.2: OpenRouter passes Anthropic's cache markers through for Claude
+  ## models; the others cache on their own. One closes the stable system
+  ## prompt, the other moves with the last message.
+  if not a.model.startsWith("anthropic/"): return
+  let msgs = body{"messages"}
+  if msgs.isNil or msgs.len == 0: return
+  if msgs[0]{"role"}.getStr == "system": markText(msgs[0])
+  if msgs.len > 1: markText(msgs[msgs.len - 1])
+
 proc buildBody*(a: OpenRouterAdapter; req: CompletionRequest): JsonNode =
   ## Exported for unit testing of JSON serialisation without live HTTP.
-  buildCompatRequestBody(a.profileFor(), a.model, req)
+  result = buildCompatRequestBody(a.profileFor(), a.model, req)
+  a.withClaudeCacheMarkers(result)
 
 proc buildStreamBody*(a: OpenRouterAdapter; req: CompletionRequest): JsonNode =
-  buildCompatRequestBody(a.profileFor(), a.model, req, stream = true)
+  result = buildCompatRequestBody(a.profileFor(), a.model, req, stream = true)
+  a.withClaudeCacheMarkers(result)
 
 # ── Response parsing ──────────────────────────────────────────────────────────
 

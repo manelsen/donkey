@@ -98,7 +98,7 @@ proc complete*(a: BedrockAdapter;
                "AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY)")
   providerGuard:
     let url = converseUrl(a.baseUrl, a.model)
-    let body = $converseBody(req)
+    let body = $converseBody(req, cache = bedrockCaches(a.model))
     let text = ? postProvider(a.http, "Bedrock", url, body,
                               a.requestHeaders(url, body))
     parseConverseResponse(parseJson(text))
@@ -115,7 +115,7 @@ proc makeStreamFn*(a: BedrockAdapter): StreamFn =
                  "AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY)")
     providerGuard:
       let url = converseStreamUrl(adapter.baseUrl, adapter.model)
-      let body = $converseBody(req)
+      let body = $converseBody(req, cache = bedrockCaches(adapter.model))
       let text = ? postProvider(adapter.http, "Bedrock", url, body,
         adapter.requestHeaders(url, body, accept = "application/vnd.amazon.eventstream"))
       converseStreamResponse(text, onToken)

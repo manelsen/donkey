@@ -344,6 +344,12 @@ compacta antes de ele expirar, aprende como cada rota cacheia).
   *Aceite:* nas rodadas de ferramenta de um mesmo turno, a segunda chamada
   em diante lê do cache (teste com resposta gravada e conferência manual com
   chave real).
+  *Feito:* sem o modo automático (que endpoints compatíveis podem não
+  aceitar), dois marcadores explícitos de 5 minutos: o fim do sistema e o
+  último bloco da última mensagem. Anthropic só na API oficial (o endpoint
+  compatível da Z.ai fica sem); Bedrock com `cachePoint`, só para modelos
+  Claude; OpenRouter só para `anthropic/*`. O TTL de 1 hora por rota fica
+  para quando a medição mostrar pausas maiores que 5 minutos.
 - **E8.3 Tokens cacheados no uso.** `CompletionResponse` ganha `cacheRead` e
   `cacheWrite`, lidos de cada dialeto (Anthropic, OpenAI e compatíveis,
   DeepSeek, Gemini, Bedrock), também no streaming. Traços, métricas

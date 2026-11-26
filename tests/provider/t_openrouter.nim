@@ -22,6 +22,29 @@ proc runTests*() =
     test "does not require user turn first":
       check not newOpenRouterAdapter("key").caps().requiresUserFirst
 
+  suite "OpenRouterAdapter prompt cache markers for Claude (E8.2)":
+
+    proc req(): CompletionRequest =
+      var h = newHistory()
+      h.addUser("oi")
+      h.addAssistant("olá")
+      h.addUser("tudo bem?")
+      CompletionRequest(system: "Você é o Donkey.", messages: h)
+
+    test "anthropic/* models: the system and the last message carry a marker":
+      let body = newOpenRouterAdapter("key", model = "anthropic/claude-sonnet-5.5").buildBody(req())
+      let msgs = body["messages"]
+      check msgs[0]["role"].getStr == "system"
+      check msgs[0]["content"] == %* [{"type": "text", "text": "Você é o Donkey.",
+                                       "cache_control": {"type": "ephemeral"}}]
+      check msgs[msgs.len - 1]["content"] == %* [{"type": "text", "text": "tudo bem?",
+                                                  "cache_control": {"type": "ephemeral"}}]
+      check msgs[1]["content"].kind == JString   ## the earlier turns are untouched
+
+    test "other models: no markers (their caches are automatic)":
+      let body = newOpenRouterAdapter("key", model = "openai/gpt-5").buildBody(req())
+      check "cache_control" notin $body
+
   suite "OpenRouterAdapter buildBody":
 
     test "system prompt becomes first message with role system":
