@@ -278,6 +278,13 @@ auxiliar barato configurável; guarda que bloqueia antes de gravar.
 gravação de skill passa pela guarda; a revisão nunca segura o laço nem muda
 a sessão em curso.
 
+*Feito (26/11, #220–#228).* As oito histórias. Desvios do plano: a revisão
+cuida só de skills (os fatos ficam com o MAGMA); o índice entra no prompt a
+cada turno, sem a nota de diferença do Hermes (que existe para preservar o
+cache de prompt, que o Donkey não usa); `/insights` é `donkey ctl insights`,
+sem custo; a jornada é texto; promover uma skill para todas as pessoas não
+foi feito. Tudo no §3 do roadmap.
+
 ---
 
 ## Ordem e dependências
