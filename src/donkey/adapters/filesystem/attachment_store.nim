@@ -72,6 +72,8 @@ proc writeExclusive(directory, fileName: string; data: seq[byte]): Result[string
           return err("attachment cannot be written")
         written += got
       if posix.close(fd) != 0:
+        ## The data may not have reached the disk: no partial file is left.
+        discard posixUnlinkAt(dirFd, name.cstring, 0)
         return err("attachment cannot be written")
       return ok(name)
     err("no free name for the attachment")
