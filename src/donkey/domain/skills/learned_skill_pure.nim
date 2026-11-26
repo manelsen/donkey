@@ -191,7 +191,7 @@ func skillsIndex*(skills: seq[SkillDoc]): string =
       result.add "- (" & $(skills.len - MaxIndexedSkills) & " more skills: skill_manage list)\n"
       break
     var d = s.description.replace("\n", " ")
-    if d.len > IndexDescChars: d = d[0 ..< IndexDescChars] & "…"
+    if d.runeLen > IndexDescChars: d = d.runeSubStr(0, IndexDescChars) & "…"
     result.add "- " & s.name & ": " & d & "\n"
 
 type
