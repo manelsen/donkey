@@ -76,6 +76,8 @@ import donkey/adapters/channel/teams_runtime
 import donkey/adapters/channel/mattermost
 import donkey/adapters/channel/mattermost_runtime
 import donkey/adapters/channel/mattermost_socket
+import donkey/adapters/channel/sms
+import donkey/adapters/channel/sms_runtime
 import donkey/adapters/channel/cli_repl
 import donkey/adapters/webhook/webhook_receiver
 import donkey/domain/channels/line_policy
@@ -241,6 +243,10 @@ type DaemonEnv = object
   teamsServiceHosts: seq[string]
   mattermostUrl: string     ## MATTERMOST_URL (https only)
   mattermostToken: string   ## MATTERMOST_TOKEN: the bot's personal access token
+  twilioAccountSid: string  ## TWILIO_ACCOUNT_SID
+  twilioAuthToken: string   ## TWILIO_AUTH_TOKEN: sends, and signs /webhook/sms
+  twilioFromNumber: string  ## TWILIO_FROM_NUMBER: the number replies come from
+  twilioWebhookUrl: string  ## TWILIO_WEBHOOK_URL: the exact URL Twilio calls
 
 type DaemonAdapters = object
   tg: TelegramAdapter
@@ -262,6 +268,7 @@ type DaemonAdapters = object
   ln: LineAdapter
   teams: TeamsAdapter
   mm: MattermostAdapter
+  sms: SmsAdapter
   mx: MatrixAdapter
   em: EmailAdapter
   wa: WhatsAppAdapter
@@ -306,7 +313,7 @@ proc buildRuntimeOutboundPorts(adapters: var DaemonAdapters): OutboundChannelPor
     addr adapters.wch, addr adapters.qq, addr adapters.fs, addr adapters.mx,
     addr adapters.em, addr adapters.sl, addr adapters.dt, addr adapters.wa,
     addr adapters.cli, signalPtr, addr adapters.ln, addr adapters.teams,
-    mattermostAdapter = addr adapters.mm,
+    mattermostAdapter = addr adapters.mm, smsAdapter = addr adapters.sms,
     tgPick = telegramPick(adapters), dcPick = discordPick(adapters),
     waPick = whatsappPick(adapters), teamsPick = teamsPick(adapters))
 
@@ -647,6 +654,10 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
   result.teamsServiceHosts = DefaultServiceHosts & parseChatIdList(cfg.env.get("TEAMS_SERVICE_HOSTS"))
   result.mattermostUrl = cfg.env.get("MATTERMOST_URL").strip()
   result.mattermostToken = cfg.env.get("MATTERMOST_TOKEN").strip()
+  result.twilioAccountSid = cfg.env.get("TWILIO_ACCOUNT_SID").strip()
+  result.twilioAuthToken = cfg.env.get("TWILIO_AUTH_TOKEN").strip()
+  result.twilioFromNumber = cfg.env.get("TWILIO_FROM_NUMBER").strip()
+  result.twilioWebhookUrl = cfg.env.get("TWILIO_WEBHOOK_URL").strip()
   result.matrixWebhookToken = cfg.env.get("MATRIX_WEBHOOK_TOKEN")
   result.whatsappVerifyToken = cfg.env.get("WHATSAPP_VERIFY_TOKEN")
   result.whatsappAppSecret = cfg.env.get("WHATSAPP_APP_SECRET")
@@ -710,6 +721,8 @@ proc initDaemonAdapters(cfg: DonkeyConfig; env: DaemonEnv): DaemonAdapters =
     env.teamsTenantId, env.identityPath,
     cfg.home / "state" / "teams_conversations.json",
     serviceHosts = env.teamsServiceHosts)
+  result.sms = newSmsAdapter(env.twilioAccountSid, env.twilioAuthToken,
+    env.twilioFromNumber, env.identityPath)
   result.mm = newMattermostAdapter(env.mattermostUrl, env.mattermostToken,
     env.identityPath, cfg.home / "state" / "mattermost_channels.json")
   (result.teamsBots, result.teamsBotProblems) =
@@ -978,6 +991,8 @@ proc startOptionalWebhookReceiver(env: DaemonEnv; qqOneBot: bool; log: Logger;
     teamsAppId:
       if env.teamsAppPassword.len > 0: env.teamsAppId else: "",
     teamsApps: teamsApps,
+    twilioAuthToken: env.twilioAuthToken,
+    twilioWebhookUrl: env.twilioWebhookUrl,
     tlsCertFile: env.webhookTlsCert,
     tlsKeyFile: env.webhookTlsKey,
   )
@@ -1299,6 +1314,7 @@ func outboundPortForChannel(ports: OutboundChannelPorts;
   of ckLine: ports.line
   of ckTeams: ports.teams
   of ckMattermost: ports.mattermost
+  of ckSms: ports.sms
 
 proc makeCompleteBuilder(): proc(preferencesMd: string): CompleteFn {.gcsafe.} =
   result = proc(preferencesMd: string): CompleteFn {.gcsafe.} =
@@ -1672,6 +1688,16 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
           err("Mattermost: outbox full, /continue reply dropped")
       drainMattermostEvents(ctx.adapters.mm, ctx.runtime.sm, fallback,
                             enqueueMattermostReply, log) > 0,
+    drainSms = proc(): bool =
+      if ctx.env.twilioAuthToken.len == 0 or ctx.env.twilioWebhookUrl.len == 0:
+        return false
+      let enqueueSmsReply = proc(msg: OutboundMessage): Result[void, string] {.gcsafe, raises: [].} =
+        try:
+          ctx.runtime.globalOutbox.putNoWait(msg)
+          ok()
+        except AsyncQueueFullError:
+          err("SMS: outbox full, local reply dropped")
+      drainSmsEvents(ctx.adapters.sms, ctx.runtime.sm, fallback, enqueueSmsReply, log) > 0,
     drainMatrix = proc(): bool =
       let count = drainMatrixGateway(
         ctx.env.matrixConfigured,
@@ -2109,6 +2135,9 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
       await sleepAsync(ctimer.milliseconds(500))
     ## Teams activities were answered 200 when queued: the same holds.
     if drainer.drainTeams():
+      await sleepAsync(ctimer.milliseconds(500))
+    ## So were SMS messages.
+    if drainer.drainSms():
       await sleepAsync(ctimer.milliseconds(500))
     ## Stop ingress first, then let already-admitted turns publish their replies.
     ## Connections accepted before the stop may have enqueued Feishu events;

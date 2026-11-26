@@ -29,7 +29,8 @@ proc runTests*() =
       ## Ordinals are part of persisted state: a new channel is appended.
       check ord(ckLine) == 13
       check ckTeams == succ(ckLine)
-      check ckMattermost == high(ChannelKind) and ckMattermost == succ(ckTeams)
+      check ckMattermost == succ(ckTeams)
+      check ckSms == high(ChannelKind) and ckSms == succ(ckMattermost)
 
   suite "capability — LINE":
 

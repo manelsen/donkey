@@ -137,6 +137,7 @@ proc channelCapabilityRegistry*(): ChannelCapabilityRegistry =
   result[ckLine]       = LineCapability
   result[ckTeams]      = TeamsCapability
   result[ckMattermost] = MattermostCapability
+  result[ckSms]        = MattermostCapability   ## SMS: text only, the same shape
   for kind in [ckWeCom, ckWeChat, ckFeishu, ckSlack, ckWhatsApp]:
     result[kind].repliesToRequester = true
 
