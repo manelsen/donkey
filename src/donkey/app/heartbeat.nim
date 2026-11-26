@@ -183,12 +183,15 @@ proc deliverHeartbeats*(fs: FsRuntimePort; paddocksDir: string;
     let unchecked = parseHeartbeatMd(content).filterIt(not it.checked)
     if unchecked.len == 0: continue
     let selected = unchecked[0 ..< min(unchecked.len, MaxHeartbeatTasksPerUser)]
-    outboxFn(userId, "", buildHeartbeatPrompt(selected))
+    ## The cooldown is saved before the dispatch: a state that cannot be
+    ## saved means no dispatch (at worst a heartbeat is missed), never the
+    ## same tasks sent again on the next cycle (audit of 26/11, finding 3).
     var newState = state
     newState.lastDispatchMs = nowMs
     saveHeartbeatState(fs, dir, newState).isOkOr:
-      ## Without the state the cooldown is lost and the tasks go out again.
-      log.warn("heartbeat: state of " & userId & " not saved: " & error)
+      log.warn("heartbeat: state of " & userId & " not saved, nothing dispatched: " & error)
+      continue
+    outboxFn(userId, "", buildHeartbeatPrompt(selected))
 
 # ── Async timer loop ──────────────────────────────────────────────────────────
 
