@@ -5,19 +5,20 @@
 > [`docs/prd/PRD-roadmap.md`](prd/PRD-roadmap.md), um épico por frente.
 > Decisões abaixo tomadas pelo mantenedor em 25/11/2026.
 
-## 1. Onde estamos (25/11/2026, `master` em `b645e3bb`)
+## 1. Onde estamos (26/11/2026, `master` em `be79ef4b`)
 
-- **Código:** 364 módulos e ~80 mil linhas em `src/`, 373 arquivos de teste,
-  suíte completa verde (364 alvos). Arquitetura hexagonal com as fronteiras
+- **Código:** 387 módulos e ~83 mil linhas em `src/`, 397 arquivos de teste,
+  suíte completa verde (387 alvos). Arquitetura hexagonal com as fronteiras
   verificadas por testes de arquitetura.
 - **Cobertura estimada:** ~80,7% (faixa 78–83%), contra ~91,7% do Hermes e
   ~73,8% do Pincer; quadro por domínio em
   `COMPARATIVO_DONKEY_PINCER_HERMES.md` (25/11), que sucede a série
   `COBERTURA_HERMES_VS_DONKEY_V*`. Fica abaixo dos ~84% projetados para
   E1–E6 porque as frentes entraram com recortes (§3).
-- **Canais (15):** Telegram, Discord, Slack, WhatsApp (Cloud API), Microsoft
-  Teams, WeCom, WeChat, QQ (OneBot e oficial), Feishu, DingTalk, LINE, Matrix,
-  Signal, Email, CLI; multi-bot em Telegram, Discord, WhatsApp e Teams.
+- **Canais (19):** Telegram, Discord, Slack, WhatsApp (Cloud API), Microsoft
+  Teams, Google Chat, Mattermost, WeCom, WeChat, QQ (OneBot e oficial),
+  Feishu, DingTalk, LINE, Matrix, Signal, IRC, SMS (Twilio), Email, CLI;
+  multi-bot em Telegram, Discord, WhatsApp e Teams.
   Webhooks num receptor compartilhado; gateways de conexão permanente numa
   infraestrutura comum.
 - **Providers:** OpenRouter, Anthropic, OpenAI, DeepSeek, Gemini, MiniMax, ZAI,
@@ -27,7 +28,10 @@
   temporal), busca em conversas antigas, Backtrail (roteador de perguntas sobre
   o passado), datas relativas. Os `.md` do paddock são a vista legível.
 - **Execução:** chamadas bloqueantes e streams fora do laço, em pools separados.
-- **Observabilidade:** métricas Prometheus e traços por turno exportáveis.
+- **Observabilidade:** métricas Prometheus, traços por turno exportáveis em
+  arquivo e por OpenTelemetry (OTLP/HTTP).
+- **Entregas:** respostas que um canal recusa vão para uma fila de mensagens
+  mortas e são reenviadas (1, 5 e 30 minutos); `donkey ctl deliveries`.
 
 ## 2. Primeira rodada: frentes decididas, todas feitas
 
@@ -57,18 +61,22 @@ O que cada frente deixou de fora ao ser implementada. Nenhum está agendado.
 | Renovação de token OAuth do MCP por HTTP | E5 | ainda roda no laço (rara, com prazo próprio) |
 | `transcribe_audio` e `text_to_speech` | — | ainda chamam o HTTP síncrono no laço, até o prazo da requisição. `web_fetch`, `fetch`, `http_fetch` e `web_search` já rodam no executor (`WebToolJob`), como `github` e `git_inspect` (`app/offloop_io`) |
 | Escrita no GitHub (abrir issue, comentar) | 2ª rodada, frente 2 | fora de propósito: o agente lê texto de terceiros; pede decisão sobre aprovação |
+| Mattermost, SMS, IRC e Google Chat com mídia | 2ª rodada, frente 1 | só texto; no IRC, só quem tem conta nos serviços da rede é atendido |
+| Mensagens do Mattermost com o socket caído | 2ª rodada, frente 1 | não são reapresentadas ao reconectar |
+| Fila de mensagens mortas para ferramentas | 2ª rodada, frente 4 | só envios entram na fila: a falha de uma ferramenta volta ao modelo no mesmo turno, e um reenvio depois não teria quem recebesse o resultado |
+| Resposta longa reenviada pela fila | 2ª rodada, frente 4 | uma resposta dividida que falhou no meio volta inteira, e os primeiros pedaços podem se repetir |
 
 ## 4. Segunda rodada (aprovada em 25/11)
 
 Do comparativo de 25/11, em ordem de ganho estimado, seguidas dos itens
 abertos do §3.
 
-| Ordem | Frente | Ganho potencial | Referência |
-|---:|---|---:|---|
-| 1 | Canais: Mattermost, Google Chat, IRC, SMS | ~0,7 | Hermes `plugins/platforms` |
-| 2 | Ferramentas: GitHub e git nativos | ~0,5 | Pincer `tools/github`, `git_inspect` |
-| 3 | Observabilidade: OpenTelemetry e replay de traço | ~0,5 | Pincer `trace_replay`, PromEx |
-| 4 | Fila de mensagens mortas para envio e ferramenta | ~0,3 | Pincer `dead_letter_queue` |
+| Ordem | Frente | Ganho potencial | Referência | Estado |
+|---:|---|---:|---|---|
+| 1 | Canais: Mattermost, Google Chat, IRC, SMS | ~0,7 | Hermes `plugins/platforms` | **Feito** (#207 Mattermost, #208 SMS, #209 IRC, #210 Google Chat; só texto) |
+| 2 | Ferramentas: GitHub e git nativos | ~0,5 | Pincer `tools/github`, `git_inspect` | **Feito** (#211; só leitura; I/O fora do laço) |
+| 3 | Observabilidade: OpenTelemetry e replay de traço | ~0,5 | Pincer `trace_replay`, PromEx | **Feito** o OpenTelemetry (#212); replay recusado (§5) |
+| 4 | Fila de mensagens mortas para envio e ferramenta | ~0,3 | Pincer `dead_letter_queue` | **Feito** para envios (#213); ferramentas no §3 |
 
 Saíram da lista ao conferir o código: a API compatível com OpenAI já existe
 (`/v1/chat/completions` com streaming e `/v1/models` no gateway); a guarda de
