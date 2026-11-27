@@ -665,6 +665,10 @@ relevantes para equipes pequenas.
   pessoa pelo pareamento ou por `/continue`.
 - **E13.2 SimpleX.** Pelo `simplex-chat` em modo servidor (API WebSocket
   local). Sem identificador global de usuário: o pareamento é pelo contato.
+  *Feito (27/11):* `SIMPLEX_URL` (só nesta máquina: o CLI não autentica);
+  uma thread mantém o WebSocket, recebe `newChatItems` diretos de texto e
+  envia `/_send @<id> json …`; o contato é a identidade; só texto, e o que
+  não é texto recebe uma nota. Endereço e aceite automático ficam no CLI.
 - **E13.3 BlueBubbles (iMessage).** API REST e webhooks de um servidor
   BlueBubbles num Mac do operador.
 - **E13.4 A2A.** O protocolo Agent2Agent: o Donkey publica um agent card e

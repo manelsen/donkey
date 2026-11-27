@@ -63,6 +63,7 @@ type
     irc*:       OutboundChannelPort
     googleChat*: OutboundChannelPort
     ntfy*:      OutboundChannelPort
+    simplex*:   OutboundChannelPort
 
 # ── pure helpers ──────────────────────────────────────────────────────────────
 

@@ -33,7 +33,8 @@ proc runTests*() =
       check ckSms == succ(ckMattermost)
       check ckIrc == succ(ckSms)
       check ckGoogleChat == succ(ckIrc)
-      check ckNtfy == high(ChannelKind) and ckNtfy == succ(ckGoogleChat)
+      check ckNtfy == succ(ckGoogleChat)
+      check ckSimplex == high(ChannelKind) and ckSimplex == succ(ckNtfy)
 
   suite "capability — LINE":
 

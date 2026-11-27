@@ -33,6 +33,7 @@ This matrix reflects the capability registry (`ports/channel_capability`) the ru
 | [SMS (Twilio)](#sms-twilio) | no | no | no | no | yes | no |
 | Email | no | no | no | no | no | no |
 | [ntfy](#ntfy) | no | no | no | no | no | no |
+| [SimpleX](#simplex) | no | no | no | no | no | no |
 | CLI | yes | no | no | no | no | no |
 
 Every channel sends text. "Files in" is the port's `downloadFile` (an attachment reaches the turn); "Files out" is `cfSendFile` (the adapter reads a paddock file and uploads it). The table is generated from `ports/channel_capability`, which a test keeps in line with the ports.
@@ -496,6 +497,29 @@ app or `curl`, and get its answers as notifications, on a topic of yours.
   secret: pick a name nobody guesses (or a protected topic on your server),
   and link it to yourself with `/continue <code>` from another channel, or
   through pairing.
+
+---
+
+## SimpleX
+
+[SimpleX Chat](https://simplex.chat) as a channel (E13.2), through the
+`simplex-chat` CLI running as a local WebSocket server (its bots API).
+
+- **Setup:** run the CLI with a bot profile on the daemon's machine,
+  `simplex-chat -p 5225` (create the bot's address with `/ad` and turn on
+  auto-accept in the CLI, so people can connect), then set
+  `SIMPLEX_URL=ws://127.0.0.1:5225`. The URL must be on this machine: the
+  CLI has no authentication, so Donkey refuses any other host.
+- **In:** a thread keeps the WebSocket open (reconnecting with backoff) and
+  takes the direct text messages contacts send (`newChatItems`, `directRcv`);
+  the bot's own messages and groups are left out, and a message that is not
+  text is answered with a short note.
+- **Out:** `/_send @<contactId> json …` (`APISendMessages`), in pieces of
+  15 KB; text only: buttons are dropped (an approval's text says
+  `/approve <id>`), a file becomes a note.
+- **Who:** SimpleX has no global user id: a person is a contact of the bot
+  (its id in that CLI's database), linked to them by pairing or with
+  `/continue <code>` from another channel.
 
 ---
 

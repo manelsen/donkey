@@ -36,6 +36,7 @@ type
     drainIrc*:       GatewayDrainProc
     drainGoogleChat*: GatewayDrainProc
     drainNtfy*:      GatewayDrainProc
+    drainSimplex*:   GatewayDrainProc
 
 func initGatewayDrainer*(
   drainDiscord:   GatewayDrainProc = nil,
@@ -57,6 +58,7 @@ func initGatewayDrainer*(
   drainIrc:       GatewayDrainProc = nil,
   drainGoogleChat: GatewayDrainProc = nil,
   drainNtfy: GatewayDrainProc = nil,
+  drainSimplex: GatewayDrainProc = nil,
 ): GatewayDrainer =
   ## Initializes a GatewayDrainer with channel drain callbacks.
   GatewayDrainer(
@@ -79,6 +81,7 @@ func initGatewayDrainer*(
     drainIrc:       drainIrc,
     drainGoogleChat: drainGoogleChat,
     drainNtfy: drainNtfy,
+    drainSimplex: drainSimplex,
   )
 
 # ── Polling & Batch Draining Helpers ──────────────────────────────────────────
@@ -318,6 +321,11 @@ proc drainNtfyGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   if drainer.drainNtfy != nil:
     result = drainer.drainNtfy()
 
+proc drainSimplexGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
+  ## Drains the SimpleX connection's queue if configured (E13.2).
+  if drainer.drainSimplex != nil:
+    result = drainer.drainSimplex()
+
 proc drainGoogleChatGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains the Google Chat webhook queue if configured.
   if drainer.drainGoogleChat != nil:
@@ -350,3 +358,4 @@ proc drainGatewayEvents*(drainer: GatewayDrainer): int {.discardable, gcsafe.} =
   if drainIrcGateway(drainer): result.inc
   if drainGoogleChatGateway(drainer): result.inc
   if drainNtfyGateway(drainer): result.inc
+  if drainSimplexGateway(drainer): result.inc
