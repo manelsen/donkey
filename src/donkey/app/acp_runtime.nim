@@ -134,7 +134,10 @@ proc askPermission(rt: AcpRuntime; token, sessionId, toolCallId, text: string;
   try:
     reply = await answer
   except CancelledError:
-    reply = nil
+    ## The prompt ended first: the daemon already settled it (timed out or
+    ## cancelled), so there is nothing to send.
+    rt.answers.del(id)
+    return
   rt.answers.del(id)
   let callback = chosenCallback(reply, options)
   if callback.len == 0: return
@@ -217,6 +220,14 @@ proc runPrompt(rt: AcpRuntime; id: JsonNode; prompt: AcpPrompt) {.async: (raises
       stop = await rt.streamTurn(token, prompt)
   except CancelledError:
     stop = "cancelled"
+  ## Questions still open belong to a turn that is over.
+  var open: seq[Future[JsonNode].Raising([CancelledError])]
+  for waiting in rt.answers.values:
+    if not waiting.finished: open.add waiting
+  for waiting in open: waiting.cancelSoon()
+  for asking in rt.asking:
+    if not asking.finished: await noCancel asking
+  rt.asking.setLen(0)
   rt.ports.write(promptResult(id, stop))
 
 proc running(rt: AcpRuntime): bool =

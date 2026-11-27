@@ -19,6 +19,8 @@ type Fake = ref object
   hangTurn: bool
   naps: int
   approved: seq[(string, string)]   ## (token, callback) sent back
+  waitApproval: bool                ## the turn waits for the decision, as the daemon's does
+  decided: Future[void].Raising([CancelledError])
 
 var gF {.threadvar.}: Fake
 
@@ -40,15 +42,19 @@ proc fakeTurn(token, text: string; onLine: LineSink): Future[TurnReply] {.async:
   if gF.hangTurn:
     await sleepAsync(chronos.hours(1))
   for line in gF.turnLines: onLine(line)
+  if gF.waitApproval:
+    await gF.decided
   return TurnReply(status: gF.turnStatus, error: gF.turnError)
 proc fakeNap(ms: int): Future[void] {.async: (raises: [CancelledError]).} =
   inc gF.naps
 proc fakeApprove(token, callback: string): Future[Result[string, string]] {.async: (raises: []).} =
   gF.approved.add((token, callback))
+  if gF.waitApproval and not gF.decided.finished: gF.decided.complete()
   return ok("✅ Aprovado.")
 
 proc fakePorts(f: Fake): AcpPorts =
   gF = f
+  f.decided = Future[void].Raising([CancelledError]).init("fake.decided")
   AcpPorts(write: fakeWrite, loadToken: fakeLoad, saveToken: fakeSave,
            pair: fakePair, poll: fakePoll, turn: fakeTurn, nap: fakeNap,
            approve: fakeApprove)
@@ -149,7 +155,7 @@ proc runTests*() =
       check "interrompida" in f.written[^2] and "Não consegui falar" notin f.written[^2]
 
     test "an approval in the stream asks the editor; the choice goes back to the daemon (E10.4)":
-      let f = Fake(token: "tok", turnStatus: 200, turnLines: @[
+      let f = Fake(token: "tok", turnStatus: 200, waitApproval: true, turnLines: @[
         """data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"bash"}}]}}]}""",
         """data: {"choices":[{"index":0,"delta":{"donkey_approval":{"text":"Aprovar bash?","options":[{"label":"✅ Aprovar","callback":"approval:abc:allow"},{"label":"❌ Negar","callback":"approval:abc:deny"}]}}}]}"""])
       let rt = started(f)
@@ -165,7 +171,7 @@ proc runTests*() =
       check f.approved == @[("tok", "approval:abc:allow")]
 
     test "an approval the editor cancels is denied":
-      let f = Fake(token: "tok", turnStatus: 200, turnLines: @[
+      let f = Fake(token: "tok", turnStatus: 200, waitApproval: true, turnLines: @[
         """data: {"choices":[{"index":0,"delta":{"donkey_approval":{"text":"Aprovar?","options":[{"label":"✅","callback":"approval:x:allow"},{"label":"❌","callback":"approval:x:deny"}]}}}]}"""])
       let rt = started(f)
       rt.feed(Prompt % f.sent[1]["result"]["sessionId"].getStr)
@@ -175,6 +181,15 @@ proc runTests*() =
       rt.feed($(%* {"jsonrpc": "2.0", "id": askId, "result": {"outcome": {"outcome": "cancelled"}}}))
       waitFor rt.idle()
       check f.approved == @[("tok", "approval:x:deny")]
+
+    test "a permission the editor never answers ends with the prompt, sending nothing":
+      let f = Fake(token: "tok", turnStatus: 200, turnLines: @[
+        """data: {"choices":[{"index":0,"delta":{"donkey_approval":{"text":"Aprovar?","options":[{"label":"✅","callback":"approval:x:allow"},{"label":"❌","callback":"approval:x:deny"}]}}}]}"""])
+      let rt = started(f)
+      rt.feed(Prompt % f.sent[1]["result"]["sessionId"].getStr)
+      waitFor rt.idle()          ## would hang if the question outlived the prompt
+      check f.approved.len == 0
+      check f.sent[^1]["result"]["stopReason"] == %"end_turn"
 
     test "session/cancel stops the turn and the prompt answers cancelled":
       let f = Fake(token: "tok", turnStatus: 200, hangTurn: true)
