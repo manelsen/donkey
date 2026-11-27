@@ -121,7 +121,9 @@ proc attachmentsOf(payload: JsonNode): seq[TeamsAttachment] =
       if url.len > 0:
         result.add TeamsAttachment(fileId: "image:" & url, name: a{"name"}.getStr, mimeType: ct)
 
-func hostOfUrl(url: string): string =
+func hostOfUrl*(url: string): string =
+  ## The host of an `https://` URL; "" for anything else, never a crash.
+  if not url.startsWith("https://"): return ""
   let rest = url["https://".len .. ^1]
   let slash = rest.find('/')
   result = if slash >= 0: rest[0 ..< slash] else: rest
