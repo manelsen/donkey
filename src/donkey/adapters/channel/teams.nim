@@ -13,7 +13,7 @@
 ##     conversation is kept on disk, so a reminder reaches them after a
 ##     restart.
 
-import std/[json, locks, os, strutils, tables]
+import std/[json, locks, os, strutils, sysrand, tables]
 import ../../core/pipeops
 import ../../core/types
 import ../../domain/message
@@ -23,6 +23,8 @@ import ../../infra/fixed
 import ../../ports/channel
 import ../../ports/http
 import ../../ports/link_codes
+import ../filesystem/confined_read
+import ../filesystem/paths
 import ../http/std_http
 import ../identity/identity_resolver
 import ../state/durable_file
@@ -139,9 +141,16 @@ proc tryRecvActivity*(): (bool, TeamsActivity) =
 type
   Clock* = proc(): int64 {.gcsafe.}
 
+  PendingFile = object
+    ## A file offered with a consent card: the path, never the bytes, until
+    ## the person answers (Microsoft: keep the bytes out of the card).
+    path, mediaRoot, name: string
+    serviceUrl, conversationId: string
+
   TeamsState = ref object
     token:         AppToken
     conversations: Table[string, string]   ## sender key → reply target
+    pending:       Table[string, PendingFile]   ## pending id → the file offered
 
   TeamsAdapter* = object
     appId*:            string
@@ -207,26 +216,100 @@ proc targetFor(a: TeamsAdapter; msg: OutboundMessage): Result[ReplyTarget, strin
     return err("Teams: no conversation known for user " & $msg.userId)
   parseReplyTarget(remembered)
 
+const
+  TeamsMaxFileBytes* = 100 * 1024 * 1024
+  FileUnavailableNote = "(o arquivo não pôde ser enviado)"
+  FileNotHereNote = "(o Teams só aceita arquivos do bot em conversa pessoal; " &
+                    "o arquivo está guardado no seu espaço)"
+
+proc postActivity(a: TeamsAdapter; serviceUrl, conversationId, activityId: string;
+                  body: JsonNode): Result[void, string] =
+  if not serviceHostAllowed(serviceUrl, a.serviceHosts):
+    return err("Teams: service host not allowed: " & serviceHostOf(serviceUrl))
+  let token = ? a.appToken()
+  let resp = ? a.http.post(activitiesUrl(serviceUrl, conversationId, activityId), $body,
+    @[("Content-Type", "application/json"), ("Authorization", "Bearer " & token)])
+  if resp.status notin 200 .. 299:
+    return err("Teams: send status " & $resp.status)
+  ok()
+
+proc readPaddockFile(path, mediaRoot: string; limit: int): Result[(string, string), string] =
+  ## The file's name and bytes, read only inside the paddock (confined_read).
+  let safePath = ? resolveConfinedMediaPath(mediaRoot, path)
+  var opened = ? openPathComponent(mediaRoot, safePath)
+  let data = opened.readPathComponent(limit)
+  opened.closeComponent()
+  ok((opened.name, ? data))
+
+proc newPendingId(): string =
+  var raw: array[12, byte]
+  if not urandom(raw): return ""
+  for b in raw: result.add b.toHex(2).toLowerAscii
+
+proc sendText(a: TeamsAdapter; target: ReplyTarget; text: string): Result[void, string] =
+  for piece in splitForTeams(text):
+    ? a.postActivity(target.serviceUrl, target.conversationId, target.activityId,
+                     messageBody(piece, target.activityId))
+  ok()
+
 proc send*(a: TeamsAdapter; msg: OutboundMessage): Result[void, string] =
-  ## Text, as Markdown, in the thread it answers. Media and keyboards are not
-  ## offered for Teams (channel_capability), so they are refused, not dropped.
+  ## Text, as Markdown, in the thread it answers. A file (Teams complete):
+  ## a small PNG/JPEG/GIF inline; another file, in a personal chat, offered
+  ## with a consent card and uploaded once the person accepts
+  ## (handleFileConsent); in a group or channel, a note. Keyboards are not
+  ## offered for Teams.
   if a.configError.len > 0:
     return err("Teams: " & a.configError)
-  if msg.mediaUrl.len > 0 or msg.keyboard.len > 0:
-    return err("Teams: only text is supported")
-  if msg.text.strip.len == 0:
-    return ok()
+  if msg.keyboard.len > 0:
+    return err("Teams: keyboards are not supported")
   let target = ? a.targetFor(msg)
-  if not serviceHostAllowed(target.serviceUrl, a.serviceHosts):
-    return err("Teams: service host not allowed: " & serviceHostOf(target.serviceUrl))
-  let token = ? a.appToken()
-  let url = activitiesUrl(target.serviceUrl, target.conversationId, target.activityId)
-  for piece in splitForTeams(msg.text):
-    let resp = ? a.http.post(url, $messageBody(piece, target.activityId),
-      @[("Content-Type", "application/json"), ("Authorization", "Bearer " & token)])
-    if resp.status notin 200 .. 299:
-      return err("Teams: send status " & $resp.status)
-  ok()
+  if msg.mediaUrl.len == 0:
+    if msg.text.strip.len == 0: return ok()
+    return a.sendText(target, msg.text)
+  let file = readPaddockFile(msg.mediaUrl, msg.mediaRoot, TeamsMaxFileBytes)
+  if file.isErr:
+    return a.sendText(target, (if msg.text.strip.len > 0: msg.text & "\n\n" else: "") &
+                              FileUnavailableNote)
+  let (name, data) = file.get
+  let mime = inlineImageMime(name)
+  if mime.len > 0 and data.len <= TeamsInlineImageMaxBytes:
+    return a.postActivity(target.serviceUrl, target.conversationId, target.activityId,
+                          imageMessageBody(msg.text, target.activityId, mime, name, data))
+  if not isPersonalConversation(target.conversationId):
+    return a.sendText(target, (if msg.text.strip.len > 0: msg.text & "\n\n" else: "") &
+                              FileNotHereNote)
+  let pending = newPendingId()
+  if pending.len == 0:
+    return err("Teams: no randomness for a pending file id")
+  a.state.pending[pending] = PendingFile(path: msg.mediaUrl, mediaRoot: msg.mediaRoot,
+    name: name, serviceUrl: target.serviceUrl, conversationId: target.conversationId)
+  a.postActivity(target.serviceUrl, target.conversationId, target.activityId,
+    fileConsentBody(name, (if msg.text.strip.len > 0: msg.text else: "Arquivo do Donkey"),
+                    data.len.int64, pending, target.activityId))
+
+proc handleFileConsent*(a: TeamsAdapter; act: TeamsActivity): Result[void, string] =
+  ## The person's answer to a consent card. Accepted: the file is read again
+  ## (inside the paddock), uploaded in one PUT to the person's OneDrive, and a
+  ## file card shown; declined: they are told. An unknown or answered offer
+  ## is ignored.
+  let value = try: parseJson(act.value) except CatchableError: return err("Teams: consent value unreadable")
+  let consent = ? parseFileConsent(act.name, value)
+  if consent.pending notin a.state.pending:
+    return ok()
+  let offered = a.state.pending[consent.pending]
+  a.state.pending.del consent.pending
+  if not consent.accepted:
+    return a.postActivity(offered.serviceUrl, offered.conversationId, "",
+      messageBody("Tudo bem, não enviei " & offered.name & ".", ""))
+  if not uploadAllowed(consent.uploadUrl):
+    return err("Teams: upload URL outside SharePoint")
+  let (_, data) = ? readPaddockFile(offered.path, offered.mediaRoot, TeamsMaxFileBytes)
+  let resp = ? a.http.put(consent.uploadUrl, data, uploadHeaders(data.len))
+  if resp.status notin [200, 201]:
+    return err("Teams: upload status " & $resp.status)
+  a.postActivity(offered.serviceUrl, offered.conversationId, "",
+    fileInfoBody(consent.contentUrl, (if consent.name.len > 0: consent.name else: offered.name),
+                 consent.uniqueId, consent.fileType, ""))
 
 const TeamsMaxDownloadBytes* = 25 * 1024 * 1024
 

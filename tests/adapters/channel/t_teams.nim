@@ -229,6 +229,111 @@ proc runMediaTests*() =
       check mediaAdapter(r, gets).downloadFile("image:https://evil.example/x.png").isErr
       check gets[].len == 0 and r.tokenCalls == 0
 
+type Wire = ref object
+  posts: seq[(string, string)]
+  puts: seq[(string, string, seq[HttpHeader])]
+  putStatus: int
+
+proc wireHttp(w: Wire): HttpRuntimePort =
+  result.post = proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+    {.cast(gcsafe).}:
+      if url.startsWith("https://login.microsoftonline.com/"):
+        return ok(HttpResponse(status: 200, body: """{"access_token":"tok","expires_in":3600}"""))
+      w.posts.add (url, body)
+    ok(HttpResponse(status: 201, body: """{"id":"new"}"""))
+  result.put = proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+    {.cast(gcsafe).}:
+      w.puts.add (url, body, headers)
+      ok(HttpResponse(status: (if w.putStatus > 0: w.putStatus else: 201), body: "{}"))
+
+proc filesAdapter(w: Wire; tag: string): (TeamsAdapter, string) =
+  let dir = tempDir("files_" & tag)
+  createDir(dir / "attachments")
+  writeFile(dir / "attachments" / "grafico.png", "PNGBYTES")
+  writeFile(dir / "attachments" / "relatorio.pdf", "%PDF-1.7 conteudo")
+  (newTeamsAdapter(appId = "app-123", appPassword = "pw", tenantId = "tenant-1",
+                   identityPath = dir / "identities.tsv",
+                   conversationsPath = dir / "teams_conversations.json",
+                   http = wireHttp(w), clock = proc(): int64 {.gcsafe.} = 1_000), dir)
+
+proc consent(pending, action: string; uploadUrl = "https://contoso-my.sharepoint.com/upload?x=1"): TeamsActivity =
+  TeamsActivity(kind: "invoke", name: "fileConsent/invoke", id: "inv-1", serviceUrl: ServiceUrl,
+    channelId: "msteams", conversationId: "a:1xyz", conversationType: "personal",
+    fromId: "29:1abc", aadObjectId: "aad-belle",
+    value: $(%* {"type": "fileUpload", "action": action, "context": {"pending": pending},
+                 "uploadInfo": {"name": "relatorio.pdf", "uploadUrl": uploadUrl,
+                   "contentUrl": "https://contoso-my.sharepoint.com/personal/belle/relatorio.pdf",
+                   "uniqueId": "U-1", "fileType": "pdf"}}))
+
+proc pendingOf(post: string): string =
+  parseJson(post)["attachments"][0]["content"]["acceptContext"]["pending"].getStr
+
+proc runFilesTests*() =
+  suite "teams — files out (Teams complete, parts 1 and 2)":
+    let personal = replyTarget(ServiceUrl, "a:1xyz", "act-1")
+
+    test "a small image goes inline, in one message, no consent":
+      let w = Wire()
+      let (a, dir) = filesAdapter(w, "img")
+      check a.send(OutboundMessage(channel: ckTeams, text: "segue", replyTo: personal,
+        mediaUrl: dir / "attachments" / "grafico.png", mediaRoot: dir)).isOk
+      check w.posts.len == 1
+      let body = parseJson(w.posts[0][1])
+      check body["attachments"][0]["contentUrl"].getStr.startsWith("data:image/png;base64,")
+      check body["text"].getStr == "segue"
+
+    test "another file in a personal chat: a consent card; accepted, it is uploaded and shown":
+      let w = Wire()
+      let (a, dir) = filesAdapter(w, "pdf")
+      check a.send(OutboundMessage(channel: ckTeams, text: "o relatório", replyTo: personal,
+        mediaUrl: dir / "attachments" / "relatorio.pdf", mediaRoot: dir)).isOk
+      check w.posts.len == 1
+      let card = parseJson(w.posts[0][1])["attachments"][0]
+      check card["contentType"].getStr == "application/vnd.microsoft.teams.card.file.consent"
+      check card["content"]["sizeInBytes"].getInt == 17
+      check w.puts.len == 0                            ## nothing uploaded before consent
+      check a.handleFileConsent(consent(pendingOf(w.posts[0][1]), "accept")).isOk
+      check w.puts.len == 1
+      check w.puts[0][0] == "https://contoso-my.sharepoint.com/upload?x=1"
+      check w.puts[0][1] == "%PDF-1.7 conteudo"
+      check ("Content-Range", "bytes 0-16/17") in w.puts[0][2]
+      let info = parseJson(w.posts[^1][1])["attachments"][0]
+      check info["contentType"].getStr == "application/vnd.microsoft.teams.card.file.info"
+      check info["content"]["uniqueId"].getStr == "U-1"
+      ## the pending file is gone: a second answer finds nothing
+      check a.handleFileConsent(consent(pendingOf(w.posts[0][1]), "accept")).isOk
+      check w.puts.len == 1
+
+    test "declined, nothing is uploaded and the person is told":
+      let w = Wire()
+      let (a, dir) = filesAdapter(w, "decline")
+      check a.send(OutboundMessage(channel: ckTeams, replyTo: personal,
+        mediaUrl: dir / "attachments" / "relatorio.pdf", mediaRoot: dir)).isOk
+      check a.handleFileConsent(consent(pendingOf(w.posts[0][1]), "decline")).isOk
+      check w.puts.len == 0
+      check "relatorio.pdf" in parseJson(w.posts[^1][1])["text"].getStr
+
+    test "an upload URL outside SharePoint is refused":
+      let w = Wire()
+      let (a, dir) = filesAdapter(w, "evil")
+      check a.send(OutboundMessage(channel: ckTeams, replyTo: personal,
+        mediaUrl: dir / "attachments" / "relatorio.pdf", mediaRoot: dir)).isOk
+      check a.handleFileConsent(consent(pendingOf(w.posts[0][1]), "accept",
+                                        uploadUrl = "https://evil.example/u")).isErr
+      check w.puts.len == 0
+
+    test "in a group or channel, a file becomes a note; a path outside the paddock too":
+      let w = Wire()
+      let (a, dir) = filesAdapter(w, "group")
+      check a.send(OutboundMessage(channel: ckTeams, text: "segue",
+        replyTo: replyTarget(ServiceUrl, "19:abc@thread.v2", "act-9"),
+        mediaUrl: dir / "attachments" / "relatorio.pdf", mediaRoot: dir)).isOk
+      check "attachments" notin w.posts[0][1] and "segue" in w.posts[0][1]
+      check a.send(OutboundMessage(channel: ckTeams, replyTo: personal,
+        mediaUrl: "/etc/passwd", mediaRoot: dir)).isOk
+      check "/etc/passwd" notin w.posts[^1][1] and "file.consent" notin w.posts[^1][1]
+
 when isMainModule:
   runTests()
   runMediaTests()
+  runFilesTests()

@@ -12,7 +12,7 @@
 ##
 ## `proc` where JSON is built or parsed (ADR-007 allows it).
 
-import std/[json, strutils, uri]
+import std/[base64, json, strutils, uri]
 import ../../core/pipeops
 
 const
@@ -45,6 +45,8 @@ type
     replyToId*:        string
     bot*:              string   ## the `[[bots]]` app it was sent to; "" = default
     attachments*:      seq[TeamsAttachment]
+    name*:             string   ## an invoke's name (fileConsent/invoke, …)
+    value*:            string   ## an invoke's value, as JSON text
 
   ReplyTarget* = object
     serviceUrl*:     string
@@ -189,6 +191,9 @@ proc parseActivity*(payload: JsonNode): Result[TeamsActivity, string] =
     .unescapeEntities
     .collapseSpaces
   a.attachments = attachmentsOf(payload)
+  a.name = payload{"name"}.getStr
+  let value = payload{"value"}
+  if not value.isNil: a.value = $value
   ok(a)
 
 # ── Reply target ──────────────────────────────────────────────────────────────
@@ -283,3 +288,75 @@ func markSeen*(seen: var TeamsSeen; id: string): bool =
   if seen.ids.len > TeamsSeenCapacity:
     seen.ids.delete(0)
   true
+
+
+# ── Files out (Teams complete, parts 1 and 2) ─────────────────────────────────
+
+const
+  TeamsInlineImageMaxBytes* = 1024 * 1024
+    ## Microsoft's limit for an image sent inline as a data URI (PNG, JPEG,
+    ## GIF; up to 1024x1024; larger may be accepted and not render).
+  FileConsentType = "application/vnd.microsoft.teams.card.file.consent"
+  FileInfoType = "application/vnd.microsoft.teams.card.file.info"
+
+func inlineImageMime*(name: string): string =
+  let n = name.toLowerAscii
+  if n.endsWith(".png"): "image/png"
+  elif n.endsWith(".jpg") or n.endsWith(".jpeg"): "image/jpeg"
+  elif n.endsWith(".gif"): "image/gif"
+  else: ""
+
+proc imageMessageBody*(text, replyToId, mime, name, data: string): JsonNode =
+  ## A message carrying a small image inline (no consent needed).
+  result = messageBody(text, replyToId)
+  result["attachments"] = %* [{"contentType": mime, "name": name,
+                               "contentUrl": "data:" & mime & ";base64," & encode(data)}]
+
+func isPersonalConversation*(conversationId: string): bool =
+  ## Group chats and channels have `19:` ids; a bot's file consent card only
+  ## works in a personal conversation.
+  conversationId.len > 0 and not conversationId.startsWith("19:")
+
+proc fileConsentBody*(name, description: string; size: int64;
+                      pending, replyToId: string): JsonNode =
+  ## The card asking the person to accept a file; the bytes stay with the
+  ## bot, keyed by `pending`.
+  result = messageBody("", replyToId)
+  result.delete("text")
+  result["attachments"] = %* [{"contentType": FileConsentType, "name": name,
+    "content": {"description": description, "sizeInBytes": size,
+                "acceptContext": {"pending": pending},
+                "declineContext": {"pending": pending}}}]
+
+type FileConsent* = object
+  accepted*: bool
+  pending*: string
+  uploadUrl*, contentUrl*, name*, uniqueId*, fileType*: string
+
+proc parseFileConsent*(name: string; value: JsonNode): Result[FileConsent, string] =
+  if name != "fileConsent/invoke": return err("not a file consent")
+  if value.isNil or value.kind != JObject: return err("file consent without a value")
+  let info = value{"uploadInfo"}
+  result = ok(FileConsent(
+    accepted: value{"action"}.getStr == "accept",
+    pending: value{"context"}{"pending"}.getStr,
+    uploadUrl: info{"uploadUrl"}.getStr, contentUrl: info{"contentUrl"}.getStr,
+    name: info{"name"}.getStr, uniqueId: info{"uniqueId"}.getStr,
+    fileType: info{"fileType"}.getStr))
+
+proc parseFileConsent*(activity: JsonNode): Result[FileConsent, string] =
+  parseFileConsent(activity{"name"}.getStr, activity{"value"})
+
+func uploadAllowed*(url: string): bool =
+  ## The person's OneDrive (a SharePoint host), over HTTPS.
+  url.startsWith("https://") and underHost(hostOfUrl(url).toLowerAscii, "sharepoint.com")
+
+func uploadHeaders*(size: int): seq[(string, string)] =
+  @[("Content-Type", "application/octet-stream"),
+    ("Content-Range", "bytes 0-" & $(size - 1) & "/" & $size)]
+
+proc fileInfoBody*(contentUrl, name, uniqueId, fileType, replyToId: string): JsonNode =
+  result = messageBody("", replyToId)
+  result.delete("text")
+  result["attachments"] = %* [{"contentType": FileInfoType, "contentUrl": contentUrl,
+    "name": name, "content": {"uniqueId": uniqueId, "fileType": fileType}}]
