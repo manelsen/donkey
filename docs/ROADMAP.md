@@ -5,9 +5,9 @@
 > [`docs/prd/PRD-roadmap.md`](prd/PRD-roadmap.md), um épico por frente.
 > Decisões abaixo tomadas pelo mantenedor em 25/11/2026.
 
-## 1. Onde estamos (27/11/2026, `master` em `b659f41e`)
+## 1. Onde estamos (27/11/2026, `master` em `9ec4b4e8`)
 
-- **Código:** 423 módulos e ~90 mil linhas em `src/`, 443 arquivos de teste,
+- **Código:** 431 módulos e ~92 mil linhas em `src/`, 456 arquivos de teste,
   suíte completa verde. Arquitetura hexagonal com as fronteiras verificadas
   por testes de arquitetura.
 - **Cobertura estimada:** ~83% (faixa 80–86%), contra ~91,9% do Hermes e
@@ -49,6 +49,16 @@
 - **Escrita no GitHub (E11):** abrir e fechar issues, comentar e rotular com
   o token de cada pessoa (`/github token`, só em conversa privada), sob uma
   política por repositório (`allow`, `ask`, `deny`; padrão `ask`).
+- **Supervisão (E12):** as threads de canal e os drenos do laço rodam sob um
+  supervisor à maneira do OTP (espera crescente, `down` por 5 minutos
+  passados 5 reinícios em 5 minutos, `restarting` e `down` no status); uma
+  exceção no dreno de um canal não derruba mais o daemon. IRC, Mattermost e
+  Discord podem rodar como processo filho (`DONKEY_CHANNEL_PROCESSES`), o
+  que isola um `Defect`.
+- **A2A (E13.4):** o Donkey atende agentes pelo Agent2Agent v1.0
+  (`A2A_PUBLIC_URL`; o agente se pareia como um editor e age como a pessoa)
+  e delega aos agentes de `[[a2a.agents]]` (`delegate_to_agent`, aprovado a
+  cada chamada; cai para v0.3 quando preciso).
 - **Auditoria externa (26/11):** os cinco achados corrigidos (gravação
   exclusiva de anexos, `core` sem escrita em disco, heartbeat que não se
   repete, README fiel aos providers, provider estrito por agente).
@@ -88,6 +98,9 @@ O que cada frente deixou de fora ao ser implementada. Nenhum está agendado.
 | Revisão de memória | E7.4 | a revisão cuida só de skills; os fatos ficam com o MAGMA, que já guarda cada turno relevante |
 | Jornada como grafo | E7.7 | só em texto (`ctl` e TUI); o Hermes desenha um grafo no desktop |
 | Custo nos insights | E7.8 | o Donkey não mantém tabela de preços; `/insights` (chat) e `ctl insights` mostram tokens |
+| Canal como processo | E12.3 | só IRC, Mattermost e Discord; Slack (Socket Mode), QQ oficial, ntfy, SimpleX e BlueBubbles rodam como thread supervisionada, e um `Defect` neles ainda derruba o daemon |
+| A2A sem streaming e sem arquivos | E13.4 | só texto; `SendStreamingMessage`, push e partes de arquivo não são oferecidos; um agente remoto que segura o `SendMessage` mais de 30 s estoura o prazo da chamada |
+| A2A como identidade própria | E13.4 | o agente pareado age como a pessoa que o pareou (como um editor), com os poderes dela; não há identidade de agente com permissões menores |
 
 Fechado em 27/11: o limite de tamanho no download. O transporte HTTP lê no
 máximo 64 MiB de qualquer resposta (`DefaultMaxBodyBytes`) e para ali; os
@@ -149,8 +162,8 @@ comandos destrutivos.
 
 As seis candidatas do comparativo, épicos E8 a E13 no PRD, renumeradas em
 26/11 (a escrita no GitHub subiu para E11, a supervisão para E12, os canais
-restantes foram para o fim). E8 está feito; de E9 a E12 as decisões estão
-tomadas; no E13, o A2A entra, e o Donkey também chama agentes A2A.
+restantes foram para o fim). Todos feitos em 27/11: E8 a E13, o A2A nos
+dois sentidos incluído.
 
 | Épico | Frente | O que entrega | Decisões pendentes |
 |---|---|---|---|

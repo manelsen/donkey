@@ -208,6 +208,10 @@ it learned, and lets people steer it with `/learn`, `/refine` and
 - **Sub-agents** for delegated work, **schedules** (cron, interval, once) and
   a **heartbeat** that runs a checklist and sends reminders on the person's
   channel.
+- **Other agents (A2A)**: Donkey speaks the Agent2Agent protocol (v1.0) both
+  ways. Other agents, paired by a person like an editor, send it tasks that
+  run as that person; and it delegates to agents the operator listed, with
+  the person approving each call. See [`docs/topics/channels.md`](docs/topics/channels.md#a2a-other-agents).
 
 ### Reliable by construction
 
@@ -217,6 +221,11 @@ it learned, and lets people steer it with `/learn`, `/refine` and
   repeating side effects; no tool call can hold the loop.
 - **Dead letters**: replies a channel refused are kept and retried
   (`donkey ctl deliveries`).
+- **Supervised channels**: each channel's connection and its drain run under
+  a supervisor (restarts with growing waits, `down` for a while past the
+  limit, shown in `donkey ctl status`); one failing channel never stops the
+  others. IRC, Mattermost and Discord can run as their own process
+  (`DONKEY_CHANNEL_PROCESSES`), so even a crash there spares the daemon.
 
 ### Operating it
 
