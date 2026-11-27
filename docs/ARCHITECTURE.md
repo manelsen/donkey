@@ -15,24 +15,24 @@ replaceable menus, non-editable fallbacks, and streaming/status state.
 │ INBOUND ADAPTERS                                            │
 │   TelegramAdapter ─┐                                        │
 │   DiscordAdapter  ─┼→ IdentityResolver → SessionManager     │
-│   [future]        ─┘                                        │
+│   [19 channels]   ─┘                                        │
 ├─────────────────────────────────────────────────────────────┤
 │ APPLICATION LAYER  (Chronos, effectful)                     │
 │   startDaemon → OrchestratorAgent (one per user session)    │
-│     ├── MemoryAgent  → MemoryPort  → MdFileAdapter          │
+│     ├── MemoryAgent  → MemoryPort  → MAGMA / MdFileAdapter  │
 │     ├── ToolAgent    → ToolPort    → McpClientAdapter       │
-│     └── [workers]   → ProviderPort → ZhipuAdapter / …      │
+│     └── tool loop   → ProviderPort → one adapter/provider  │
 │                        HttpPort    → StdHttpAdapter          │
 ├─────────────────────────────────────────────────────────────┤
 │ DOMAIN CORE  (Nim `func`, zero side effects)                │
 │   buildPrompt · parseOnboardingResponse · needsOnboarding   │
-│   addUser · addAssistant · addToolResult · trimTo           │
+│   addUser · addAssistant · addToolResult · compaction_pure  │
 ├─────────────────────────────────────────────────────────────┤
 │ OUTBOUND ADAPTERS                                           │
-│   ProviderPort → Zhipu / OpenRouter / Anthropic / Gemini    │
-│   ChannelPort  → TelegramAdapter                            │
-│   MemoryPort   → MdFileAdapter (F1) / SQLite MAGMA / Postgres MAGMA │
-│   HttpPort     → StdHttpAdapter (VPS) / ChronosHttp (IoT)  │
+│   ProviderPort → one adapter per provider (descriptor table)│
+│   ChannelPort  → one adapter per channel (19)               │
+│   MemoryPort   → SQLite MAGMA (default) / Postgres / MdFile │
+│   HttpPort     → StdHttpAdapter over deadline_transport     │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -43,11 +43,11 @@ Adapters do not declare conformance; the compiler verifies it.
 
 | Port | Key operations | Adapters |
 |------|----------------|----------|
-| `ProviderPort` | `complete(CompletionRequest) → Result[CompletionResponse, string]`, `caps()` | Zhipu, OpenRouter, Anthropic, Gemini, MiniMax |
-| `ChannelPort` | `send(OutboundMessage) → Result[void, string]`, `receive() → Result[seq[InboundMessage], string]`, `ack(string)` | TelegramAdapter |
+| `ProviderPort` | `complete(CompletionRequest) → Result[CompletionResponse, string]`, `caps()` | One per provider, chosen by `domain/providers/descriptors.nim`: OpenRouter, Anthropic, OpenAI, DeepSeek, Gemini, MiniMax, Zhipu/ZAI, Ollama, Bedrock and the OpenAI-compatible family (`compat_adapter`) |
+| `ChannelPort` | `send(OutboundMessage) → Result[void, string]`, `receive() → Result[seq[InboundMessage], string]`, `ack(string)` | One per channel in `adapters/channel/`; the daemon reaches them through `OutboundChannelPort` (`outbound_builder`), and `ports/channel_capability` says what each can do |
 | `MemoryPort` | `hasProfile`, `loadContext`, `saveUserMd`, `appendMemory`, `savePreferences` | MdFileAdapter, SQLite MAGMA runtime, Postgres MAGMA runtime |
 | `ToolPort` | `listTools() → Result[seq[ToolSchema], string]`, `invoke(ToolCall) → Result[ToolResult, string]` | McpClientAdapter |
-| `HttpPort` | `get(url, headers) → Result[HttpResponse, string]`, `post(url, body, headers) → Result[HttpResponse, string]` | StdHttpAdapter, ChronosHttpAdapter (IoT, planned) |
+| `HttpPort` | `get(url, headers) → Result[HttpResponse, string]`, `post(url, body, headers) → Result[HttpResponse, string]` | StdHttpAdapter over `deadline_transport` (Chronos + BearSSL, a deadline per request) |
 
 `HttpPort` is internal to adapters — not exposed to the application layer.
 All I/O is `Result[T, string]`; exceptions never cross port boundaries.
@@ -101,27 +101,22 @@ For each incoming user message the orchestrator runs up to `MaxToolRoundsOrch`
 5. If rounds exhausted → send amkError
 ```
 
-## HttpPort and IoT target
+## HttpPort and the transport
 
-All provider and channel adapters hold an `http: StdHttpAdapter` field.
-`StdHttpAdapter` is a zero-field stateless value type wrapping `std/httpclient`.
+Provider and channel adapters reach HTTP through `HttpPort` (an
+`HttpRuntimePort` of closures), never `std/httpclient`. `StdHttpAdapter`
+(`adapters/http/std_http.nim`) adds the allowlist, a circuit breaker per
+host, retries with backoff and the 429/409 handling; each attempt runs in
+`deadline_transport`, a pool of threads each with its own Chronos loop, TLS
+by BearSSL, and a deadline that covers the whole request (connection,
+headers and every read of the body). The caller blocks only until the
+deadline and never runs a Chronos loop of its own.
 
-To target Raspberry Pi Zero (or any musl/static build):
-
-1. Implement `ChronosHttpAdapter` in `src/donkey/adapters/http/chronos_http.nim`
-   using `chronos/apps/http/httpclient` + `nim-bearssl` (no OpenSSL dependency):
-   ```nim
-   type ChronosHttpAdapter* = object
-   proc get*(a: ChronosHttpAdapter; url: string; headers: seq[HttpHeader]): Result[HttpResponse, string]
-   proc post*(a: ChronosHttpAdapter; url, body: string; headers: seq[HttpHeader]): Result[HttpResponse, string]
-   ```
-2. Pass `http: newChronosHttpAdapter()` to adapter constructors — no other code changes.
-3. Build with musl for a fully static binary:
-   ```bash
-   CC=musl-gcc nim c -d:release --opt:size --passL:"-static" src/donkey.nim
-   strip donkey
-   # Result: ~1MB static binary, zero runtime dependencies
-   ```
+The channels that keep a connection open use `std/net`, which links the
+host's OpenSSL for TLS: the WebSocket client (`adapters/channel/ws_client`,
+behind `adapters/network/persistent_socket`) for Slack Socket Mode, Discord,
+QQ official and Mattermost, and IRC's own socket. A build without OpenSSL
+would need those sockets on BearSSL too.
 
 ## Memory — two cooperating layers
 

@@ -1,9 +1,9 @@
 ## transcript_pure — keeps a session transcript complete across saves.
 ##
-## The session is saved from the live history, and the live history is a
-## moving window: it is trimmed at the front, compaction swaps old messages
-## for a summary, and a rewind drops its tail. Writing that window over the
-## file on every save left each transcript holding only its last messages.
+## The session is saved from the live history, and the live history is not
+## the whole record: compaction swaps old messages for a summary, and a
+## rewind drops its tail. Writing it over the file on every save left each
+## transcript holding only its last messages.
 ##
 ## The transcript is append-only. Given what the file already holds and the
 ## current history, this module decides which messages are new.

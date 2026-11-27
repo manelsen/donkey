@@ -751,8 +751,8 @@ proc saveSession*(a: MdFileAdapter; userId: UserId;
   ## JSONL, one message per line, each with the time it was first stored.
   ## Path: {paddock}/sessions/{sessionId}.jsonl
   ##
-  ## `history` is the live window (trimmed, compacted or rewound); the file is
-  ## the full record, so it is extended and never rewritten.
+  ## `history` is the live history (compacted or rewound); the file is the
+  ## full record, so it is extended and never rewritten.
   ## Skips sessions with fewer than 2 turns (empty/ping sessions).
   if history.len < 2: return
   a.ensurePaddock(userId)

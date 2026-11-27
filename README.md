@@ -22,11 +22,12 @@ app_port: 8080
 
 Most AI agent platforms are heavy, complex webs of Python interpreters, gigabyte-sized virtualenvs, and unpredictable Node runtimes. **Donkey takes the opposite path:**
 
-- **Native Binary & Low Footprint**: Compiles to a compact native binary with deterministic ARC/ORC memory management (requires host OpenSSL libraries for HTTPS). Idles in single-digit megabytes of RAM.
+- **Native Binary & Low Footprint**: Compiles to a compact native binary with deterministic ARC/ORC memory management (HTTP goes over BearSSL; the WebSocket channels and IRC still use the host's OpenSSL). A small resident footprint, though not yet benchmarked.
 - **Strict Hexagonal Architecture**: Business logic, planning, and memory algorithms remain 100% pure and decoupled from I/O through Nim structural typing (`concept`). Adapters can be plugged in or replaced without touching core code.
 - **Sovereign Dual-Layer Memory (MAGMA)**: Out-of-the-box SQLite with embedded `sqlite-vec` vector similarity search, alongside human-inspectable Markdown paddocks (`USER.md`, `MEMORY.md`, `HEARTBEAT.md`). Scales seamlessly to PostgreSQL + `pgvector` multigraph when required.
 - **Hardened Execution Sandbox**: Shell execution can be isolated via an OCI container runtime (Docker/Podman) running under the daemon UID/GID with read-only rootfs, plus fast POSIX file manipulation via `wasmtime` subprocess applet dispatch (requires host subprocess execution support).
 - **Autonomous Heartbeat & Contemplation**: Runs background scheduling loops that inspect checklists in `HEARTBEAT.md`, digest conversation memories into episodic journals, and deliver pro-active reminders across connected channels.
+- **Long Conversations, Paid Once**: the session history only grows (nothing drops off its start), so the provider's prompt cache keeps reading it; past 40% of a 1M-token model's context (60% of a smaller one) its old part becomes a summary in one step. Cached tokens show in traces, metrics and `/insights`.
 - **Multi-Channel & Multi-Provider**: 19 channels (Telegram, Discord, Slack, WhatsApp, Microsoft Teams, Google Chat, Mattermost, WeCom, WeChat, QQ, Feishu, DingTalk, LINE, Matrix, Signal, IRC, SMS, Email, CLI). Each provider has its own adapter, picked from the descriptor table in `domain/providers/descriptors.nim`: OpenRouter, Anthropic, OpenAI, DeepSeek, Gemini, MiniMax, ZAI, Groq, Ollama (local), OpenCode Go and Zen, NVIDIA, Alibaba, Fireworks, Mistral, Bedrock and Azure OpenAI. An unknown provider name falls back to ZAI coding. A fixed provider choice sends to that provider only; smart routing can try other eligible providers on failure. For users without provider preferences, the setup wizard selects a fixed provider; OpenRouter is a fallback only when its key is configured.
 
 ---
@@ -241,10 +242,20 @@ Donkey provides sandboxing for shell execution. MCP servers run directly on the 
 | **Discord** | Gateway WebSockets | Slash commands, components, thread handling, bot mentions |
 | **WeChat / WeCom**| Webhook / Event loop | Enterprise WeChat & personal bridge support |
 | **Feishu / Lark** | Webhook + API | Events API at `/webhook/feishu`, verification token + optional `FEISHU_ENCRYPT_KEY` (AES-256-CBC), DM gate; interactive cards not supported |
-| **DingTalk** | Outbound API | Inbound requires an integration that calls `pushEvent` |
+| **DingTalk** | Webhook | Inbound at `/webhook/dingtalk`; attachments in |
 | **QQ / OneBot** | WebSocket / HTTP | OneBot v11 protocol, group and private chat dispatch |
 | **Slack** | Webhook / Socket Mode | Events API, Slash Commands and Interactivity at `/webhook/slack`, or Socket Mode; requires `SLACK_BOT_TOKEN` plus `SLACK_APP_TOKEN` for Socket Mode or `SLACK_SIGNING_SECRET` for webhook mode |
-| **Matrix** | Outbound PUT | Inbound requires an integration that calls `pushEvent` |
+| **Matrix** | Webhook + PUT | Inbound at `/webhook/matrix` (token-protected; an appservice or bridge posts the events); attachments in |
+| **WhatsApp** | Webhook (Cloud API) | Several numbers (`[[bots]]`); attachments in |
+| **Microsoft Teams** | Webhook (Bot Framework) | Several apps (`[[bots]]`); files and inline images in |
+| **Google Chat** | Webhook | Signed by Google; uploaded files in (a Chat app cannot upload) |
+| **Mattermost** | WebSocket | Attachments both ways; posts missed during a drop are fetched on reconnection |
+| **SMS (Twilio)** | Webhook | Signed by Twilio; MMS in |
+| **IRC** | Socket | Only people identified with the network's services; links only |
+| **Signal** | `signal-cli` daemon | JSON-RPC over a Unix socket |
+| **LINE** | Webhook | Text only |
+| **Email** | IMAP poll + SMTP | |
+| **CLI** | Terminal | |
 | **HTTP Gateway**| REST / SSE | Local webhooks; note: open `/api/events` streams occupy the single accept thread (blocking concurrent `/api/chat` or status calls for up to 5h until disconnected) |
 
 > **Slack inbound setup:** for Socket Mode, enable **Socket Mode** in the Slack app, create an app-level token with the `connections:write` scope, and set `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` (xapp-...). No public URL is needed. Alternatively set `SLACK_BOT_TOKEN` + `SLACK_SIGNING_SECRET` and `DONKEY_WEBHOOK_PORT`, then point Event Subscriptions, Slash Commands and Interactivity to the same `https://<public-host>/webhook/slack` URL. In webhook mode the receiver listens on `DONKEY_WEBHOOK_HOST:DONKEY_WEBHOOK_PORT` (default `127.0.0.1`). By default it speaks HTTP, so expose it through an HTTPS reverse proxy; alternatively set `DONKEY_WEBHOOK_TLS_CERT` and `DONKEY_WEBHOOK_TLS_KEY` to terminate TLS in the receiver (certificate files are reloaded when they change). Slack does not call a loopback HTTP endpoint directly.
@@ -288,6 +299,8 @@ Risky native tools pause and ask the requesting user before executing. The defau
 | **MiniMax** | ✅ | ❌ | `MiniMax-Text-01`, `MiniMax-M2` |
 | **ZAI / Zhipu** | ✅ | ❌ | `glm-5.1`, `glm-5`, `glm-4.7` |
 | **OpenRouter** | ✅ | ✅ | Universal routing fallback |
+
+Also routed, each with its own descriptor: Mistral, NVIDIA, Alibaba, Fireworks, Bedrock (Converse, prompt cache points for Claude) and Azure OpenAI. The full per-channel capability table is in [`docs/topics/channels.md`](docs/topics/channels.md).
 
 > [!NOTE]
 > In the daemon runtime, sessions receive the global OpenRouter `streamFn` when `OPENROUTER_API_KEY` is configured. Streaming happens only on the first tool-loop round and is subject to the tool gate: with no tools registered it streams whenever `streamFn` exists; with tools registered it streams only when the provider supports streaming tool calls (OpenRouter) and tool progress is not suppressed — `DONKEY_SUPPRESS_TOOL_PROGRESS=1` closes that gate even for a text-only reply. Adapter-level streaming flags in the table indicate `buildProviderBundle` support (`zai-anthropic` also provides streaming).
