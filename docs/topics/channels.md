@@ -61,7 +61,8 @@ Mattermost's socket and for Discord's gateways (one child for the default
 bot and every `[[bots]]` entry on Discord); their replies, and Discord's
 slash command registration, still go out by REST from the daemon. Naming a
 channel that cannot run this way is reported at start, and every channel
-then runs as a thread.
+then runs as a thread; a child that cannot be started is reported too, and
+that channel runs as a thread instead of going dark.
 
 ---
 

@@ -1042,11 +1042,12 @@ proc startOptionalMattermostGateway(url, token: string; asProcess: bool; log: Lo
     return
   if asProcess:
     ## E12.3: the socket in a child, so a Defect there spares the daemon.
-    startMattermostProcess(getAppFilename(), url, token, log).isOkOr:
-      log.error("mattermost: " & error)
+    let started = startMattermostProcess(getAppFilename(), url, token, log)
+    if started.isOk:
+      log.info("Mattermost socket started as its own process")
       return
-    log.info("Mattermost socket started as its own process")
-    return
+    ## No child: the socket runs here, rather than Mattermost going dark.
+    log.error("mattermost: " & started.error & "; running the socket in the daemon")
   startMattermostSocket(url, token, mattermostSocketHttp, log).isOkOr:
     log.error("mattermost: " & error)
     return
@@ -1699,11 +1700,13 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
 proc startDaemonIngress(ctx: DaemonContext;
                         log: Logger) =
   ## E12.3: every bot's gateway in one child, when Discord runs as a process.
-  let discordChild = ckDiscord in ctx.env.processChannels and
+  var discordChild = ckDiscord in ctx.env.processChannels and
     (ctx.env.discordToken.len > 0 or ctx.adapters.dcBots.slots.len > 0)
   if discordChild:
     startDiscordProcess(getAppFilename(), log).isOkOr:
-      log.error("discord: " & error)
+      ## No child: the gateways run here, rather than Discord going dark.
+      log.error("discord: " & error & "; running the gateways in the daemon")
+      discordChild = false
   startOptionalDiscordGateway(ctx.adapters.dc, ctx.env.discordToken, ctx.env.discordGuildId, log,
                               gatewayHere = not discordChild)
   for slot in ctx.adapters.dcBots.slots.mitems:
@@ -1727,7 +1730,10 @@ proc startDaemonIngress(ctx: DaemonContext;
   elif ckIrc in ctx.env.processChannels:
     ## E12.3: the connection in a child, so a Defect there spares the daemon.
     startIrcProcess(getAppFilename(), ctx.env.irc, log).isOkOr:
-      log.error("irc: " & error)
+      ## No child: the connection runs here, rather than IRC going dark.
+      log.error("irc: " & error & "; running the connection in the daemon")
+      startIrc(ctx.env.irc, log).isOkOr:
+        log.error("irc: " & error)
   else:
     startIrc(ctx.env.irc, log).isOkOr:
       log.error("irc: " & error)
