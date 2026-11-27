@@ -85,6 +85,8 @@ import donkey/adapters/channel/ntfy
 import donkey/adapters/channel/ntfy_runtime
 import donkey/adapters/channel/simplex
 import donkey/adapters/channel/simplex_runtime
+import donkey/adapters/channel/bluebubbles
+import donkey/adapters/channel/bluebubbles_runtime
 import donkey/adapters/channel/google_chat
 import donkey/adapters/channel/google_chat_runtime
 import donkey/adapters/channel/cli_repl
@@ -273,6 +275,7 @@ type DaemonEnv = object
   ircProblem: string        ## why IRC_SERVER could not be read
   ntfy: NtfySettings        ## NTFY_URL, NTFY_TOPIC, NTFY_TOKEN (E13.1)
   simplexUrl: string        ## SIMPLEX_URL: the local simplex-chat (E13.2); "" = off
+  blueBubbles: BlueBubblesSettings  ## BLUEBUBBLES_URL, BLUEBUBBLES_PASSWORD (E13.3)
   googleChatProjectNumber: string  ## GOOGLE_CHAT_PROJECT_NUMBER: the token audience
   googleChatServiceAccount: string ## GOOGLE_CHAT_SERVICE_ACCOUNT: the key's JSON (vault)
 
@@ -300,6 +303,7 @@ type DaemonAdapters = object
   irc: IrcAdapter
   ntfy: NtfyAdapter
   simplex: SimplexAdapter
+  blueBubbles: BlueBubblesAdapter
   gchat: GoogleChatAdapter
   mx: MatrixAdapter
   em: EmailAdapter
@@ -348,6 +352,7 @@ proc buildRuntimeOutboundPorts(adapters: var DaemonAdapters): OutboundChannelPor
     mattermostAdapter = addr adapters.mm, smsAdapter = addr adapters.sms,
     ircAdapter = addr adapters.irc, googleChatAdapter = addr adapters.gchat,
     ntfyAdapter = addr adapters.ntfy, simplexAdapter = addr adapters.simplex,
+    blueBubblesAdapter = addr adapters.blueBubbles,
     tgPick = telegramPick(adapters), dcPick = discordPick(adapters),
     waPick = whatsappPick(adapters), teamsPick = teamsPick(adapters))
 
@@ -784,6 +789,8 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
                              topic: cfg.env.get("NTFY_TOPIC").strip(),
                              token: cfg.env.get("NTFY_TOKEN").strip())
   result.simplexUrl = cfg.env.get("SIMPLEX_URL").strip()
+  result.blueBubbles = BlueBubblesSettings(url: cfg.env.get("BLUEBUBBLES_URL").strip(),
+                                           password: cfg.env.get("BLUEBUBBLES_PASSWORD"))
   let ircServer = cfg.env.get("IRC_SERVER").strip()
   if ircServer.len > 0:
     let parsed = parseIrcServer(ircServer)
@@ -863,6 +870,7 @@ proc initDaemonAdapters(cfg: DonkeyConfig; env: DaemonEnv): DaemonAdapters =
     cfg.home / "state" / "google_chat_spaces.json")
   result.ntfy = newNtfyAdapter(env.ntfy, env.identityPath)
   result.simplex = newSimplexAdapter(env.simplexUrl, env.identityPath)
+  result.blueBubbles = newBlueBubblesAdapter(env.blueBubbles, env.identityPath)
   result.irc = newIrcAdapter(env.irc.host.len > 0 and env.irc.nick.len > 0,
     env.identityPath, cfg.home / "state" / "irc_nicks.json")
   result.sms = newSmsAdapter(env.twilioAccountSid, env.twilioAuthToken,
@@ -1278,6 +1286,7 @@ proc activeChannelsOf(ctx: DaemonContext): ActiveChannels =
   if e.irc.host.len > 0: result.incl ckIrc
   if e.ntfy.topic.len > 0: result.incl ckNtfy
   if e.simplexUrl.len > 0: result.incl ckSimplex
+  if e.blueBubbles.url.len > 0: result.incl ckBlueBubbles
   if e.googleChatProjectNumber.len > 0: result.incl ckGoogleChat
 
 proc setupIpcServer(cfg: DonkeyConfig;
@@ -1518,6 +1527,7 @@ func outboundPortForChannel(ports: OutboundChannelPorts;
   of ckIrc: ports.irc
   of ckNtfy: ports.ntfy
   of ckSimplex: ports.simplex
+  of ckBlueBubbles: ports.bluebubbles
   of ckGoogleChat: ports.googleChat
 
 proc makeCompleteBuilder(): proc(preferencesMd: string): CompleteFn {.gcsafe.} =
@@ -1697,6 +1707,13 @@ proc startDaemonIngress(ctx: DaemonContext;
   else:
     startNtfy(ctx.adapters.ntfy.settings, log).isOkOr:
       log.error("ntfy: " & error)
+  if ctx.env.blueBubbles.url.len == 0:
+    log.info("BLUEBUBBLES_URL not set — BlueBubbles disabled")
+  elif ctx.adapters.blueBubbles.configError.len > 0:
+    log.error("bluebubbles: " & ctx.adapters.blueBubbles.configError)
+  else:
+    startBlueBubbles(ctx.adapters.blueBubbles.settings, log).isOkOr:
+      log.error("bluebubbles: " & error)
   if ctx.env.simplexUrl.len == 0:
     log.info("SIMPLEX_URL not set — SimpleX disabled")
   elif ctx.adapters.simplex.configError.len > 0:
@@ -1959,6 +1976,16 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
         except AsyncQueueFullError:
           err("ntfy: outbox full, /continue reply dropped")
       drainNtfyEvents(ctx.adapters.ntfy, ctx.runtime.sm, fallback, enqueueNtfyReply, log) > 0,
+    drainBlueBubbles = proc(): bool =
+      if ctx.env.blueBubbles.url.len == 0:
+        return false
+      let enqueueBlueReply = proc(msg: OutboundMessage): Result[void, string] {.gcsafe, raises: [].} =
+        try:
+          ctx.runtime.globalOutbox.putNoWait(msg)
+          ok()
+        except AsyncQueueFullError:
+          err("BlueBubbles: outbox full, local reply dropped")
+      drainBlueBubblesEvents(ctx.adapters.blueBubbles, ctx.runtime.sm, fallback, enqueueBlueReply, log) > 0,
     drainSimplex = proc(): bool =
       if ctx.env.simplexUrl.len == 0:
         return false
@@ -2417,6 +2444,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     stopIrc()
     stopNtfy()
     stopSimplex()
+    stopBlueBubbles()
     discord.stopGateway()
     stopQQOfficialGateway()
     stopWebhookReceiver()

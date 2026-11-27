@@ -479,6 +479,8 @@ func sessionReplyTo*(msg: InboundMessage): string =
     msg.channelId   ## the topic
   of ckSimplex:
     msg.channelId   ## the contact id
+  of ckBlueBubbles:
+    msg.channelId   ## the chat guid
   else:
     ""
 

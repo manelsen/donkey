@@ -37,6 +37,7 @@ type
     drainGoogleChat*: GatewayDrainProc
     drainNtfy*:      GatewayDrainProc
     drainSimplex*:   GatewayDrainProc
+    drainBlueBubbles*: GatewayDrainProc
 
 func initGatewayDrainer*(
   drainDiscord:   GatewayDrainProc = nil,
@@ -59,6 +60,7 @@ func initGatewayDrainer*(
   drainGoogleChat: GatewayDrainProc = nil,
   drainNtfy: GatewayDrainProc = nil,
   drainSimplex: GatewayDrainProc = nil,
+  drainBlueBubbles: GatewayDrainProc = nil,
 ): GatewayDrainer =
   ## Initializes a GatewayDrainer with channel drain callbacks.
   GatewayDrainer(
@@ -82,6 +84,7 @@ func initGatewayDrainer*(
     drainGoogleChat: drainGoogleChat,
     drainNtfy: drainNtfy,
     drainSimplex: drainSimplex,
+    drainBlueBubbles: drainBlueBubbles,
   )
 
 # ── Polling & Batch Draining Helpers ──────────────────────────────────────────
@@ -326,6 +329,11 @@ proc drainSimplexGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.}
   if drainer.drainSimplex != nil:
     result = drainer.drainSimplex()
 
+proc drainBlueBubblesGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
+  ## Drains the BlueBubbles poller's queue if configured (E13.3).
+  if drainer.drainBlueBubbles != nil:
+    result = drainer.drainBlueBubbles()
+
 proc drainGoogleChatGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains the Google Chat webhook queue if configured.
   if drainer.drainGoogleChat != nil:
@@ -359,3 +367,4 @@ proc drainGatewayEvents*(drainer: GatewayDrainer): int {.discardable, gcsafe.} =
   if drainGoogleChatGateway(drainer): result.inc
   if drainNtfyGateway(drainer): result.inc
   if drainSimplexGateway(drainer): result.inc
+  if drainBlueBubblesGateway(drainer): result.inc
