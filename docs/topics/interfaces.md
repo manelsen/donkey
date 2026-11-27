@@ -104,7 +104,10 @@ with `donkey ctl editor list|revoke`. A revocation takes effect on the next
 request. A person who is revoked or not allowed by the DM policy is refused
 here too. These routes never take `DONKEY_HTTP_TOKEN`: an editor holds only
 its own credential. An editor's turn does not change the channel the
-person's reminders go to.
+person's reminders go to. Messages outside the stream, such as a tool
+approval request, go to the channel the person last wrote from, where they
+have buttons; approving from the editor itself is planned
+(`session/request_permission`).
 
 ## `POST /v1/chat/completions`
 

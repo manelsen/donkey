@@ -1580,7 +1580,8 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
                        log:      Logger) =
   let outboundPorts = buildRuntimeOutboundPorts(adapters)
   while runtime.globalOutbox.len > 0:
-    let outMsg = runtime.globalOutbox.getNoWait()
+    var outMsg = runtime.globalOutbox.getNoWait()
+    outMsg.channel = channelForReply(outMsg, runtime.sm.latestChannel(outMsg.userId))
     if answersApiTurn(outMsg):
       ## API replies belong to a waiting HTTP turn, never to a channel port;
       ## so does a person's reply to a turn an editor started (E10.2).

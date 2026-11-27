@@ -5,7 +5,7 @@
 ## alphabet is accepted so a caller cannot smuggle path separators or a second
 ## namespace prefix into storage.
 
-import std/strutils
+import std/[options, strutils]
 import ../../core/pipeops
 import ../../core/types
 import ../message
@@ -55,6 +55,17 @@ func answersApiTurn*(msg: OutboundMessage): bool =
   ## The reply belongs to a waiting HTTP turn: an API user's, or a person's
   ## turn behind a stream (an editor, E10.2), which carries the turn's token.
   isApiUserId(msg.userId) or msg.bridgeToken != 0
+
+func channelForReply*(msg: OutboundMessage; latest: Option[ChannelKind]): ChannelKind =
+  ## A reply outside any turn's stream (no token) from a person's turn that
+  ## came in through `ckCli`, an editor's (E10.2), goes where the person
+  ## last wrote from: an approval request there has buttons and a reader.
+  ## API users, streamed replies and real CLI users keep their channel.
+  if msg.channel == ckCli and msg.bridgeToken == 0 and not isApiUserId(msg.userId) and
+     latest.isSome and latest.get != ckCli:
+    latest.get
+  else:
+    msg.channel
 
 func isApiChatReply*(msg: OutboundMessage): bool =
   ## True only for replies that belong to the API namespace. Keyed on the
