@@ -177,3 +177,15 @@ send_file(path, caption)
   path outside the paddock becomes neutral text and the file survives) and
   `tests/adapters/filesystem/t_media_paths.nim`.
 - Streaming retry: `tests/app/t_stream_tool_calls.nim` (2 calls, one note).
+
+
+## Size limits
+
+Every HTTP response is read at most 64 MiB (`DefaultMaxBodyBytes` in
+`deadline_transport`): past that the read stops and the response is refused,
+so a server sending a huge body costs the daemon that much memory at most.
+Channels that download attachments cap it at 25 MB in the transport itself
+(Mattermost, SMS, Teams, Google Chat). Discord refuses an attachment by the
+size it announces, before downloading; Telegram's Bot API itself serves files
+of at most 20 MB; the other channels are bounded by the 64 MiB transport cap.
+A body over the cap is not retried.

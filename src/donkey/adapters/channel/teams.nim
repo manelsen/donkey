@@ -443,6 +443,7 @@ proc newTeamsAdapter*(appId, appPassword, tenantId, identityPath,
   var transport = http
   if transport.post.isNil:
     transport = newStdHttpAdapter(timeout = TeamsTimeoutSec,
+      maxResponseBytes = TeamsMaxDownloadBytes,   ## a bigger body stops being read
       allowlist = @["login.microsoftonline.com", "sharepoint.com"] & serviceHosts,
       retryNonIdempotent = false, retryConflict = false).toRuntimePort()
   var now = clock

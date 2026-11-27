@@ -23,17 +23,20 @@ type StdHttpAdapter* = object
   retryConflict*: bool ## true → a 409 on an idempotent call is retried.
   returnServerError*: bool ## true → once attempts run out, a 5xx response is
                            ## returned as `ok` so the caller can read its body.
+  maxResponseBytes*: int   ## the most of a body that is read (0: the transport's default)
 
 proc newStdHttpAdapter*(timeout = 60, maxRetries = 3, allowlist: seq[string] = @[],
                         circuitBreaker = true, proxy = "",
                         retryNonIdempotent = true,
                         retryConflict = false,
-                        returnServerError = false): StdHttpAdapter =
+                        returnServerError = false,
+                        maxResponseBytes = 0): StdHttpAdapter =
   StdHttpAdapter(timeout: timeout, maxRetries: maxRetries, allowlist: allowlist,
                  circuitBreaker: circuitBreaker, proxy: proxy,
                  retryNonIdempotent: retryNonIdempotent,
                  retryConflict: retryConflict,
-                 returnServerError: returnServerError)
+                 returnServerError: returnServerError,
+                 maxResponseBytes: maxResponseBytes)
 
 type RetryKind* = enum
   rkIdempotent
@@ -130,7 +133,7 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
     let res = transportRequest(TransportRequest(
       meth: $meth, url: url, body: body, headers: headers,
       redirectLimit: redirectLimit, proxy: a.proxy, allowlist: a.allowlist,
-      deadlineMs: effectiveTimeout * 1000,
+      deadlineMs: effectiveTimeout * 1000, maxBodyBytes: a.maxResponseBytes,
     )).map(proc(r: TransportResponse): HttpResponse =
       HttpResponse(status: r.status, body: r.body, headers: r.headers))
 
@@ -175,6 +178,10 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
         return ok(val)
     else:
       lastError = res.error
+      if res.error.startsWith(BodyTooLargeError):
+        ## The server answered: too much, not a failure of the host, and
+        ## another attempt would read the same excess again.
+        return err(res.error)
 
     if a.circuitBreaker:
       recordFailure(host)
