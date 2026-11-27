@@ -58,6 +58,22 @@ proc newSecretVault*(home: string): SecretVault =
     keyStore: newFileKeyStore(home / VaultKeyFileName),
   )
 
+proc newPersonVault*(home, userId: string): Result[SecretVault, string] =
+  ## A person's own secrets (E11.2: their GitHub token): one file per person
+  ## under `{home}/.secrets/people/`, encrypted with the instance's key, and
+  ## never put in the environment (`applyToEnv` is for the instance's vault).
+  if userId.len == 0 or userId.len > 64 or
+     not userId.allCharsInSet({'a'..'z', 'A'..'Z', '0'..'9', '-', '_', ':', '.'}) or
+     userId in [".", ".."]:
+    return err("not a person id: " & userId)
+  let dir = home / VaultDirName / "people"
+  ok(SecretVault(
+    dir:      dir,
+    path:     dir / (userId.replace(':', '_') & ".json"),
+    keyPath:  home / VaultKeyFileName,
+    keyStore: newFileKeyStore(home / VaultKeyFileName),
+  ))
+
 proc hardenDirPermissions(dir: string): Result[void, string] {.raises: [].} =
   when defined(posix):
     if posix.chmod(dir.cstring, posix.Mode(0o700)) != 0:
@@ -275,3 +291,18 @@ proc applyToEnv*(vault: SecretVault): Result[int, string] {.raises: [].} =
       return err("could not set secret '" & name & "': " & e.msg)
     inc applied
   ok(applied)
+
+proc getSecret*(vault: SecretVault; name: string): Result[string, string] {.raises: [].} =
+  ## One value, decrypted; "" when there is none.
+  if not isValidSecretName(name):
+    return err("invalid secret name: '" & name & "'")
+  let loaded = vault.readStored()
+  if loaded.isErr:
+    return err(loaded.error)
+  let stored = loaded.get()
+  if not stored.hasKey(name):
+    return ok("")
+  try:
+    vault.keyStore.decrypt(stored[name])
+  except KeyError:
+    ok("")

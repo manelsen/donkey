@@ -77,11 +77,12 @@ proc newChannelRuntimeEnv*(memory: MdFileAdapter;
                            toolClientsCount = 0;
                            daemonStartMs = 0'i64;
                            skillRegistry = "";
-                           editor: CommandArgFn = nil): ChannelRuntimeEnv =
+                           editor: CommandArgFn = nil;
+                           github: GithubCommandFn = nil): ChannelRuntimeEnv =
   ChannelRuntimeEnv(
     commands: CommandEnv(services: newCommandServices(
       memory, completeBuilder, modelCatalogLoader, toolsCount, toolClientsCount,
-      daemonStartMs, skillRegistry, editor)),
+      daemonStartMs, skillRegistry, editor, github)),
     memory: memory,
     completeBuilder: completeBuilder,
     modelCatalogLoader: modelCatalogLoader,
@@ -92,9 +93,11 @@ proc newChannelRuntimeEnv*(memory: MdFileAdapter;
 
 proc commandRequest*(command: CommandDecision; userId: UserId;
                      channel: ChannelKind; messageId, rawId: string;
-                     resolver: IdentityResolver): CommandDispatchRequest =
+                     resolver: IdentityResolver;
+                     privateChat = false): CommandDispatchRequest =
   ## The dispatch request of a plain-text channel: `/continue` links the
-  ## speaker's raw id, tasks reply to `messageId`.
+  ## speaker's raw id, tasks reply to `messageId`. `privateChat` only when
+  ## the channel knows the conversation is one-to-one.
   CommandDispatchRequest(
     command: command, userId: userId, channel: channel, messageId: messageId,
-    rawId: rawId, links: resolver.identityLinkPort())
+    rawId: rawId, links: resolver.identityLinkPort(), privateChat: privateChat)

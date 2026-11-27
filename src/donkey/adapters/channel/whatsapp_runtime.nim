@@ -89,7 +89,7 @@ proc drainWhatsAppEvents*(waAdapter: var WhatsAppAdapter;
       let command = decideCommandRequest(CommandRequest(channel: ckWhatsApp, text: event.text))
       let outcome = dispatchCommand(env.commands, sm, msgSeq,
           commandRequest(command, userId, ckWhatsApp, event.messageId, event.waUserId,
-                         picked[].resolver))
+                         picked[].resolver, privateChat = true))   ## a business number talks one to one
       case outcome.kind
       of cokFallback:
         handleSessionFallback(msg)

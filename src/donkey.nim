@@ -130,7 +130,8 @@ import donkey/app/chat_bridge
 import donkey/acp_cli
 import donkey/app/editor_registry
 import donkey/app/editor_files
-from donkey/ports/command_services import CommandArgFn
+from donkey/ports/command_services import CommandArgFn, GithubCommandFn
+import donkey/app/github_token
 import donkey/domain/gateway/dashboard_pure
 import donkey/domain/gateway/identity_pure
 import donkey/app/heartbeat
@@ -1171,6 +1172,25 @@ proc editorRandom(n: int): Result[seq[byte], string] {.gcsafe, raises: [].} =
   if not urandom(bytes): return err("no system randomness")
   ok(bytes)
 
+proc personSecrets(home: string): PersonSecretsPort =
+  ## Each person's own secrets (E11.2): their vault file, the instance's key.
+  PersonSecretsPort(
+    get: proc(userId: UserId; name: string): Result[string, string] {.gcsafe, raises: [].} =
+      let vault = ? newPersonVault(home, $userId)
+      vault.getSecret(name),
+    set: proc(userId: UserId; name, value: string): Result[void, string] {.gcsafe, raises: [].} =
+      let vault = ? newPersonVault(home, $userId)
+      vault.setSecret(name, value),
+    remove: proc(userId: UserId; name: string): Result[void, string] {.gcsafe, raises: [].} =
+      let vault = ? newPersonVault(home, $userId)
+      discard ? vault.removeSecret(name)
+      ok())
+
+proc githubCommandFn(home: string): GithubCommandFn =
+  let secrets = personSecrets(home)
+  proc(userId: UserId; value: string; privateChat: bool): Result[string, string] {.gcsafe.} =
+    githubCommand(secrets, userId, value, privateChat)
+
 proc editorCommandFn(editors: EditorRegistry): CommandArgFn =
   ## `/editor` on the channels; nil when the registry could not be opened.
   if editors.isNil: return nil
@@ -1557,7 +1577,8 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
       services.toolClients.len, services.tools.len + nativeSessionTools().len, runtime.msgSeq, runtime.daemonStartMs, log,
       proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} =
         ensureSessionTask(runtimePtr[].sm, msg, services, runtimePtr[].msgSeq, taskKind, payload),
-      skillRegistry(services.cfg.env), editorCommandFn(runtime.editors)):
+      skillRegistry(services.cfg.env), editorCommandFn(runtime.editors),
+      githubCommandFn(services.cfg.home)):
       if stagedReaction:
         completeReaction(runtime.presentationState, outboundPorts, msg.channel,
                          msg.userId, msg.channelId, statusMessageId(msg), false)
@@ -1724,7 +1745,7 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
   let cmdEnv = newChannelRuntimeEnv(
     memory, completeBuilder, modelCatalogLoader, toolsCount,
     toolClientsCount, ctx.runtime.daemonStartMs, skillRegistry(cfg.env),
-    editorCommandFn(ctx.runtime.editors))
+    editorCommandFn(ctx.runtime.editors), githubCommandFn(cfg.home))
 
   initGatewayDrainer(
     drainDiscord = proc(): bool =
@@ -2303,7 +2324,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
                            ctx.services.tools.len + nativeSessionTools().len,
                            ctx.services.toolClients.len,
                            ctx.runtime.daemonStartMs, skillRegistry(cfg.env),
-                           editorCommandFn(ctx.runtime.editors)),
+                           editorCommandFn(ctx.runtime.editors), githubCommandFn(cfg.home)),
       ctx.runtime.msgSeq, log,
       proc(msg: InboundMessage) {.gcsafe.} =
         stageReaction(ctx.runtime.presentationState, outboundPorts, msg),

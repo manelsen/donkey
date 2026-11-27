@@ -2,6 +2,7 @@ import donkey/domain/message
 import donkey/domain/agent_message
 import std/unittest
 import donkey/core/commands/command_routing
+import donkey/core/commands/command_outcome
 
 proc runTests*() =
   suite "core command routing":
@@ -213,6 +214,16 @@ proc runEditorTests*() =
       check decideCommandRoute(cmdEditor) == crLocal
       check decideLocalCommandAction(d) == lcaEditor
 
+proc runGithubTests*() =
+  suite "command routing — /github (E11.2)":
+    test "/github takes a value, is local and answers only the requester":
+      let d = decideCommandRequest(CommandRequest(channel: ckTelegram, text: "/github token abc"))
+      check d.kind == cmdGithub and d.value == "token abc"
+      check decideCommandRoute(cmdGithub) == crLocal
+      check decideLocalCommandAction(d) == lcaGithub
+      check requesterOnlyCommand(d)
+
 when isMainModule:
   runTests()
   runEditorTests()
+  runGithubTests()

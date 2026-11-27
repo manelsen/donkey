@@ -55,6 +55,8 @@ proc fakeServices(p: Probe; memoryFails = false): CommandServicesPort =
       ok(),
     toolCounts: proc(): ToolCounts {.gcsafe.} =
       ToolCounts(tools: 3, clients: 1),
+    github: proc(u: UserId; v: string; privateChat: bool): Result[string, string] {.gcsafe.} =
+      ok("github " & v & " private=" & $privateChat),
     editor: proc(u: UserId; v: string): Result[string, string] {.gcsafe.} =
       if v == "BAD": err("nenhum editor espera esse código") else: ok("editor " & $u & " " & v),
   )
@@ -94,6 +96,12 @@ proc runTests*() =
         check o.kind == cokReply
         check o.reply.topic == topic
         check o.reply.text.len > 0
+
+    test "/github passes whether the conversation is private (E11.2)":
+      var req = request(p, cmdGithub, "token x")
+      check dispatchCommand(env, sm, msgSeq, req).reply.text == "github token x private=false"
+      req.privateChat = true
+      check dispatchCommand(env, sm, msgSeq, req).reply.text == "github token x private=true"
 
     test "/editor <code> confirms an editor for this person (E10.2)":
       let o = dispatchCommand(env, sm, msgSeq, request(p, cmdEditor, "K7QP2M"))

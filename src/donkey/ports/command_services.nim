@@ -18,6 +18,8 @@ type
     tools*:   int  ## native tools available to a session
     clients*: int  ## connected MCP clients
 
+  GithubCommandFn* = proc(userId: UserId; value: string; privateChat: bool): Result[string, string] {.gcsafe.}
+
   CommandServicesPort* = object
     about*:       CommandCountFn  ## runtime overview
     doctor*:      CommandCountFn  ## diagnostics report
@@ -31,6 +33,7 @@ type
     budget*:      CommandArgFn    ## /budget text form
     taskBoard*:   CommandTextFn   ## the person's task board (/tasks, E4.3)
     editor*:      CommandArgFn    ## /editor (E10.2): confirm a code, list, revoke
+    github*:      GithubCommandFn ## /github (E11.2): the person's token, only in a private chat
     channelPrefs*: proc(userId: UserId): Result[ChannelPrefs, string] {.gcsafe.}
     savePreference*: proc(userId: UserId; key, value: string): Result[void, string] {.gcsafe.}
     toolCounts*: proc(): ToolCounts {.gcsafe.}

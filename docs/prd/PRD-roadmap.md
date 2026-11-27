@@ -581,6 +581,11 @@ registra quem agiu, e cada um só escreve onde já pode).
   (`/github token` no chat, gravado como segredo da pessoa, nunca no
   histórico); sem token, a escrita é recusada com a instrução de como
   configurar. A leitura continua com o token da instância.
+  *Feito (27/11):* cofre por pessoa (`{home}/.secrets/people/<id>.json`,
+  cifrado com a chave da instância, fora do ambiente); `/github token` só
+  em conversa privada (Telegram fora de grupo, Discord sem servidor, Slack
+  em DM, WhatsApp; nos outros, recusado), com aviso para revogar o token
+  que apareceu num grupo; `/github` e `/github esquecer`.
 - **E11.3 Política por repositório.** No `donkey.toml`, por repositório (ou
   padrão): cada ação é `allow`, `ask` ou `deny`; o padrão é `ask` para tudo.
   `ask` usa o mecanismo de aprovação que já existe, mostrando o texto exato

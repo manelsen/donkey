@@ -87,6 +87,7 @@ Donkey supports slash commands with semantic routing. Commands start with `/` an
 | `/debug` | Toggle debug mode | `crSessionTask` |
 | `/mycode` | Generate link code | `crLocal` |
 | `/continue` | Continue link | `crLocal` |
+| `/github` | Your own GitHub token: `/github token <TOKEN>` (direct message only), `/github esquecer` | `crLocal` |
 | `/editor` | Confirm an editor's code, list your editors, revoke one (`/editor revogar <id>`) | `crLocal` |
 | `/ping` | Ping | `crPing` |
 
