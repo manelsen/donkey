@@ -160,10 +160,14 @@ proc askEditorFile(rt: AcpRuntime; token, sessionId: string; event: StreamEvent)
     return
   inc rt.asked
   let id = "fs-" & $rt.asked
+  let request = fsReadRequest(%id, sessionId, rt.cwds.getOrDefault(sessionId),
+                              event.requestParams)
+  if request.isErr:
+    discard await rt.ports.editorResult(token, event.requestId, "", request.error)
+    return
   let answer = Future[JsonNode].Raising([CancelledError]).init("acp.fsread")
   rt.answers[id] = answer
-  rt.ports.write(fsReadRequest(%id, sessionId, rt.cwds.getOrDefault(sessionId),
-                               event.requestParams))
+  rt.ports.write(request.get)
   var reply: JsonNode = nil
   try:
     reply = await answer

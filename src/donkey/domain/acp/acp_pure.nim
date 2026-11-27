@@ -223,13 +223,32 @@ proc editorReadsFiles*(initializeParams: JsonNode): bool =
   if initializeParams.isNil: return false
   initializeParams{"clientCapabilities"}{"fs"}{"readTextFile"}.getBool(false)
 
-proc fsReadRequest*(id: JsonNode; sessionId, cwd: string; params: JsonNode): string =
+func normalizedAbsolute(path: string): string =
+  ## `.` and `..` resolved, on text alone (nothing on disk is consulted).
+  var parts: seq[string]
+  for part in path.split('/'):
+    case part
+    of "", ".": discard
+    of "..":
+      if parts.len > 0: parts.setLen(parts.len - 1)
+    else: parts.add part
+  "/" & parts.join("/")
+
+proc fsReadRequest*(id: JsonNode; sessionId, cwd: string;
+                    params: JsonNode): Result[string, string] =
   ## `fs/read_text_file` (agent → client). ACP wants an absolute path: a
-  ## relative one is resolved from the session's folder.
-  var path = params{"path"}.getStr
-  if not path.startsWith("/") and cwd.len > 0:
-    path = cwd.strip(leading = false, chars = {'/'}) & "/" & path
+  ## relative one is resolved from the session's folder. Only files inside
+  ## that folder are asked for: a path the model was talked into (by a
+  ## prompt injection, say) cannot reach the rest of the person's machine.
+  if cwd.len == 0 or not cwd.startsWith("/"):
+    return err("the editor gave no project folder to read from")
+  let root = normalizedAbsolute(cwd)
+  let raw = params{"path"}.getStr
+  if raw.len == 0: return err("no path")
+  let path = normalizedAbsolute(if raw.startsWith("/"): raw else: root & "/" & raw)
+  if path != root and not path.startsWith(if root == "/": "/" else: root & "/"):
+    return err("outside the project folder (" & root & "): " & raw)
   var p = %* {"sessionId": sessionId, "path": path}
   if params{"line"}.getInt > 0: p["line"] = %params{"line"}.getInt
   if params{"limit"}.getInt > 0: p["limit"] = %params{"limit"}.getInt
-  rpcRequest(id, "fs/read_text_file", p)
+  ok(rpcRequest(id, "fs/read_text_file", p))

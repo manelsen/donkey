@@ -43,6 +43,14 @@ proc runTests*() =
       let id = parseJson(outbox.getNoWait().editorRequest)["id"].getStr
       check r.answer(UserId("u"), id, "late", "").isErr
 
+    test "an answer that lands as the deadline fires is still taken":
+      let r = newEditorFileRequests()
+      let outbox = newAsyncQueue[OutboundMessage](4)
+      let asked = r.ask(UserId("u"), outbox, 1, "/x", timeoutMs = 1)
+      let id = parseJson(outbox.getNoWait().editorRequest)["id"].getStr
+      discard r.answer(UserId("u"), id, "just in time", "")
+      check (waitFor asked).get == "just in time"
+
     test "a long file is cut, saying so":
       let r = newEditorFileRequests()
       let outbox = newAsyncQueue[OutboundMessage](4)

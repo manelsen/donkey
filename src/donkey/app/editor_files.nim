@@ -59,6 +59,8 @@ proc ask*(r: EditorFileRequests; userId: UserId; outbox: AsyncQueue[OutboundMess
     editorRequest: $(%* {"id": id, "method": "fs/read_text_file", "params": params})))
   let answered = await answer.withTimeout(chronos.milliseconds(timeoutMs))
   r.pending.del(id)
+  if not answered and answer.completed():
+    return answer.read()   ## it landed as the deadline fired
   if not answered:
     return err("the editor did not answer in " & $(timeoutMs div 1000) & " s")
   return answer.read()

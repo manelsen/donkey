@@ -127,11 +127,18 @@ proc runEditorFileTests*() =
       check e.requestParams == %* {"path": "src/a.nim", "line": 3, "limit": 20}
 
     test "fs/read_text_file: an absolute path, resolved from the session's folder":
-      let req = parseJson(fsReadRequest(%"fs-1", "s1", "/home/ana/proj", %* {"path": "src/a.nim", "line": 3, "limit": 20}))
+      let req = parseJson(fsReadRequest(%"fs-1", "s1", "/home/ana/proj", %* {"path": "src/a.nim", "line": 3, "limit": 20}).get)
       check req["method"] == %"fs/read_text_file"
       check req["params"] == %* {"sessionId": "s1", "path": "/home/ana/proj/src/a.nim", "line": 3, "limit": 20}
-      let abs = parseJson(fsReadRequest(%"fs-2", "s1", "/home/ana/proj", %* {"path": "/etc/hosts"}))
-      check abs["params"] == %* {"sessionId": "s1", "path": "/etc/hosts"}
+      let abs = parseJson(fsReadRequest(%"fs-2", "s1", "/home/ana/proj", %* {"path": "/home/ana/proj/b.nim"}).get)
+      check abs["params"]["path"] == %"/home/ana/proj/b.nim"
+      check parseJson(fsReadRequest(%"fs-3", "s1", "/home/ana/proj", %* {"path": "./src/../c.nim"}).get)["params"]["path"] ==
+        %"/home/ana/proj/c.nim"
+
+    test "a path outside the project folder is refused, never asked":
+      for path in ["/etc/hosts", "../secret", "src/../../x", "/home/ana/projx/a"]:
+        check fsReadRequest(%"fs-9", "s1", "/home/ana/proj", %* {"path": path}).isErr
+      check fsReadRequest(%"fs-9", "s1", "", %* {"path": "a.nim"}).isErr   ## no folder to read from
 
     test "the editor offers reading only when it says so":
       check editorReadsFiles(%* {"protocolVersion": 1, "clientCapabilities": {"fs": {"readTextFile": true}}})

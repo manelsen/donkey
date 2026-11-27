@@ -222,9 +222,18 @@ proc runTests*() =
       for m in f.sent: check m{"method"}.getStr != "fs/read_text_file"
       check f.results.len == 1 and f.results[0][1] == "ef-1" and "does not" in f.results[0][3]
 
+    test "a path outside the project is refused without asking the editor":
+      let f = Fake(token: "tok", turnStatus: 200, waitApproval: true, turnLines: @[
+        """data: {"choices":[{"index":0,"delta":{"donkey_editor_request":{"id":"ef-3","method":"fs/read_text_file","params":{"path":"../../etc/passwd"}}}}]}"""])
+      let rt = started(f, reads = true)
+      rt.feed(Prompt % f.sent[1]["result"]["sessionId"].getStr)
+      waitFor rt.idle()
+      for m in f.sent: check m{"method"}.getStr != "fs/read_text_file"
+      check f.results.len == 1 and "outside the project" in f.results[0][3]
+
     test "the editor's error goes back as the reason":
       let f = Fake(token: "tok", turnStatus: 200, waitApproval: true, turnLines: @[
-        """data: {"choices":[{"index":0,"delta":{"donkey_editor_request":{"id":"ef-2","method":"fs/read_text_file","params":{"path":"/nope"}}}}]}"""])
+        """data: {"choices":[{"index":0,"delta":{"donkey_editor_request":{"id":"ef-2","method":"fs/read_text_file","params":{"path":"/proj/missing.nim"}}}}]}"""])
       let rt = started(f, reads = true)
       rt.feed(Prompt % f.sent[1]["result"]["sessionId"].getStr)
       var askId: JsonNode

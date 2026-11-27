@@ -77,7 +77,8 @@ its next message, and pairs again.
 - **Files from your project**: Donkey can read a file you have open in the
   editor, unsaved changes included (`editor_read_file`), after your approval,
   when the editor offers it (`fs.readTextFile`, Zed does). A relative path is
-  resolved from the folder the editor opened; a long file is cut at 200 KiB.
+  resolved from the folder the editor opened, and only files inside it are
+  read (a path leaving it is refused); a long file is cut at 200 KiB.
 - **Cancel** in the editor stops the turn; the daemon drops its late answer.
 
 ## Limits
