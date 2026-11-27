@@ -10,29 +10,31 @@ model in `core/outbound`.
 
 ## Supported Channels
 
-This matrix reflects the current `core/outbound` capability model used by the runtime.
+This matrix reflects the capability registry (`ports/channel_capability`) the runtime uses.
 
-| Channel | Implemented | Editable UI | Stream updates | Components | Reactions |
-|---------|-------------|-------------|----------------|------------|-----------|
-| [Telegram](#telegram) | yes | yes | yes | yes | yes |
-| [Discord](#discord) | yes | yes | yes | yes | yes |
-| [Slack](#slack) | yes | no | no | no | no |
-| [LINE](#line) | yes | no | no | no | no |
-| [Microsoft Teams](#microsoft-teams) | yes | no | no | no | no |
-| [Mattermost](#mattermost) | yes | no | no | no | no |
-| [SMS (Twilio)](#sms-twilio) | yes | no | no | no | no |
-| [IRC](#irc) | yes | no | no | no | no |
-| [Google Chat](#google-chat) | yes | no | no | no | no |
-| WeChat Work | yes | no | no | no | no |
-| WeChat | yes | no | no | no | no |
-| QQ | yes | no | no | no | no |
-| Feishu | yes | no | no | no | no |
-| WhatsApp | yes | no | no | no | no |
-| Signal | yes | no | no | no | no |
-| DingTalk | yes | no | no | no | no |
-| Matrix | no | no | no | no | no |
-| Email | no | no | no | no | no |
-| CLI | no | no | no | no | no |
+| Channel | Editable UI | Stream updates | Components | Reactions | Files in | Files out (`send_file`) |
+|---------|-------------|----------------|------------|-----------|----------|-------------------------|
+| [Telegram](#telegram) | yes | yes | yes | yes | yes | yes |
+| [Discord](#discord) | yes | yes | yes | yes | yes | no |
+| [Slack](#slack) | yes | no | yes | no | no | no |
+| WhatsApp | no | no | no | no | yes | no |
+| [Microsoft Teams](#microsoft-teams) | no | no | no | no | yes | no |
+| [Google Chat](#google-chat) | no | no | no | no | yes | no |
+| [Mattermost](#mattermost) | no | no | no | no | yes | yes |
+| WeChat Work | no | no | no | no | no | no |
+| WeChat | no | no | no | no | yes | no |
+| QQ | no | no | yes | no | no | no |
+| Feishu | no | no | no | no | yes | no |
+| DingTalk | yes | no | yes | no | yes | no |
+| [LINE](#line) | no | no | no | no | no | no |
+| Matrix | yes | no | no | no | yes | no |
+| Signal | no | no | no | no | no | no |
+| [IRC](#irc) | no | no | no | no | no | no |
+| [SMS (Twilio)](#sms-twilio) | no | no | no | no | yes | no |
+| Email | no | no | no | no | no | no |
+| CLI | yes | no | no | no | no | no |
+
+Every channel sends text. "Files in" is the port's `downloadFile` (an attachment reaches the turn); "Files out" is `cfSendFile` (the adapter reads a paddock file and uploads it). The table is generated from `ports/channel_capability`, which a test keeps in line with the ports.
 
 ---
 

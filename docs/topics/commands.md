@@ -59,6 +59,7 @@ Donkey supports slash commands with semantic routing. Commands start with `/` an
 |---------|-------------|-------|
 | `/learn [source]` | Turn a source (path, URL, notes; alone: what we just did) into a learned skill | a turn with its own prompt |
 | `/refine` | Review the conversation now and keep what deserves a skill | a turn with its own prompt |
+| `/insights [days]` | Your own usage report: turns, tokens (and the prompt cache's share), tools, skills | a turn with its own prompt |
 
 ### Memory Commands
 
@@ -76,7 +77,7 @@ Donkey supports slash commands with semantic routing. Commands start with `/` an
 | `/compact` | Compact context now | `crSessionTask` |
 | `/restart` | Restart session | `crSessionTask` |
 | `/stop` | Stop active task | `crSessionTask` |
-| `/bind` | Bind chat to agent | `crSessionTask` |
+| `/bind` | Bind chat to agent (not implemented: answers that it is coming) | `crSessionTask` |
 
 ### Utility Commands
 

@@ -5,9 +5,9 @@
 > [`docs/prd/PRD-roadmap.md`](prd/PRD-roadmap.md), um épico por frente.
 > Decisões abaixo tomadas pelo mantenedor em 25/11/2026.
 
-## 1. Onde estamos (26/11/2026, `master` em `84dea25d`)
+## 1. Onde estamos (26/11/2026, `master` em `a9be135f`)
 
-- **Código:** 398 módulos e ~85 mil linhas em `src/`, 409 arquivos de teste,
+- **Código:** 404 módulos e ~86 mil linhas em `src/`, 419 arquivos de teste,
   suíte completa verde. Arquitetura hexagonal com as fronteiras verificadas
   por testes de arquitetura.
 - **Cobertura estimada:** ~83% (faixa 80–86%), contra ~91,9% do Hermes e
@@ -37,6 +37,14 @@
   guardadas por uma guarda que bloqueia antes de gravar; uma revisão em
   segundo plano guarda o que merece, um curador consolida e arquiva, e
   `/learn`, `/refine`, `ctl skill learned` e `ctl insights` completam o ciclo.
+- **Mídia nos canais (E9):** anexos entram por Mattermost, Google Chat, SMS
+  (MMS) e Teams, além dos canais antigos; a ferramenta `send_file` manda um
+  arquivo do paddock onde o adapter sobe arquivo local (Telegram,
+  Mattermost). Falta o Teams completo (arquivos de saída e cartões), em
+  andamento.
+- **Auditoria externa (26/11):** os cinco achados corrigidos (gravação
+  exclusiva de anexos, `core` sem escrita em disco, heartbeat que não se
+  repete, README fiel aos providers, provider estrito por agente).
 - **Cache de prompt e contexto (E8):** o histórico só cresce (o contexto
   recuperado fica com a mensagem do turno; nada sai do começo), marcadores de
   cache para Claude, tokens do cache no uso, nos traços, nas métricas e no
@@ -137,7 +145,7 @@ tomadas; no E13, o A2A entra, e o Donkey também chama agentes A2A.
 | Épico | Frente | O que entrega | Decisões pendentes |
 |---|---|---|---|
 | E8 | Cache de prompt | **Feito** (#232–#236; #237 e #238 completam: raciocínio devolvido intacto e histórico só de acréscimo): prefixo estável (o que muda a cada turno vai com a mensagem da pessoa), marcadores `cache_control` para Claude (Anthropic, Bedrock, OpenRouter), tokens do cache no uso, nos traços, nas métricas e no `/insights`, aviso de cache que nunca acerta, compactação de verdade (40% do contexto em modelos de 1M, 60% nos menores; `/compact` funciona) | Decididas em 26/11 |
-| E9 | Mídia nos canais novos | Anexos de entrada e saída no Mattermost, Google Chat e Teams; MMS só de entrada; cartões de aprovação no Google Chat e no Teams; IRC só com links | Decidida: MMS só de entrada |
+| E9 | Mídia nos canais novos | **Em andamento:** Mattermost nos dois sentidos (#242), Google Chat de entrada (#243), `send_file` (#247), SMS com MMS de entrada (#248), Teams de entrada (#249), IRC só com links (sem código). Falta o Teams completo: imagens embutidas, arquivos pelo cartão de consentimento, token de arquivos com certificado (exigido a partir de 1º/3/2027) e cartões de aprovação | Decidida: MMS só de entrada |
 | E10 | Interface para editores (ACP) | `donkey acp`: sessões, streaming, ferramentas e aprovações no Zed e afins, pela IPC do daemon; o editor entra por pareamento | Decididas: pareamento; memória compartilhada com os outros canais |
 | E11 | Escrita no GitHub | Abrir e fechar issues, comentar, rotular, com o token de cada pessoa; política por repositório (`allow`, `ask`, `deny` por ação) | Decididas: política por repositório; token da pessoa |
 | E12 | Supervisão de adapters | À maneira do OTP: árvore de supervisão, `one_for_one`, tipos de filho, intensidade de reinícios e escalada; fontes de `Defect` viram erro como valor; canais de socket como processo filho | Decidida: inspirar-se no OTP |
