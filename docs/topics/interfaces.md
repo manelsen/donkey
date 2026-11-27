@@ -99,7 +99,8 @@ network can be guessed:
 
 The daemon keeps only the token's SHA-256 in `state/editors.json` (0600),
 with the person, the editor's name and a public id. The person lists and
-revokes their editors with `/editor` and `/editor revogar <id>`; the operator
+revokes their editors with `/editor` and `/editor revogar <id>` (at most 16 per
+person); the operator
 with `donkey ctl editor list|revoke`. A revocation takes effect on the next
 request. A person who is revoked or not allowed by the DM policy is refused
 here too. These routes never take `DONKEY_HTTP_TOKEN`: an editor holds only

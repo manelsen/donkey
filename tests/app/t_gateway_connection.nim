@@ -157,6 +157,13 @@ proc runEditorTests*() =
       check serveEditor(editors, post("/v1/acp/chat/completions", chat, "nope")).startsWith("HTTP/1.1 401")
       check serveEditor(editors, post("/v1/acp/chat/completions", chat, "secret")).startsWith("HTTP/1.1 401")
 
+    test "a GET to the pairing route is a 405 and pairs nothing":
+      let editors = editorRegistry()
+      let response = serveEditor(editors, "GET /v1/acp/pair HTTP/1.1\r\n\r\n")
+      check response.startsWith("HTTP/1.1 405")
+      check response.count("HTTP/1.1") == 1
+      check editors.confirmPairing("AAAAAA", UserId("u")).isErr   ## nothing pending
+
     test "without a registry the editor routes are not there":
       check serve(post("/v1/acp/pair", "{}")).startsWith("HTTP/1.1 404")
 
