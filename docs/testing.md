@@ -67,3 +67,13 @@ Core and Domain modules must never import Adapters. Run the automated boundary c
 # Requires ripgrep (rg)
 bash scripts/check_boundaries.sh
 ```
+
+## Build locks
+
+Each grouped build takes a lock, a directory beside the group's cache with
+its owner (`PID HOST`) inside (`scripts/lib/group_lock.sh`). A run that dies
+without releasing it (killed for memory, a closed terminal) leaves the lock
+behind; the next run sees the owner is gone and takes it over
+(`Reclaiming stale group build lock: …`) instead of waiting two minutes and
+failing every test of the group. A lock without an owner, left by an older
+runner, is taken over once it is a minute old.

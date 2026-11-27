@@ -236,6 +236,12 @@ group_cache_dir() {
 }
 export -f group_cache_dir
 
+# The build lock knows its owner, so a lock left by a killed run is taken
+# over instead of waited on (scripts/lib/group_lock.sh).
+source "$REPO_ROOT/scripts/lib/group_lock.sh"
+export GROUP_LOCK_LEGACY_AGE_SEC
+export -f group_lock_is_stale reclaim_group_lock acquire_group_lock release_group_lock
+
 # Compile one manifest group. Files are executed later, in parallel, so a slow
 # test cannot serialize the rest of its group.
 build_group() {
@@ -248,16 +254,8 @@ build_group() {
   build_log="$cache_dir/build.log"
   stamp="$cache_dir/input.sha256"
 
-  local tries=0
   mkdir -p "$GROUP_CACHE_ROOT"
-  while ! mkdir "$lock" 2>/dev/null; do
-    tries=$((tries + 1))
-    if [ "$tries" -gt 600 ]; then
-      echo "Timed out waiting for group build lock: $lock" >&2
-      return 1
-    fi
-    sleep 0.2
-  done
+  acquire_group_lock "$lock" 600 || return 1
   mkdir -p "$cache_dir"
 
   local imports="$cache_dir/imports.tmp"
@@ -321,7 +319,7 @@ build_group() {
         mv "$stamp.tmp" "$stamp" || run_status=$?
     fi
   fi
-  rm -rf "$lock"
+  release_group_lock "$lock"
 
   if [ "$run_status" -ne 0 ] || [ ! -x "$binary" ]; then
     echo "FAIL  group $group (compile)"
