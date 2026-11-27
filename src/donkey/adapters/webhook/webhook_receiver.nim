@@ -567,6 +567,10 @@ proc handleTeamsAt*(cfg: WebhookConfig; req: WebhookRequest; nowSec: int64;
                      if verdict.error.status == 403: "forbidden" else: "unauthorized")
   if not pushActivity(activity):
     return serviceUnavailable()
+  ## A card click (Teams complete, part 4) must be answered with what Teams
+  ## shows the person; the click itself is handled from the queue.
+  if activity.kind == "invoke" and activity.name == "adaptiveCard/action":
+    return jsonResp(200, cardActionResponse("Recebido."))
   plainResp(200)
 
 proc handleTeams(cfg: WebhookConfig; req: WebhookRequest): WebhookResponse =

@@ -15,6 +15,7 @@ import donkey/adapters/tool/runtime_builder
 import donkey/core/log
 import donkey/infra/thread_handle
 import donkey/app/route_health
+import donkey/app/command_dispatch
 import donkey/adapters/state/route_health_file
 import donkey/app/daemon_endpoints
 import donkey/adapters/filesystem/subagent_workspace
@@ -1816,7 +1817,11 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
         pickBot = proc(bot: string): ptr TeamsAdapter {.gcsafe.} =
           slotAdapter(addr ctx.adapters.teamsBots, addr ctx.adapters.teams, bot),
         noteInbound = proc(userId: UserId; bot: string) {.gcsafe.} =
-          noteInbound(ctx.adapters.teamsBots, userId, bot)) > 0,
+          noteInbound(ctx.adapters.teamsBots, userId, bot),
+        enqueueCallbackTask = proc(userId: UserId; kind: TaskKind;
+                                   payload, messageId: string): bool {.gcsafe.} =
+          enqueueSessionTask(ctx.runtime.sm, ctx.runtime.msgSeq, userId, kind,
+                             payload, ckTeams, messageId)) > 0,
     drainMattermost = proc(): bool =
       if ctx.env.mattermostToken.len == 0:
         return false

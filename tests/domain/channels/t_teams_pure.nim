@@ -261,8 +261,34 @@ proc runFileTokenTests*() =
       check "scope=https%3A%2F%2Fcontoso-my.sharepoint.com%2F.default" in form
       check "client_secret" notin form
 
+proc runCardTests*() =
+  suite "teams — cards with buttons (Teams complete, part 4)":
+    test "buttons become an Adaptive Card with Action.Execute carrying the callback":
+      let body = cardBody("Aprovar o bash?", @[@[("✅ Aprovar", "apr:abc:y"), ("❌ Negar", "apr:abc:n")]], "act-1")
+      check body["replyToId"].getStr == "act-1"
+      let card = body["attachments"][0]
+      check card["contentType"].getStr == "application/vnd.microsoft.card.adaptive"
+      let content = card["content"]
+      check content["type"].getStr == "AdaptiveCard"
+      check content["body"][0]["text"].getStr == "Aprovar o bash?"
+      check content["actions"].len == 2
+      check content["actions"][0]["type"].getStr == "Action.Execute"
+      check content["actions"][0]["title"].getStr == "✅ Aprovar"
+      check content["actions"][0]["data"] == %* {"donkey": "apr:abc:y"}
+
+    test "a click: the callback it carried; anything else is not one":
+      check parseCardAction("adaptiveCard/action", %* {"action": {"type": "Action.Execute",
+        "verb": "donkey", "data": {"donkey": "apr:abc:y"}}}).get == "apr:abc:y"
+      check parseCardAction("adaptiveCard/action", %* {"action": {"data": {}}}).isErr
+      check parseCardAction("fileConsent/invoke", %* {}).isErr
+
+    test "the invoke's answer, which Teams needs in the HTTP response":
+      check parseJson(cardActionResponse("Recebido.")) == %* {"statusCode": 200,
+        "type": "application/vnd.microsoft.activity.message", "value": "Recebido."}
+
 when isMainModule:
   runTests()
   runMediaTests()
   runOutboundMediaTests()
   runFileTokenTests()
+  runCardTests()

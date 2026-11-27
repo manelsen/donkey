@@ -18,7 +18,7 @@ This matrix reflects the capability registry (`ports/channel_capability`) the ru
 | [Discord](#discord) | yes | yes | yes | yes | yes | no |
 | [Slack](#slack) | yes | no | yes | no | no | no |
 | WhatsApp | no | no | no | no | yes | no |
-| [Microsoft Teams](#microsoft-teams) | no | no | no | no | yes | yes |
+| [Microsoft Teams](#microsoft-teams) | no | no | yes | no | yes | yes |
 | [Google Chat](#google-chat) | no | no | no | no | yes | no |
 | [Mattermost](#mattermost) | no | no | no | no | yes | yes |
 | WeChat Work | no | no | no | no | no | no |
@@ -352,7 +352,15 @@ nothing is queued.
   the RSC permission `File.ReadWriteSelected.User` (Teams accepts it from
   15 January 2027; publish the updated manifest by 1 March 2027). Apps
   added with `[[bots]]` do not take a certificate yet.
-- No cards (approvals) or edits yet.
+- Buttons go as an Adaptive Card with `Action.Execute` (Teams complete, part
+  4): approval requests show Approve/Deny, the onboarding its choices. A
+  click comes back as an `invoke` named `adaptiveCard/action`; the webhook
+  answers it with the invoke response Teams needs, and the click becomes the
+  person's message (its text the button's callback, through the same access
+  gate), or, for an onboarding choice, a session task, as on Slack. Before
+  this, a message with buttons failed on Teams: approval requests never
+  reached Teams users.
+- No edits yet.
 
 ---
 

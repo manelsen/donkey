@@ -411,9 +411,22 @@ proc runConsentHardeningTests*() =
       check not pendingExpired(createdMs = 0, nowMs = 1_000)
       check MaxPendingFiles == 256
 
+proc runCardSendTests*() =
+  suite "teams — buttons go as a card (Teams complete, part 4)":
+    test "a message with a keyboard is an Adaptive Card in the thread":
+      let w = Wire()
+      let (a, _) = filesAdapter(w, "card")
+      check a.send(OutboundMessage(channel: ckTeams, text: "Aprovar o bash?",
+        replyTo: replyTarget(ServiceUrl, "a:1xyz", "act-1"),
+        keyboard: @[@[("✅ Aprovar", "apr:abc:y"), ("❌ Negar", "apr:abc:n")]])).isOk
+      let card = parseJson(w.posts[0][1])["attachments"][0]
+      check card["contentType"].getStr == "application/vnd.microsoft.card.adaptive"
+      check card["content"]["actions"].len == 2
+
 when isMainModule:
   runTests()
   runMediaTests()
   runFilesTests()
   runFileTokenTests()
   runConsentHardeningTests()
+  runCardSendTests()

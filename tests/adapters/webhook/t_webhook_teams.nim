@@ -135,5 +135,25 @@ proc runTests*() =
       check anyRouteConfigured(cfg)
       check not anyRouteConfigured(WebhookConfig())
 
+proc runCardTests*() =
+  suite "webhook — teams card actions (Teams complete, part 4)":
+    setup:
+      resetBotKeys()
+      seedBotKeys(Jwks, nowMs = VecNowSec * 1000)
+      discard drain()
+
+    test "a card click is queued and answered with the invoke response Teams needs":
+      var j = parseJson(activity())
+      j["type"] = %"invoke"
+      j["name"] = %"adaptiveCard/action"
+      j["value"] = %* {"action": {"type": "Action.Execute", "verb": "donkey", "data": {"donkey": "apr:abc:y"}}}
+      let r = handle(request(vecGood, body = $j))
+      check r.status == 200
+      check parseJson(r.body)["statusCode"].getInt == 200
+      check parseJson(r.body)["type"].getStr == "application/vnd.microsoft.activity.message"
+      let (has, a) = tryRecvActivity()
+      check has and a.name == "adaptiveCard/action"
+
 when isMainModule:
   runTests()
+  runCardTests()

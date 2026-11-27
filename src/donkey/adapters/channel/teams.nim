@@ -318,9 +318,11 @@ proc send*(a: TeamsAdapter; msg: OutboundMessage): Result[void, string] =
   ## offered for Teams.
   if a.configError.len > 0:
     return err("Teams: " & a.configError)
-  if msg.keyboard.len > 0:
-    return err("Teams: keyboards are not supported")
   let target = ? a.targetFor(msg)
+  if msg.keyboard.len > 0:
+    ## Buttons (approvals): an Adaptive Card (Teams complete, part 4).
+    return a.postActivity(target.serviceUrl, target.conversationId, target.activityId,
+                          cardBody(msg.text, msg.keyboard, target.activityId))
   if msg.mediaUrl.len == 0:
     if msg.text.strip.len == 0: return ok()
     return a.sendText(target, msg.text)

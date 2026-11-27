@@ -7,13 +7,14 @@
 ## before, through the shared inbound gate (DM policy, group allowlist on the
 ## conversation id), with `/continue` handled locally.
 
-import std/[options, strutils]
+import std/[json, options, strutils]
 import ../../app/inbound_gate
 import ../../app/session_manager
 import ../../core/commands/command_routing
 import ../../core/log
 import ../../core/pipeops
 import ../../core/types
+import ../../domain/agent_message
 import ../../domain/message
 import ./common_runtime
 import ../identity/identity_resolver
@@ -31,7 +32,9 @@ proc drainTeamsEvents*(a: var TeamsAdapter;
                        enqueueReply: proc(msg: OutboundMessage): Result[void, string] {.gcsafe, raises: [].} = nil;
                        log: Logger = newLogger("teams.runtime");
                        pickBot: proc(bot: string): ptr TeamsAdapter {.gcsafe.} = nil;
-                       noteInbound: proc(userId: UserId; bot: string) {.gcsafe.} = nil): int {.gcsafe.} =
+                       noteInbound: proc(userId: UserId; bot: string) {.gcsafe.} = nil;
+                       enqueueCallbackTask: proc(userId: UserId; kind: TaskKind;
+                                                 payload, messageId: string): bool {.gcsafe.} = nil): int {.gcsafe.} =
   ## Drains the queue and returns the number of activities that made a turn
   ## (or a local `/continue`). Every activity is consumed.
   var (has, act) = tryRecvActivity()
@@ -51,6 +54,18 @@ proc drainTeamsEvents*(a: var TeamsAdapter;
           owner[].handleFileConsent(act).isOkOr:
             log.warn("teams: file consent: " & error)
         break next
+      ## A card click (part 4) is the person's message, its text the
+      ## button's callback (an approval's `apr:…`), through the same gate.
+      var clicked = false
+      if act.kind == "invoke" and act.name == "adaptiveCard/action":
+        let value = try: parseJson(act.value) except CatchableError: newJNull()
+        let callback = parseCardAction(act.name, value)
+        if callback.isErr:
+          log.debug("teams: card action without a callback")
+          break next
+        act.kind = "message"
+        act.text = callback.get
+        clicked = true
       if act.kind != "message" or (act.text.strip.len == 0 and act.attachments.len == 0):
         log.debug("teams: skipped " & act.kind & " activity " & act.id)
         break next
@@ -76,6 +91,15 @@ proc drainTeamsEvents*(a: var TeamsAdapter;
         break next
       if noteInbound != nil:
         noteInbound(auth.userId, act.bot)
+      ## An onboarding choice clicked on a card is a session task, as on
+      ## Slack and Discord, never text for the model.
+      if clicked and enqueueCallbackTask != nil:
+        let callback = decideCallbackRequest(CallbackRequest(channel: ckTeams, data: act.text))
+        if callback.kind in {cbkPersonality, cbkName}:
+          if not enqueueCallbackTask(auth.userId, callbackTaskKind(callback), callback.value, act.id):
+            log.warn("teams: onboarding choice with no live session")
+          inc result
+          break next
       let target = replyTarget(act.serviceUrl, act.conversationId, act.id)
       picked[].rememberConversation(sender, act.serviceUrl, act.conversationId).isOkOr:
         log.warn("teams: conversation not saved: " & error)

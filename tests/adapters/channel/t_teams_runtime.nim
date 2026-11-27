@@ -10,6 +10,7 @@ import donkey/domain/channels/teams_pure
 import donkey/adapters/channel/outbound_builder
 import donkey/ports/channel_capability
 import donkey/app/session_manager
+import donkey/domain/agent_message
 import donkey/core/log
 import donkey/core/pipeops
 import donkey/core/types
@@ -262,7 +263,48 @@ proc runConsentTests*() =
     test "Teams is offered send_file":
       check supports(ckTeams, cfSendFile)
 
+proc runCardClickTests*() =
+  suite "teams runtime — a card click (Teams complete, part 4)":
+    setup:
+      while tryRecvActivity()[0]: discard
+
+    test "a click is the person's message, its text the button's callback":
+      var a = newAdapter()
+      var sm: SessionManager
+      sm.init()
+      var seen: TeamsSeen
+      let s = Sink()
+      var click = message("inv-2", "", kind = "invoke")
+      click.name = "adaptiveCard/action"
+      click.value = $(%* {"action": {"type": "Action.Execute", "data": {"donkey": "apr:abc:y"}}})
+      pushActivity(click)
+      check drainTeamsEvents(a, sm, seen, fallbackFor(s), replyFor(s), rtLog) == 1
+      check s.turns.len == 1 and s.turns[0].text == "apr:abc:y"
+      check s.turns[0].rawChannelId == "aad-belle"
+
+    test "an onboarding click is a session task, not text":
+      var a = newAdapter()
+      var sm: SessionManager
+      sm.init()
+      var seen: TeamsSeen
+      let s = Sink()
+      var tasks: seq[(TaskKind, string)]
+      var click = message("inv-3", "", kind = "invoke")
+      click.name = "adaptiveCard/action"
+      click.value = $(%* {"action": {"data": {"donkey": "personality:mode:guided"}}})
+      pushActivity(click)
+      discard drainTeamsEvents(a, sm, seen, fallbackFor(s), replyFor(s), rtLog,
+        enqueueCallbackTask = proc(userId: UserId; kind: TaskKind; payload, messageId: string): bool {.gcsafe.} =
+          {.cast(gcsafe).}: tasks.add (kind, payload)
+          true)
+      check s.turns.len == 0
+      check tasks == @[(tkPersonalityChoice, "personality:mode:guided")]
+
+    test "Teams is offered keyboards":
+      check supports(ckTeams, cfSendKeyboard)
+
 when isMainModule:
   runTests()
   runMediaTests()
   runConsentTests()
+  runCardClickTests()
