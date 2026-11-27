@@ -4,7 +4,7 @@
 ## "Authenticate requests with the Bot Connector API" (learn.microsoft.com,
 ## checked 25/11/2026).
 
-import std/[json, strutils, unittest]
+import std/[base64, json, strutils, unittest]
 import donkey/core/pipeops
 import donkey/domain/channels/teams_pure
 
@@ -235,7 +235,34 @@ proc runOutboundMediaTests*() =
       check card["contentUrl"].getStr.endsWith("/relatorio.pdf") and card["name"].getStr == "relatorio.pdf"
       check card["content"] == %* {"uniqueId": "U-1", "fileType": "pdf"}
 
+proc runFileTokenTests*() =
+  suite "teams — the file token (Teams complete, part 3)":
+    test "the scope is the file host's":
+      check fileScope("https://contoso-my.sharepoint.com/personal/x/a.pdf") ==
+        "https://contoso-my.sharepoint.com/.default"
+
+    test "the client assertion: RS256 with the certificate's x5t, issued by the app to Entra":
+      let input = fileTokenAssertionInput("app-123", "tenant-1", "THUMB", "jti-1", 1_800_000_000)
+      let parts = input.split('.')
+      check parts.len == 2
+      let header = parseJson(decode(parts[0].replace('-', '+').replace('_', '/') & "=="))
+      check header == %* {"alg": "RS256", "typ": "JWT", "x5t": "THUMB"}
+      let claims = parseJson(decode(parts[1].replace('-', '+').replace('_', '/') & "=="))
+      check claims["aud"].getStr == "https://login.microsoftonline.com/tenant-1/oauth2/v2.0/token"
+      check claims["iss"].getStr == "app-123" and claims["sub"].getStr == "app-123"
+      check claims["jti"].getStr == "jti-1"
+      check claims["exp"].getInt - claims["nbf"].getInt == 600
+
+    test "the token request: client credentials with the assertion, for that scope":
+      let form = fileTokenForm("app-123", "https://contoso-my.sharepoint.com/.default", "AAA.BBB.CCC")
+      check "grant_type=client_credentials" in form
+      check "client_assertion_type=urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer" in form
+      check "client_assertion=AAA.BBB.CCC" in form
+      check "scope=https%3A%2F%2Fcontoso-my.sharepoint.com%2F.default" in form
+      check "client_secret" notin form
+
 when isMainModule:
   runTests()
   runMediaTests()
   runOutboundMediaTests()
+  runFileTokenTests()

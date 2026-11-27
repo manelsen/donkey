@@ -332,6 +332,7 @@ type FileConsent* = object
   accepted*: bool
   pending*: string
   uploadUrl*, contentUrl*, name*, uniqueId*, fileType*: string
+  tenantId*: string   ## the tenant to ask the file token of
 
 proc parseFileConsent*(name: string; value: JsonNode): Result[FileConsent, string] =
   if name != "fileConsent/invoke": return err("not a file consent")
@@ -342,7 +343,7 @@ proc parseFileConsent*(name: string; value: JsonNode): Result[FileConsent, strin
     pending: value{"context"}{"pending"}.getStr,
     uploadUrl: info{"uploadUrl"}.getStr, contentUrl: info{"contentUrl"}.getStr,
     name: info{"name"}.getStr, uniqueId: info{"uniqueId"}.getStr,
-    fileType: info{"fileType"}.getStr))
+    fileType: info{"fileType"}.getStr, tenantId: info{"tenantId"}.getStr))
 
 proc parseFileConsent*(activity: JsonNode): Result[FileConsent, string] =
   parseFileConsent(activity{"name"}.getStr, activity{"value"})
@@ -360,3 +361,32 @@ proc fileInfoBody*(contentUrl, name, uniqueId, fileType, replyToId: string): Jso
   result.delete("text")
   result["attachments"] = %* [{"contentType": FileInfoType, "contentUrl": contentUrl,
     "name": name, "content": {"uniqueId": uniqueId, "fileType": fileType}}]
+
+
+# ── The file token (Teams complete, part 3) ───────────────────────────────────
+## From 1 March 2027 file URLs need an access token from a certificate, a
+## federated credential or a managed identity, not the client secret
+## (Microsoft, "Send and receive files using a bot"). Here: a certificate,
+## through a client assertion.
+
+func fileScope*(url: string): string =
+  "https://" & hostOfUrl(url) & "/.default"
+
+func b64urlText(s: string): string =
+  encode(s, safe = true).strip(leading = false, chars = {'='})
+
+proc fileTokenAssertionInput*(appId, tenantId, x5t, jti: string; nowSec: int64): string =
+  ## The JWT's signing input (header.claims), to sign with the certificate's
+  ## key (RS256).
+  let header = %* {"alg": "RS256", "typ": "JWT", "x5t": x5t}
+  let claims = %* {"aud": "https://login.microsoftonline.com/" & tenantId & "/oauth2/v2.0/token",
+                   "iss": appId, "sub": appId, "jti": jti,
+                   "nbf": nowSec, "exp": nowSec + 600}
+  b64urlText($header) & "." & b64urlText($claims)
+
+func fileTokenForm*(appId, scope, assertion: string): string =
+  "client_id=" & encodeUrl(appId) &
+    "&scope=" & encodeUrl(scope) &
+    "&grant_type=client_credentials" &
+    "&client_assertion_type=" & encodeUrl("urn:ietf:params:oauth:client-assertion-type:jwt-bearer") &
+    "&client_assertion=" & encodeUrl(assertion)

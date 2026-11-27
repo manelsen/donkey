@@ -13,7 +13,7 @@
 ##     conversation is kept on disk, so a reminder reaches them after a
 ##     restart.
 
-import std/[json, locks, os, strutils, sysrand, tables]
+import std/[base64, json, locks, os, strutils, sysrand, tables]
 import ../../core/pipeops
 import ../../core/types
 import ../../domain/message
@@ -23,6 +23,7 @@ import ../../infra/fixed
 import ../../ports/channel
 import ../../ports/http
 import ../../ports/link_codes
+import ../crypto/rs256
 import ../filesystem/confined_read
 import ../filesystem/paths
 import ../http/std_http
@@ -151,6 +152,7 @@ type
     token:         AppToken
     conversations: Table[string, string]   ## sender key → reply target
     pending:       Table[string, PendingFile]   ## pending id → the file offered
+    fileTokens:    Table[string, AppToken]      ## scope → the file token (part 3)
 
   TeamsAdapter* = object
     appId*:            string
@@ -162,6 +164,9 @@ type
     clock:             Clock
     serviceHosts*:     seq[string]
     conversationsPath: string
+    certPem:           string   ## MICROSOFT_APP_CERT: certificate and key (part 3)
+    certX5t:           string
+    certError:         string
     state:             TeamsState
     configError*:      string
 
@@ -232,6 +237,35 @@ proc postActivity(a: TeamsAdapter; serviceUrl, conversationId, activityId: strin
   if resp.status notin 200 .. 299:
     return err("Teams: send status " & $resp.status)
   ok()
+
+proc fileToken(a: TeamsAdapter; url, tenant: string): Result[string, string] =
+  ## The token for a file URL (part 3): from the certificate, through a
+  ## client assertion; "" without a certificate (until 1 March 2027 the URLs
+  ## carry `tempauth`). Kept per scope until it is due.
+  if a.certError.len > 0:
+    return err("Teams: MICROSOFT_APP_CERT: " & a.certError)
+  if a.certPem.len == 0:
+    return ok("")
+  let scope = fileScope(url)
+  let now = a.clock()
+  let cached = a.state.fileTokens.getOrDefault(scope)
+  if cached.token.len > 0 and now < cached.renewAtMs:
+    return ok(cached.token)
+  var raw: array[16, byte]
+  if not urandom(raw): return err("Teams: no randomness for a token id")
+  var jti = ""
+  for b in raw: jti.add b.toHex(2).toLowerAscii
+  let tenantId = if tenant.len > 0: tenant else: a.tenantId
+  let input = fileTokenAssertionInput(a.appId, tenantId, a.certX5t, jti, now div 1000)
+  let signature = ? rs256Sign(a.certPem, input)
+  let assertion = input & "." & encode(signature, safe = true).strip(leading = false, chars = {'='})
+  let resp = ? a.http.post(tokenUrl(tenantId), fileTokenForm(a.appId, scope, assertion),
+    @[("Content-Type", "application/x-www-form-urlencoded")])
+  if resp.status != 200:
+    return err("Teams: file token request status " & $resp.status)
+  let token = ? parseTokenResponse(resp.body, now)
+  a.state.fileTokens[scope] = token
+  ok(token.token)
 
 proc readPaddockFile(path, mediaRoot: string; limit: int): Result[(string, string), string] =
   ## The file's name and bytes, read only inside the paddock (confined_read).
@@ -304,7 +338,10 @@ proc handleFileConsent*(a: TeamsAdapter; act: TeamsActivity): Result[void, strin
   if not uploadAllowed(consent.uploadUrl):
     return err("Teams: upload URL outside SharePoint")
   let (_, data) = ? readPaddockFile(offered.path, offered.mediaRoot, TeamsMaxFileBytes)
-  let resp = ? a.http.put(consent.uploadUrl, data, uploadHeaders(data.len))
+  var headers = uploadHeaders(data.len)
+  let token = ? a.fileToken(consent.uploadUrl, consent.tenantId)
+  if token.len > 0: headers.add ("Authorization", "Bearer " & token)
+  let resp = ? a.http.put(consent.uploadUrl, data, headers)
   if resp.status notin [200, 201]:
     return err("Teams: upload status " & $resp.status)
   a.postActivity(offered.serviceUrl, offered.conversationId, "",
@@ -323,6 +360,9 @@ proc downloadFile*(a: TeamsAdapter; fileId: string): Result[FileDownload, string
   var headers: seq[HttpHeader]
   if where.withToken:
     headers.add ("Authorization", "Bearer " & (? a.appToken()))
+  else:
+    let token = ? a.fileToken(where.url, "")
+    if token.len > 0: headers.add ("Authorization", "Bearer " & token)
   let resp = ? a.http.get(where.url, headers)
   if resp.status != 200:
     return err("Teams: download status " & $resp.status)
@@ -336,10 +376,13 @@ proc newTeamsAdapter*(appId, appPassword, tenantId, identityPath,
                       conversationsPath: string;
                       http: HttpRuntimePort = HttpRuntimePort();
                       clock: Clock = nil;
-                      serviceHosts: seq[string] = DefaultServiceHosts): TeamsAdapter =
+                      serviceHosts: seq[string] = DefaultServiceHosts;
+                      certPath = ""): TeamsAdapter =
   ## `MICROSOFT_APP_ID`, `MICROSOFT_APP_PASSWORD` and `MICROSOFT_APP_TENANT_ID`
   ## from the environment snapshot. Missing credentials do not stop the
   ## daemon: the adapter records why and every send fails with it.
+  ## `certPath` (`MICROSOFT_APP_CERT`): a PEM with the app's certificate and
+  ## key, for the token file downloads and uploads need from 1 March 2027.
   var transport = http
   if transport.post.isNil:
     transport = newStdHttpAdapter(timeout = TeamsTimeoutSec,
@@ -358,3 +401,11 @@ proc newTeamsAdapter*(appId, appPassword, tenantId, identityPath,
         "MICROSOFT_APP_ID and MICROSOFT_APP_PASSWORD are not set"
       else: "")
   result.linkCodes = result.resolver.linkCodePort()
+  if certPath.strip.len > 0:
+    try:
+      result.certPem = readFile(certPath.strip)
+      let x5t = certThumbprint(result.certPem)
+      if x5t.isErr: result.certError = x5t.error
+      else: result.certX5t = x5t.get
+    except CatchableError as e:
+      result.certError = "cannot read " & certPath.strip & ": " & e.msg

@@ -251,6 +251,7 @@ type DaemonEnv = object
   teamsAppId: string        ## MICROSOFT_APP_ID
   teamsAppPassword: string  ## MICROSOFT_APP_PASSWORD
   teamsTenantId: string     ## MICROSOFT_APP_TENANT_ID; empty = multi-tenant
+  teamsCertPath: string     ## MICROSOFT_APP_CERT: PEM with the app's certificate and key
   teamsServiceHosts: seq[string]
   mattermostUrl: string     ## MATTERMOST_URL (https only)
   mattermostToken: string   ## MATTERMOST_TOKEN: the bot's personal access token
@@ -741,6 +742,7 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
   result.teamsAppId = cfg.env.get("MICROSOFT_APP_ID").strip()
   result.teamsAppPassword = cfg.env.get("MICROSOFT_APP_PASSWORD").strip()
   result.teamsTenantId = cfg.env.get("MICROSOFT_APP_TENANT_ID").strip()
+  result.teamsCertPath = cfg.env.get("MICROSOFT_APP_CERT").strip()
   result.teamsServiceHosts = DefaultServiceHosts & parseChatIdList(cfg.env.get("TEAMS_SERVICE_HOSTS"))
   result.mattermostUrl = cfg.env.get("MATTERMOST_URL").strip()
   result.mattermostToken = cfg.env.get("MATTERMOST_TOKEN").strip()
@@ -824,7 +826,7 @@ proc initDaemonAdapters(cfg: DonkeyConfig; env: DaemonEnv): DaemonAdapters =
   result.teams = newTeamsAdapter(env.teamsAppId, env.teamsAppPassword,
     env.teamsTenantId, env.identityPath,
     cfg.home / "state" / "teams_conversations.json",
-    serviceHosts = env.teamsServiceHosts)
+    serviceHosts = env.teamsServiceHosts, certPath = env.teamsCertPath)
   result.gchat = newGoogleChatAdapter(env.googleChatServiceAccount, env.identityPath,
     cfg.home / "state" / "google_chat_spaces.json")
   result.irc = newIrcAdapter(env.irc.host.len > 0 and env.irc.nick.len > 0,

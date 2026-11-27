@@ -454,10 +454,14 @@ arquivo por SMS, responde com texto.
   (`file.consent`), enviado por PUT ao OneDrive da pessoa quando ela aceita
   (`fileConsent/invoke`) e mostrado num cartão `file.info`; em grupo ou canal,
   uma nota. A resposta ao `invoke` é HTTP 200 sem corpo, a convenção dos SDKs
-  (a documentação não mostra; conferir num tenant real). *Faltam:* a parte
-  3, o token de arquivos com certificado (a Microsoft exige a partir de
-  1º/3/2027; sem ele, arquivos param no Teams nesse dia) e a parte 4, os
-  cartões de aprovação (`Action.Execute`, `invoke adaptiveCard/action`).
+  (a documentação não mostra; conferir num tenant real). *Parte 3, feita:*
+  `MICROSOFT_APP_CERT` (PEM com certificado e chave); com ele, todo download
+  e upload de arquivo leva um token pedido por `client_assertion` (JWT RS256
+  com o `x5t` do certificado, escopo `/.default` do host do arquivo,
+  conferido contra o OpenSSL num certificado de teste); sem ele, funciona só
+  até 1º/3/2027. Os apps de `[[bots]]` ainda não recebem certificado.
+  *Falta:* a parte 4, os cartões de aprovação (`Action.Execute`,
+  `invoke adaptiveCard/action`).
 - **E9.5 IRC.** Só links: o protocolo não carrega arquivos (DCC fica fora).
   Na entrada, uma URL de imagem pode ir ao `inspect_image` por decisão do
   agente, como em qualquer canal.

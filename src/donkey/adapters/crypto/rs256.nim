@@ -30,9 +30,41 @@ proc pemBody(pem: string): Result[string, string] =
   except CatchableError:
     err("the PEM key is not base64")
 
+proc pemSection(pem: string; labels: openArray[string]): Result[string, string] =
+  ## The DER bytes of the first block with one of `labels`, in a file that may
+  ## hold several (a certificate and its key, in either order).
+  let text = pem.replace("\\n", "\n").replace("\r", "")
+  for label in labels:
+    let head = "-----BEGIN " & label & "-----"
+    let at = text.find(head)
+    if at < 0: continue
+    let footer = text.find("-----END " & label & "-----", at)
+    if footer < 0: continue
+    var b64 = ""
+    for c in text[at + head.len ..< footer]:
+      if c notin Whitespace: b64.add c
+    try:
+      let der = decode(b64)
+      if der.len > 0: return ok(der)
+    except CatchableError: discard
+  err("no " & labels.join(" or ") & " in the PEM")
+
+proc certThumbprint*(pem: string): Result[string, string] =
+  ## The certificate's SHA-1 thumbprint, base64url without padding: the
+  ## `x5t` an Entra client assertion names its signing certificate by.
+  let der = ? pemSection(pem, ["CERTIFICATE"])
+  var ctx: Sha1Context
+  sha1Init(ctx)
+  sha1Update(ctx, unsafeAddr der[0], csize_t(der.len))
+  var digest = newString(20)
+  sha1Out(ctx, addr digest[0])
+  ok(encode(digest, safe = true).strip(leading = false, chars = {'='}))
+
 proc rs256Sign*(pem, signingInput: string): Result[string, string] =
-  ## The raw signature (the modulus length) of `signingInput`.
-  let der = ? pemBody(pem)
+  ## The raw signature (the modulus length) of `signingInput`. The key may
+  ## share the file with a certificate.
+  let der = pemSection(pem, ["PRIVATE KEY", "RSA PRIVATE KEY"]).valueOr:
+    ? pemBody(pem)
   var dec: SkeyDecoderContext
   skeyDecoderInit(dec)
   skeyDecoderPush(dec, unsafeAddr der[0], csize_t(der.len))
