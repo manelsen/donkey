@@ -119,6 +119,19 @@ proc runTests*() =
       check gRegistryUpserts.len == 2
       check gRegistryUpserts[1].channels == @[(ckTelegram, "900")]
 
+    test "a turn behind an API stream (an editor's, E10.2) does not move the person's channel":
+      gRegistryUpserts.setLen(0)
+      var sm: SessionManager
+      sm.init()
+      sm.setRegistryStore(countingRegistry())
+      var msgSeq = 0
+      discard sm.buildSessionIngressContext(InboundMessage(userId: UserId("u-ed"),
+        channel: ckTelegram, channelId: "900", text: "oi"), SessionRuntimeSignature("s"), msgSeq)
+      discard sm.buildSessionIngressContext(InboundMessage(userId: UserId("u-ed"),
+        channel: ckCli, channelId: "editor", text: "oi", bridgeToken: 7),
+        SessionRuntimeSignature("s"), msgSeq)
+      check gRegistryUpserts[^1].channels == @[(ckTelegram, "900")]
+
     test "SessionManager channel-level authorization follows the DM policy":
       var sm: SessionManager
       sm.init()

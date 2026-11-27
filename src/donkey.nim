@@ -1,6 +1,6 @@
 ## donkey — AI agent system entry point.
 
-import std/[json, options, os, parseopt, strutils, tables, terminal, times]
+import std/[json, options, os, parseopt, strutils, sysrand, tables, terminal, times]
 when defined(posix):
   import std/posix
 import chronos
@@ -127,6 +127,8 @@ import donkey/app/sandbox
 import donkey/app/ipc_server
 import donkey/adapters/http/gateway_server
 import donkey/app/chat_bridge
+import donkey/app/editor_registry
+from donkey/ports/command_services import CommandArgFn
 import donkey/domain/gateway/dashboard_pure
 import donkey/domain/gateway/identity_pure
 import donkey/app/heartbeat
@@ -375,6 +377,8 @@ type DaemonRuntime = ref object
   globalOutbox:         AsyncQueue[OutboundMessage]
   sm:                   SessionManager
   apiChatBridge:        ChatBridge
+  editors:              EditorRegistry
+    ## Paired editors (E10.2): the gateway's editor routes and `/editor`.
     ## API turns: the gateway registers and waits, the outbox drainer
     ## delivers `api:` replies here instead of to a channel port. Both run on
     ## the daemon loop.
@@ -1160,6 +1164,17 @@ proc buildGlobalSearchFn(memory: MdFileAdapter): SearchFn {.gcsafe.} =
 proc apiChatNowMs(): int64 {.gcsafe, raises: [].} =
   int64(epochTime() * 1000)
 
+proc editorRandom(n: int): Result[seq[byte], string] {.gcsafe, raises: [].} =
+  var bytes = newSeq[byte](n)
+  if not urandom(bytes): return err("no system randomness")
+  ok(bytes)
+
+proc editorCommandFn(editors: EditorRegistry): CommandArgFn =
+  ## `/editor` on the channels; nil when the registry could not be opened.
+  if editors.isNil: return nil
+  proc(userId: UserId; value: string): Result[string, string] {.gcsafe.} =
+    editors.editorCommand(userId, value)
+
 proc apiChatNap(ms: int) {.gcsafe, raises: [].} =
   ## The gateway runs on the daemon loop and its turns wait with `sleepAsync`
   ## (`poll(stepMs = 0)`), so the bridge never naps here. A blocking poll on
@@ -1309,6 +1324,7 @@ proc setupIpcServer(cfg: DonkeyConfig;
                                           sessionActionFn = gwSessionActionFn,
                                           authorizeFn = gwAuthorizeFn,
                                           chatBridge = gwChatBridge,
+                                          editors = runtime.editors,
                                           modelName = cfg.defaultModel,
                                           agentTimeoutMs = resolveAgentTimeoutMs(
                                             cfg.env.get("DONKEY_HTTP_AGENT_TIMEOUT_SEC")))
@@ -1530,7 +1546,7 @@ proc drainTelegramEvents(runtime:      var DaemonRuntime;
       services.toolClients.len, services.tools.len + nativeSessionTools().len, runtime.msgSeq, runtime.daemonStartMs, log,
       proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} =
         ensureSessionTask(runtimePtr[].sm, msg, services, runtimePtr[].msgSeq, taskKind, payload),
-      skillRegistry(services.cfg.env)):
+      skillRegistry(services.cfg.env), editorCommandFn(runtime.editors)):
       if stagedReaction:
         completeReaction(runtime.presentationState, outboundPorts, msg.channel,
                          msg.userId, msg.channelId, statusMessageId(msg), false)
@@ -1564,9 +1580,11 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
                        log:      Logger) =
   let outboundPorts = buildRuntimeOutboundPorts(adapters)
   while runtime.globalOutbox.len > 0:
-    let outMsg = runtime.globalOutbox.getNoWait()
-    if isApiChatReply(outMsg):
-      ## API replies belong to a waiting HTTP turn, never to a channel port.
+    var outMsg = runtime.globalOutbox.getNoWait()
+    outMsg.channel = channelForReply(outMsg, runtime.sm.latestChannel(outMsg.userId))
+    if answersApiTurn(outMsg):
+      ## API replies belong to a waiting HTTP turn, never to a channel port;
+      ## so does a person's reply to a turn an editor started (E10.2).
       ## A reply without a turn token (a scheduled firing for an `api:` user,
       ## for example) must not close an unrelated HTTP request.
       if outMsg.bridgeToken == 0:
@@ -1694,7 +1712,8 @@ proc buildDaemonGatewayDrainer(ctx: DaemonContext;
     handleGatewayFallback(ctx, cfg, memory, msg, log)
   let cmdEnv = newChannelRuntimeEnv(
     memory, completeBuilder, modelCatalogLoader, toolsCount,
-    toolClientsCount, ctx.runtime.daemonStartMs, skillRegistry(cfg.env))
+    toolClientsCount, ctx.runtime.daemonStartMs, skillRegistry(cfg.env),
+    editorCommandFn(ctx.runtime.editors))
 
   initGatewayDrainer(
     drainDiscord = proc(): bool =
@@ -2085,6 +2104,12 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   ## The API bridge must exist before the gateway accepts a turn and before
   ## the outbox drainer can route `api:` replies.
   ctx.runtime.apiChatBridge = newChatBridge(apiChatNowMs, apiChatNap)
+  let editors = newEditorRegistry(newFsAdapter(), cfg.home / "state" / "editors.json",
+                                  editorRandom, apiChatNowMs)
+  if editors.isErr:
+    log.error("editors disabled: " & editors.error)
+  else:
+    ctx.runtime.editors = editors.get
   if ctx.runtime.stateStore != nil:
     let ledgerErr = ctx.runtime.stateStore.ledgerLastCompactError()
     if ledgerErr.len > 0:
@@ -2265,7 +2290,8 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
       newChannelRuntimeEnv(memory, completeBuilder, modelCatalogLoader,
                            ctx.services.tools.len + nativeSessionTools().len,
                            ctx.services.toolClients.len,
-                           ctx.runtime.daemonStartMs, skillRegistry(cfg.env)),
+                           ctx.runtime.daemonStartMs, skillRegistry(cfg.env),
+                           editorCommandFn(ctx.runtime.editors)),
       ctx.runtime.msgSeq, log,
       proc(msg: InboundMessage) {.gcsafe.} =
         stageReaction(ctx.runtime.presentationState, outboundPorts, msg),

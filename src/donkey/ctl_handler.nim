@@ -19,6 +19,7 @@ import domain/insights_pure
 import app/turn_traces
 import app/curator
 import app/learned_skills
+import app/editor_registry
 import config/skills_registry
 import config/clawhub_registry
 import config/dotenv
@@ -875,6 +876,22 @@ proc dispatchCtl*(cfg: DonkeyConfig;
   if args[1] == "user" and args.len >= 4 and args[2] == "allow":
     let res = ctlUserRevoke(memory, args[3], false)
     if res.isErr: echo res.error; return 1
+    return 0
+
+  # ── editors (E10.2) ──
+  if args[1] == "editor" and args.len >= 3 and args[2] in ["list", "revoke"]:
+    let editors = newEditorRegistry(newFsAdapter(), cfg.home / "state" / "editors.json",
+      proc(n: int): Result[seq[byte], string] {.gcsafe, raises: [].} =
+        err("ctl does not pair editors"),
+      proc(): int64 {.gcsafe, raises: [].} = 0)
+    if editors.isErr: echo editors.error; return 1
+    if args[2] == "list":
+      echo editors.get.editorTable()
+      return 0
+    if args.len < 4: echo "usage: donkey ctl editor revoke <id>"; return 1
+    let revoked = editors.get.revokeEditor(args[3])
+    if revoked.isErr: echo revoked.error; return 1
+    echo "revoked " & args[3]
     return 0
 
   # ── pairing ──

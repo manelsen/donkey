@@ -30,6 +30,7 @@ type
     think*:       CommandArgFn    ## /think text form
     budget*:      CommandArgFn    ## /budget text form
     taskBoard*:   CommandTextFn   ## the person's task board (/tasks, E4.3)
+    editor*:      CommandArgFn    ## /editor (E10.2): confirm a code, list, revoke
     channelPrefs*: proc(userId: UserId): Result[ChannelPrefs, string] {.gcsafe.}
     savePreference*: proc(userId: UserId; key, value: string): Result[void, string] {.gcsafe.}
     toolCounts*: proc(): ToolCounts {.gcsafe.}

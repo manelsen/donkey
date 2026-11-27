@@ -533,6 +533,22 @@ proc runTests*() =
 
   suite "runAgentStream SSE":
 
+    test "an editor's stream runs as the person it was paired with (E10.2)":
+      resetStream()
+      dispatchMode = dmFinal
+      finalText = "oi, Ana"
+      let result = waitFor runAgentStream(
+        body = bodyFor("editor", "oi"), bridge = fakeBridge, dispatch = fakeDispatch,
+        authorize = fakeAuthorize, tokenConfigured = true, now = fakeEpochSec,
+        openStream = sseOpen, send = sseSend, acquireSlot = sseAcquire,
+        releaseSlot = sseRelease, streamNow = fakeNowFn, streamNap = fakeAsyncNap,
+        timeoutMs = 5_000, model = "donkey/test", asUser = UserId("u-ana"))
+      check result.outcome == asCompleted
+      check dispatched.len == 1 and dispatched[0].userId == UserId("u-ana")
+      check dispatched[0].channelId == "editor"   ## not the person's id as a channel
+      check dispatched[0].bridgeToken != 0
+      check doneCount() == 1
+
     test "a stream cut by the chunk limit on partials releases the user's turn":
       ## No terminal ever arrives: the stream closes with `length`, and the
       ## bridge must not keep the turn reserved for a reader that left.

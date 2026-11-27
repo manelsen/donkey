@@ -341,7 +341,8 @@ proc newCommandServices*(memory: MdFileAdapter;
                          modelCatalogLoader: ModelCatalogLoader;
                          toolsCount, toolClientsCount: int;
                          daemonStartMs: int64;
-                         skillRegistry = ""): CommandServicesPort =
+                         skillRegistry = "";
+                         editor: CommandArgFn = nil): CommandServicesPort =
   ## `skillRegistry` is where `/skill` searches and installs ("" is the
   ## public registry); the daemon passes `CLAWHUB_REGISTRY` from the snapshot.
   CommandServicesPort(
@@ -359,6 +360,7 @@ proc newCommandServices*(memory: MdFileAdapter;
       guarded: buildMemoryViewText(memory, userId),
     taskBoard: proc(userId: UserId): Result[string, string] {.gcsafe.} =
       guarded: taskBoardText(memory, userId),
+    editor: editor,
     clearMemory: proc(userId: UserId): Result[void, string] {.gcsafe.} =
       try:
         memory.clearMemory(userId)

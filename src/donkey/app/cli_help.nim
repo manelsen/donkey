@@ -29,6 +29,8 @@ Commands:
                                 Edit a USER.md field
   ctl user revoke <uuid>        Revoke user access
   ctl user allow <uuid>         Restore user access
+  ctl editor list              List paired editors (E10: donkey acp)
+  ctl editor revoke <id>        Revoke an editor's credential
   ctl pair list                 List pending DM pairing requests
   ctl pair approve <code>       Approve a pairing request and allow the user
   ctl pair reject <code>        Discard a pairing request

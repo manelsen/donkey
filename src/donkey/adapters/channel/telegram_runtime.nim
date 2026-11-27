@@ -4,6 +4,7 @@ import ../../core/commands/command_routing
 import ../../core/log as core_log
 import ../../core/outbound/outbound
 import ../../core/pipeops
+import ../../ports/command_services as command_services_port
 import ../../core/security/approval
 import ../../adapters/memory/md_file
 import ../../app/inbound_gate
@@ -114,10 +115,11 @@ proc telegramCommandEnv(memory: MdFileAdapter;
                         modelCatalogLoader: ModelCatalogLoader = nil;
                         toolsCount = 0; toolClientsCount = 0;
                         daemonStartMs = 0'i64;
-                        skillRegistry = ""): CommandEnv =
+                        skillRegistry = "";
+                        editor: CommandArgFn = nil): CommandEnv =
   CommandEnv(services: newCommandServices(memory, completeBuilder, modelCatalogLoader,
                                           toolsCount, toolClientsCount, daemonStartMs,
-                                          skillRegistry))
+                                          skillRegistry, editor))
 
 proc telegramCommandRequest(msg: InboundMessage; command: CommandDecision;
                             tgAdapter: TelegramAdapter;
@@ -609,7 +611,8 @@ proc handleTelegramCommand*(sm: var SessionManager;
                             daemonStartMs: int64;
                             logger: Logger;
                             ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil;
-                            skillRegistry = ""): bool =
+                            skillRegistry = "";
+                            editor: CommandArgFn = nil): bool =
   ## Every Telegram command goes through the shared dispatcher. Telegram only
   ## presents: the menu as a keyboard, a refreshed config keyboard after
   ## /reasoning, markdown and progress texts, and the group refusal for
@@ -633,7 +636,7 @@ proc handleTelegramCommand*(sm: var SessionManager;
     return true
   let env = telegramCommandEnv(memory, completeBuilder, modelCatalogLoader,
                                toolsCount, toolClientsCount, daemonStartMs,
-                               skillRegistry)
+                               skillRegistry, editor)
   let outcome = dispatchCommand(env, sm, msgSeq,
     telegramCommandRequest(msg, command, tgAdapter, ensureTaskSession))
   if command.route == crLocal and action == lcaReasoningToggle and
@@ -716,7 +719,8 @@ proc handleTelegramMessage*(msg: InboundMessage;
                             daemonStartMs: int64;
                             logger: Logger;
                             ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil;
-                            skillRegistry = ""): bool =
+                            skillRegistry = "";
+                            editor: CommandArgFn = nil): bool =
   ## Behavior derived from hermes-agent (MIT) fix 1e18e0503f; see
   ## docs/hermes-mining/telegram/CASES.md#tg-015
   ##
@@ -786,4 +790,4 @@ proc handleTelegramMessage*(msg: InboundMessage;
   handleTelegramCommand(sm, msg, command, tgAdapter, presentationState, memory,
                         completeBuilder, modelCatalogLoader, toolsCount,
                         toolClientsCount, msgSeq, daemonStartMs, logger,
-                        ensureTaskSession, skillRegistry)
+                        ensureTaskSession, skillRegistry, editor)

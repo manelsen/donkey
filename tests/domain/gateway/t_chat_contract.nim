@@ -4,7 +4,7 @@
 ## response/chunk builders, reply-kind precedence and client redaction.
 ## No network, no clock, no provider.
 
-import std/[json, strutils, unicode, unittest]
+import std/[options, json, strutils, unicode, unittest]
 import results
 import donkey/core/types
 import donkey/domain/message
@@ -53,6 +53,24 @@ proc runTests*() =
       check not isApiChatReply(OutboundMessage(userId: UserId("telegram:api:x")))
       check not isApiChatReply(OutboundMessage(userId: UserId("x-api:alice")))
       check isApiChatReply(OutboundMessage(userId: UserId("api:alice")))
+
+  suite "answersApiTurn":
+    test "an API user's reply, or any reply carrying a turn token (an editor's, E10.2)":
+      check answersApiTurn(OutboundMessage(userId: UserId("api:alice")))
+      check answersApiTurn(OutboundMessage(userId: UserId("u-ana"), bridgeToken: 7))
+      check not answersApiTurn(OutboundMessage(userId: UserId("u-ana")))
+
+  suite "channelForReply":
+    test "an editor's approval request goes where the person last wrote from (E10.2)":
+      let ask = OutboundMessage(userId: UserId("u-ana"), channel: ckCli, text: "Aprovar?")
+      check channelForReply(ask, some(ckTelegram)) == ckTelegram
+    test "everything else keeps its channel":
+      check channelForReply(OutboundMessage(userId: UserId("u-ana"), channel: ckCli), some(ckCli)) == ckCli
+      check channelForReply(OutboundMessage(userId: UserId("u-ana"), channel: ckCli), none(ChannelKind)) == ckCli
+      check channelForReply(OutboundMessage(userId: UserId("u-ana"), channel: ckSlack), some(ckTelegram)) == ckSlack
+      check channelForReply(OutboundMessage(userId: UserId("api:x"), channel: ckCli), some(ckTelegram)) == ckCli
+      check channelForReply(OutboundMessage(userId: UserId("u-ana"), channel: ckCli, bridgeToken: 3),
+                            some(ckTelegram)) == ckCli
 
   suite "AuthVerdict":
 

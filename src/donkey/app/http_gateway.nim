@@ -55,6 +55,9 @@ import ../ports/gateway_connection
 import ./metrics
 import ./chat_bridge
 import ./agent_chat_runtime
+import ./editor_registry
+import ../domain/acp/editor_gateway_pure
+import ../domain/acp/editor_pairing_pure
 
 export auth_pure, routing_pure, dashboard_html
 
@@ -394,6 +397,7 @@ type
     modelName:       string
     agentTimeoutMs:  int
     authToken:       string
+    editors:         EditorRegistry   ## nil = no editor routes (E10.2)
     log:             Logger
 
 proc handleGatewayConn(ctx: GatewayContext; client: GatewayConnection)
@@ -484,8 +488,10 @@ proc handleGatewayConn(ctx: GatewayContext; client: GatewayConnection)
       await client.sendResponse("401 Unauthorized", "application/json",
                                 "{\"error\":\"api routes require DONKEY_HTTP_TOKEN\"}\n", log)
       return
-    of gavPublic, gavAllowed:
+    of gavPublic, gavAllowed, gavEditor:
       discard
+    if isEditorAction(action) and ctx.editors.isNil:
+      action = "notfound"
     if not isPublicGatewayAction(action) and ctx.authToken.len == 0 and
        origin.len > 0 and not isLocalOrigin(origin):
       await client.sendResponse("403 Forbidden", "application/json",
@@ -604,6 +610,83 @@ proc handleGatewayConn(ctx: GatewayContext; client: GatewayConnection)
       else:
         await client.sendResponse("405 Method Not Allowed", "text/plain", "", log)
 
+    of "acp_pair", "acp_pair_poll":
+      ## Pairing an editor (E10.2): no credential yet; the poll is
+      ## authenticated by the pairing's secret.
+      if req.meth != "POST":
+        await client.sendResponse("405 Method Not Allowed", "application/json", "", log)
+      elif contentLength > MaxEditorRequestBytes:
+        await client.sendResponse("413 Payload Too Large", "application/json",
+                                  "{\"error\":\"body too large\"}\n", log)
+      else:
+        let body = await client.readRequestBody(contentLength, deadline)
+        if action == "acp_pair":
+          let name = parsePairRequest(body)
+          let started =
+            if name.isErr: Result[PairingStarted, string].err(name.error)
+            else: ctx.editors.beginPairing(name.get)
+          if started.isErr:
+            await client.sendResponse("429 Too Many Requests", "application/json",
+                                      $(%* {"error": started.error}) & "\n", log)
+          else:
+            await client.sendResponse("200 OK", "application/json",
+              $pairStartedBody(started.get.code, started.get.secret,
+                               int(EditorPairingTtlMs div 1000)) & "\n", log)
+        else:
+          let secret = parsePollRequest(body)
+          if secret.isErr:
+            await client.sendResponse("400 Bad Request", "application/json",
+                                      $(%* {"error": secret.error}) & "\n", log)
+          else:
+            let collected = ctx.editors.collectPairing(secret.get)
+            if collected.isErr:
+              log.warn("editor pairing: " & collected.error)
+              await client.sendResponse("500 Internal Server Error", "application/json",
+                                        "{\"error\":\"the credential could not be saved\"}\n", log)
+            else:
+              let reply = pollReply(collected.get.state, collected.get.token)
+              await client.sendResponse(httpStatusLine(reply.status), "application/json",
+                                        $reply.body & "\n", log)
+
+    of "acp_chat":
+      ## An editor's turn (E10.2): its credential says who the person is;
+      ## the same stream as /v1/chat/completions.
+      let person = ctx.editors.personFor(parseBearerToken(authHeader))
+      if person.isErr:
+        await client.sendResponse("401 Unauthorized", "application/json",
+                                  "{\"error\":\"unknown editor; pair again\"}\n", log)
+      elif req.meth != "POST":
+        await client.sendResponse("405 Method Not Allowed", "application/json", "", log)
+      else:
+        let body = await client.readRequestBody(contentLength, deadline)
+        if not agentChatStreamRequested(body):
+          await client.sendResponse("400 Bad Request", "application/json",
+                                    "{\"error\":\"the editor route streams: set stream to true\"}\n", log)
+        else:
+          let openSse: AgentStreamOpenFn = proc(): Future[bool] {.async.} =
+            return await client.sendSseHeaders(log)
+          let sendSse: AgentStreamSendFn = proc(chunk: string): Future[bool] {.async.} =
+            return await client.sendRaw(chunk)
+          let streamResult = await runAgentStream(
+            body            = body,
+            bridge          = ctx.chatBridge,
+            dispatch        = ctx.agentDispatchFn,
+            authorize       = ctx.authorizeFn,
+            tokenConfigured = true,
+            now             = agentNowSeconds,
+            openStream      = openSse,
+            send            = sendSse,
+            acquireSlot     = tryAcquireSseConnection,
+            releaseSlot     = releaseSseConnection,
+            streamNow       = agentClockMs,
+            timeoutMs       = ctx.agentTimeoutMs,
+            model           = ctx.modelName,
+            asUser          = person.get)
+          if streamResult.outcome == asPreflightError:
+            await client.sendResponse(httpStatusLine(streamResult.reply.status),
+                                      "application/json",
+                                      streamResult.reply.body & "\n", log)
+
     of "openai_chat":
       if req.meth != "POST":
         await client.sendResponse("405 Method Not Allowed", "application/json", "", log)
@@ -680,6 +763,7 @@ proc newGatewayContext*(statusFn: GatewayStatusFn;
                         chatBridge: ChatBridge = nil;
                         modelName = "";
                         agentTimeoutMs = 0;
+                        editors: EditorRegistry = nil;
                         log:       Logger = newLogger("http_gateway")
                        ): Result[GatewayContext, string] =
   ## What every connection is served with. The providers are called on the
@@ -700,6 +784,7 @@ proc newGatewayContext*(statusFn: GatewayStatusFn;
       if agentTimeoutMs > 0: agentTimeoutMs
       else: resolveAgentTimeoutMs(""),
     authToken: authToken,
+    editors: editors,
     log: log))
 
 proc serveGatewayConnection*(ctx: GatewayContext; conn: GatewayConnection)

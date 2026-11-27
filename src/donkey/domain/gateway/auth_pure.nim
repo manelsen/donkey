@@ -3,7 +3,7 @@
 
 import std/strutils
 
-func parseBearerToken(header: string): string =
+func parseBearerToken*(header: string): string =
   ## Extracts the token from an "Authorization: Bearer <token>" value.
   let value = header.strip()
   const prefix = "bearer "
@@ -12,7 +12,7 @@ func parseBearerToken(header: string): string =
   else:
     ""
 
-func constantTimeEq(a, b: string): bool =
+func constantTimeEq*(a, b: string): bool =
   if a.len != b.len:
     return false
   var diff = 0
@@ -77,6 +77,13 @@ type
     gavAllowed   ## Bearer token matched.
     gavNoToken   ## An `/api/*` route was reached with no token configured.
     gavRejected  ## `/api/*` without a matching Bearer token.
+    gavEditor    ## An editor route (E10.2): its handler authenticates it,
+                 ## by the pairing secret or the editor's credential.
+
+func isEditorAction*(action: string): bool =
+  ## The editor routes never take the operator's token: an editor holds only
+  ## its own credential.
+  action in ["acp_pair", "acp_pair_poll", "acp_chat"]
 
 func isApiRouteAction*(action: string): bool =
   ## The `/api/*` data surface. A set of route actions, not a prefix test: the
@@ -92,6 +99,8 @@ func gatewayAuthVerdict*(action, authHeader, token: string): GatewayAuthVerdict 
   ## behaviour (the agent itself already refuses to run without a token).
   if isPublicGatewayAction(action):
     return gavPublic
+  if isEditorAction(action):
+    return gavEditor
   if token.len == 0:
     if isApiRouteAction(action):
       return gavNoToken

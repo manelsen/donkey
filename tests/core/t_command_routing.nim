@@ -204,5 +204,15 @@ proc runTests*() =
       check isCoreCommand(cmdMenu) == true
       check isCoreCommand(cmdWhoami) == true
 
+proc runEditorTests*() =
+  suite "command routing — /editor (E10.2)":
+    test "/editor takes a code, or nothing to list; it is local":
+      let d = decideCommandRequest(CommandRequest(channel: ckTelegram, text: "/editor K7QP2M"))
+      check d.kind == cmdEditor and d.value == "K7QP2M"
+      check decideCommandRequest(CommandRequest(channel: ckTelegram, text: "/editor")).kind == cmdEditor
+      check decideCommandRoute(cmdEditor) == crLocal
+      check decideLocalCommandAction(d) == lcaEditor
+
 when isMainModule:
   runTests()
+  runEditorTests()
