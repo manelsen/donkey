@@ -280,6 +280,7 @@ proc buildNativeCtx*(uid: UserId;
     tools:        tools,
     approval:     currentApprovalService(),
     editorFiles:  currentEditorFiles(),
+    githubPolicy: cfg.githubPolicy,
     log:          log,
     paddockDir:   paddockDir,
     sandboxMode:  sandboxMode,

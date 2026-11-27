@@ -20,6 +20,15 @@ type PersonSecretsPort* = object
   set*:    proc(userId: UserId; name, value: string): Result[void, string] {.gcsafe, raises: [].}
   remove*: proc(userId: UserId; name: string): Result[void, string] {.gcsafe, raises: [].}
 
+var gPersonSecrets {.threadvar.}: PersonSecretsPort
+  ## Configured at startup on the daemon loop's thread, where turns run.
+
+proc configurePersonSecrets*(port: PersonSecretsPort) =
+  gPersonSecrets = port
+
+proc currentPersonSecrets*(): PersonSecretsPort {.gcsafe.} =
+  gPersonSecrets
+
 const HowTo = "Crie um token em https://github.com/settings/personal-access-tokens " &
   "(fine-grained), com acesso aos repositórios em que o Donkey vai escrever e a " &
   "permissão Issues: read and write (Pull requests: read and write, para comentar " &
