@@ -116,6 +116,7 @@ proc newSmsAdapter*(accountSid, authToken, fromNumber, identityPath: string;
   var transport = http
   if transport.post.isNil:
     transport = newStdHttpAdapter(timeout = SmsTimeoutSec,
+      maxResponseBytes = SmsMaxDownloadBytes,   ## a bigger body stops being read
       allowlist = @["api.twilio.com", "media.twiliocdn.com", "mms.twiliocdn.com",
                     "s3-external-1.amazonaws.com"],   ## MMS media (E9.3)
       retryNonIdempotent = false,

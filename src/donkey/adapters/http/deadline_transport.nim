@@ -35,6 +35,10 @@ const
     ## Past the deadline the worker cancels and replies; the caller waits this
     ## much longer for that reply before giving up on its own.
 
+const DefaultMaxBodyBytes* = 64 * 1024 * 1024
+  ## Every response is read at most this far: a server that sends a huge body
+  ## costs the daemon this much memory at most, never more (E9's open item).
+
 type
   TransportRequest* = object
     meth*:          string   ## GET, POST, PUT, PATCH or DELETE
@@ -47,6 +51,9 @@ type
       ## hosts every hop may reach (empty: any). Checked before each
       ## connection, so a redirect cannot lead outside it.
     deadlineMs*:    int      ## the whole request; <= 0 uses the default
+    maxBodyBytes*:  int
+      ## the most of a response body that is read; a larger one is refused
+      ## before the rest arrives. <= 0 uses DefaultMaxBodyBytes.
 
   TransportResponse* = object
     status*:  int
@@ -221,7 +228,10 @@ proc perform(request: TransportRequest; expiresAt: int64): Future[TransportReply
       await exchange.closeWait()
       exchange = nil
       inc hops
-    let bytes = await response.getBodyBytes()
+    let limit = if request.maxBodyBytes > 0: request.maxBodyBytes else: DefaultMaxBodyBytes
+    let bytes = await response.getBodyBytes(limit + 1)
+    if bytes.len > limit:
+      return err("response body larger than " & $limit & " bytes")
     var reply = TransportResponse(status: response.status,
                                   body: newString(bytes.len))
     for i, b in bytes: reply.body[i] = char(b)

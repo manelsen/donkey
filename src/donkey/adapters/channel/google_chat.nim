@@ -275,6 +275,7 @@ proc newGoogleChatAdapter*(serviceAccountJson, identityPath, spacesPath: string;
   var transport = http
   if transport.post.isNil:
     transport = newStdHttpAdapter(timeout = GoogleChatTimeoutSec,
+      maxResponseBytes = GoogleChatMaxDownloadBytes,   ## a bigger body stops being read
       allowlist = @["oauth2.googleapis.com", "chat.googleapis.com"],
       retryNonIdempotent = false, retryConflict = false).toRuntimePort()
   var now = clock
