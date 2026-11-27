@@ -16,6 +16,7 @@ import ./http_gateway
 import ./route_health
 import ./session_manager
 import ../infra/connection_state
+import ../domain/supervision_pure
 
 type
   ActiveChannels* = set[ChannelKind]
@@ -43,8 +44,16 @@ proc channelStatesOf*(channels: ActiveChannels): seq[ChannelConnection] =
     let (running, connected) = connectionCounts(kind)
     let tracked = kind in SocketChannels or running > 0
     result.add ChannelConnection(name: $kind,
-      state: if tracked: connectionLabel(true, running, connected)
-             else: activeLabel(lastInboundMs(kind), epochMs()))
+      state:
+        # A live connection says more than the supervisor's last decision.
+        if connected > 0: connectionLabel(true, running, connected)
+        else:
+          case supervisionOf(kind)
+          of csDown: "down: restarted too often, trying again in a few minutes (see the log)"
+          of csRestarting: "restarting"
+          else:
+            if tracked: connectionLabel(true, running, connected)
+            else: activeLabel(lastInboundMs(kind), epochMs()))
 
 func activeChannelNames*(channels: ActiveChannels): seq[string] =
   for kind in ChannelKind:

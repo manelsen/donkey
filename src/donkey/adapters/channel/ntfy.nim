@@ -18,6 +18,8 @@ import ../../domain/channels/ntfy_pure
 import ../../infra/event_queue
 import ../../infra/thread_handle
 import ../../infra/connection_state
+import ../../infra/supervisor
+import ../../domain/supervision_pure
 import ../../ports/http
 import ../../ports/link_codes
 import ../http/std_http
@@ -103,12 +105,18 @@ proc runNtfy(args: NtfyArgs) {.thread, nimcall.} =
   let http = ntfyHttp(args.settings)
   var since = ""
   var backoff = NtfyPollEveryMs
+  ## E12.2: a failed poll is a session that ended; a good one, the channel up.
+  var restart = DefaultPolicy
+  restart.baseBackoffMs = NtfyPollEveryMs
+  restart.maxBackoffMs = NtfyBackoffMaxMs
+  var sup = newSupervised(ckNtfy, "ntfy", restart)
   while not control.stop.load():
     let round = pollNtfy(http, args.settings, since)
     if round.isErr:
       log.warn(round.error)
-      backoff = min(backoff * 2, NtfyBackoffMaxMs)
+      backoff = sup.ended(round.error, ranMs = 0, log)
     else:
+      sup.started()
       backoff = NtfyPollEveryMs
       since = round.get.since
       for m in round.get.messages:

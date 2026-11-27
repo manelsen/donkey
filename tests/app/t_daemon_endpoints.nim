@@ -15,6 +15,7 @@ import donkey/ports/route_health_store
 import donkey/app/session_manager
 import donkey/app/daemon_endpoints
 import donkey/infra/connection_state
+import donkey/domain/supervision_pure
 import donkey/ports/ipc
 import donkey/core/providers/smart_routing
 
@@ -71,6 +72,26 @@ proc runTests*() =
       check stateOf("mattermost") == "stopped"   ## a socket channel with no socket running
       check stateOf("telegram").startsWith("active")
       check fromJsonStatus(st.toJson()).channelStates == st.channelStates
+
+    test "a supervised channel says when it is restarting or down (E12.2)":
+      var sm: SessionManager
+      sm.init()
+      resetConnections()
+      socketStarted(ckIrc)
+      superviseState(ckIrc, csRestarting)
+      socketStarted(ckNtfy)
+      superviseState(ckNtfy, csDown)
+      let st = daemonStatus(sm, DaemonStatusInputs(channels: {ckIrc, ckNtfy}))
+      proc stateOf(name: string): string =
+        for c in st.channelStates:
+          if c.name == name: return c.state
+      check stateOf("irc") == "restarting"
+      check stateOf("ntfy").startsWith("down")
+      superviseState(ckIrc, csRunning)
+      check daemonStatus(sm, DaemonStatusInputs(channels: {ckIrc})).channelStates[0].state == "connecting"
+      ## connected again after a cool-off: the connection wins
+      socketConnected(ckNtfy)
+      check daemonStatus(sm, DaemonStatusInputs(channels: {ckNtfy})).channelStates[0].state == "connected"
 
     test "every provider with recent calls is in the snapshot, not only the busiest five":
       var sm: SessionManager

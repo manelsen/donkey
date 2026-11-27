@@ -18,6 +18,8 @@ import ../../domain/channels/bluebubbles_pure
 import ../../infra/event_queue
 import ../../infra/thread_handle
 import ../../infra/connection_state
+import ../../infra/supervisor
+import ../../domain/supervision_pure
 import ../../ports/http
 import ../../ports/link_codes
 import ../http/std_http
@@ -102,12 +104,18 @@ proc runBlue(args: BlueArgs) {.thread, nimcall.} =
   let http = blueHttp(args.settings)
   var after = int64(epochTime() * 1000) - 10_000   ## only what arrives from now on
   var backoff = BluePollEveryMs
+  ## E12.2: a failed poll is a session that ended; a good one, the channel up.
+  var restart = DefaultPolicy
+  restart.baseBackoffMs = BluePollEveryMs
+  restart.maxBackoffMs = BlueBackoffMaxMs
+  var sup = newSupervised(ckBlueBubbles, "bluebubbles", restart)
   while not control.stop.load():
     let round = pollBlueBubbles(http, args.settings, after)
     if round.isErr:
       log.warn(round.error)
-      backoff = min(backoff * 2, BlueBackoffMaxMs)
+      backoff = sup.ended(round.error, ranMs = 0, log)
     else:
+      sup.started()
       backoff = BluePollEveryMs
       after = round.get.after
       for m in round.get.messages:

@@ -39,6 +39,17 @@ This matrix reflects the capability registry (`ports/channel_capability`) the ru
 
 Every channel sends text. "Files in" is the port's `downloadFile` (an attachment reaches the turn); "Files out" is `cfSendFile` (the adapter reads a paddock file and uploads it). The table is generated from `ports/channel_capability`, which a test keeps in line with the ports.
 
+
+**Supervision (E12.2).** Every channel's connection thread and its drain in
+the daemon's loop run under a supervisor: a session that ends is restarted
+after a wait that doubles (from the channel's own minimum up to a minute);
+past 5 restarts in 5 minutes the channel is **down** for 5 minutes (the
+operator is told once in the log, `donkey ctl status` and the TUI say
+`down`), then tried again. An exception in one channel's drain pauses that
+channel only; the daemon and the other channels go on. A Defect (an index
+out of range, a nil) still stops the daemon; running a socket channel as its
+own process (E12.3) is what will isolate it.
+
 ---
 
 ## Telegram

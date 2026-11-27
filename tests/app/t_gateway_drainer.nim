@@ -11,6 +11,8 @@ import std/strutils
 import donkey/core/types
 import donkey/domain/message
 import donkey/app/gateway_drainer
+import donkey/infra/connection_state
+import donkey/domain/supervision_pure
 
 proc runTests*() =
   suite "gateway drainer — polled & batch queues":
@@ -300,6 +302,24 @@ proc runTests*() =
       let total = drainGatewayEvents(drainer)
       check total == 2
       check channelLog == @["dc", "tg"]
+
+    test "a channel whose drain raises is paused under supervision; the others go on (E12.2)":
+      resetConnections()
+      var channelLog: seq[string] = @[]
+      var ircCalls = 0
+      let drainer = initGatewayDrainer(
+        drainIrc = proc(): bool {.gcsafe.} =
+          {.cast(gcsafe).}: inc ircCalls
+          raise newException(ValueError, "a broken frame"),
+        drainSms = proc(): bool {.gcsafe.} =
+          {.cast(gcsafe).}: channelLog.add("sms")
+          true,
+      )
+      check drainGatewayEvents(drainer) == 1      ## did not raise; SMS ran
+      check channelLog == @["sms"] and ircCalls == 1
+      check supervisionOf(ckIrc) == csRestarting
+      discard drainGatewayEvents(drainer)         ## IRC waits out its pause
+      check ircCalls == 1 and channelLog == @["sms", "sms"]
 
     test "empty GatewayDrainer safely returns 0 without crashing":
       let drainer = initGatewayDrainer()
