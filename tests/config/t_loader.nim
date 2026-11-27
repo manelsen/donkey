@@ -1,5 +1,6 @@
 ## Config loader contract tests — RED first, then implement loader.nim
 
+import donkey/domain/tools/github_pure
 import std/[options, os, strutils, unittest]
 import donkey/config/loader
 import donkey/config/types
@@ -64,6 +65,33 @@ proc runTests*() =
       writeFile(tmp, "[security\ndm_policy = \"open\"\n")
       defer: removeFile(tmp)
       check loadConfig(tmp, Environment()).invalidDmPolicy.len > 0
+
+    test "[github]: the write policy per repository (E11.3)":
+      let tmp = getTempDir() / "t_loader_github_policy.toml"
+      writeFile(tmp, """
+[github]
+default = "deny"
+
+[github.repos."acme/site"]
+comment = "allow"
+create_issue = "ask"
+""")
+      defer: removeFile(tmp)
+      let cfg = loadConfig(tmp, Environment())
+      check cfg.githubPolicyError == ""
+      check cfg.githubPolicy.decide("acme/site", "comment") == gpAllow
+      check cfg.githubPolicy.decide("acme/site", "close_issue") == gpDeny
+      check cfg.githubPolicy.decide("other/x", "comment") == gpDeny
+
+    test "no [github]: every write asks; a bad policy asks too, and says why":
+      check loadConfig("/tmp/donkey_nonexistent_12345.toml", Environment())
+        .githubPolicy.decide("o/r", "comment") == gpAsk
+      let tmp = getTempDir() / "t_loader_github_bad.toml"
+      writeFile(tmp, "[github]\ndefault = \"maybe\"\n")
+      defer: removeFile(tmp)
+      let cfg = loadConfig(tmp, Environment())
+      check cfg.githubPolicyError.len > 0
+      check cfg.githubPolicy.decide("o/r", "comment") == gpAsk
 
     test "invalid dm_policy is recorded for startup rejection":
       let tmp = getTempDir() / "t_loader_bad_dm_policy.toml"

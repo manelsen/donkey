@@ -450,6 +450,17 @@ proc offLoopHttpPost(url, body: string; headers: seq[HttpHeader]; allowHosts: se
   except CatchableError as e:
     return err(e.msg)
 
+proc offLoopHttpPatch(url, body: string; headers: seq[HttpHeader]; allowHosts: seq[string]):
+    Future[Result[HttpResponse, string]] {.async: (raises: []).} =
+  ## A GitHub write (closing an issue) on the blocking executor.
+  try:
+    return await runOffLoop(httpPostJob, HttpPostJob(patch: true, url: url, body: body,
+      headers: headers, allowHosts: allowHosts, timeoutSec: OffLoopHttpTimeoutSec))
+  except CancelledError:
+    return err("cancelled")
+  except CatchableError as e:
+    return err(e.msg)
+
 proc offLoopWebTool(job: WebToolJob): Future[WebToolOutput] {.async: (raises: []).} =
   ## web_fetch, fetch, http_fetch, web_search on the blocking executor.
   try:
@@ -2165,6 +2176,9 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   ## the outbox drainer can route `api:` replies.
   ctx.runtime.apiChatBridge = newChatBridge(apiChatNowMs, apiChatNap)
   configureEditorFiles(newEditorFileRequests())   ## E10.5, before the gateway answers
+  configurePersonSecrets(personSecrets(cfg.home))  ## E11: each person's GitHub token
+  if cfg.githubPolicyError.len > 0:
+    log.error("[github] policy not read, every write will ask: " & cfg.githubPolicyError)
   let editors = newEditorRegistry(newFsAdapter(), cfg.home / "state" / "editors.json",
                                   editorRandom, apiChatNowMs)
   if editors.isErr:
@@ -2515,6 +2529,7 @@ proc main =
   ## Native tools that await I/O (github, git_inspect) run it on the
   ## blocking executor through these, never on the loop.
   useOffLoopIo(OffLoopIo(httpGet: offLoopHttpGet, httpPost: offLoopHttpPost,
+                         httpPatch: offLoopHttpPatch,
                          processRun: offLoopProcessRun, webTool: offLoopWebTool,
                          speechTool: offLoopSpeechTool))
   configureApprovalServiceFromEnv(

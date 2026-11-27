@@ -87,6 +87,7 @@ import ./session_state
 import ./session_manager
 import ./approval_runtime
 import ./editor_files
+import ./github_token
 import ../domain/gateway/identity_pure   # isApiUserId
 import ./offloop_io
 import ./tools/github_git_tools
@@ -131,6 +132,7 @@ type
     channel*:      ChannelKind
     bridgeToken*:  uint64   ## the turn behind an API stream (an editor's), or 0
     editorFiles*:  EditorFileRequests   ## E10.5: reading in the editor; nil = off
+    githubPolicy*: GithubPolicy   ## E11.3: what GitHub writes may do, per repository
     outbox*:       AsyncQueue[OutboundMessage]
     session*:      ptr SessionEntry
     memory*:       MemoryRuntimePort
@@ -601,6 +603,47 @@ proc executeShellNativeTool(tc: ToolCallRequest;
   else:
     return NativeToolResult(handled: false)
 
+const MaxGithubApprovalChars = 3_500
+  ## What an approval shows must be the whole text: a longer one is refused,
+  ## never cut.
+
+proc githubWrite(ctx: NativeCtx; j: JsonNode): Future[NativeToolResult] {.async.} =
+  ## E11: a write under the repository's policy, with the token of the
+  ## person who asked; what asks is posted only approved, as approved.
+  let c = parseGithubContext(j).valueOr:
+    return handledError(error)
+  let decision = ctx.githubPolicy.decide(c.repo, c.action)
+  if decision == gpDeny:
+    return handledError("A política deste Donkey não permite " & c.action & " em " & c.repo &
+                        " (`[github]` no donkey.toml).")
+  let secrets = currentPersonSecrets()
+  if secrets.get.isNil:
+    return handledError("Escrever no GitHub não está disponível nesta instância.")
+  let token = secrets.get(ctx.uid, GithubTokenSecret).valueOr:
+    return handledError("Não consegui ler o seu token do GitHub: " & error)
+  if token.len == 0:
+    return handledError("Para escrever no GitHub por você, preciso do seu próprio token: " &
+                        "mande `/github` para saber como guardá-lo.")
+  if decision == gpAsk:
+    let summary = writeSummary(c)
+    if summary.len > MaxGithubApprovalChars:
+      return handledError("O texto é longo demais para mostrar inteiro na aprovação (" &
+                          $summary.len & " caracteres); encurte ou divida.")
+    if ctx.approval.isNil:
+      return handledError("Esta escrita pede aprovação, e as aprovações não estão " &
+                          "configuradas; nada foi publicado.")
+    let asked = await requestAndWait(ctx.approval, ctx.uid, ctx.channel, ctx.outbox,
+      "github " & c.action, summary, ctx.log,
+      shouldStop = proc(): bool {.gcsafe, raises: [].} = sessionStopRequested(ctx),
+      bridgeToken = ctx.bridgeToken, always = true)
+    case asked
+    of adApproved: discard
+    of adDenied: return handledError("A escrita no GitHub foi negada; nada foi publicado.")
+    of adTimeout: return handledError("A aprovação expirou; nada foi publicado.")
+  let wrote = await performGithubWrite(c, token, offLoopIo())
+  if wrote.isErr: return handledError(wrote.error)
+  return handledText(wrote.get)
+
 proc executeWebNativeTool(tc: ToolCallRequest;
                           ctx: NativeCtx;
                           state: SessionState;
@@ -624,6 +667,8 @@ proc executeWebNativeTool(tc: ToolCallRequest;
       count: searchCtx.count, apiKey: ctx.braveApiKey, rules: rules,
       allowlist: ctx.webAllowlist), ctx))
   of GithubToolName:
+    if isWriteAction(j{"action"}.getStr.strip.toLowerAscii):
+      return await githubWrite(ctx, j)
     ## Off the loop, through the installed runner (app/offloop_io).
     let read = await performGithub(j, githubToken(), offLoopIo())
     if read.isErr: return handledError(read.error)

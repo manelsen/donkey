@@ -184,12 +184,18 @@ proc requestAndWait*(service: ApprovalService;
                      toolName, summary: string;
                      log: Logger;
                      shouldStop: proc(): bool {.gcsafe, raises: [].} = nil;
-                     bridgeToken: uint64 = 0):
+                     bridgeToken: uint64 = 0;
+                     always = false):
                      Future[ApprovalDecision] {.async.} =
   ## Creates a pending request, notifies the user and polls until a decision
   ## or timeout. Only channel adapters and `ctl` can decide; the requester can
   ## approve through `/approve` or an inline callback.
-  if service == nil or not requiresApproval(service, toolName):
+  ## `always`: a caller whose own policy decided to ask (E11.3: a GitHub
+  ## write) asks whatever DONKEY_APPROVAL_TOOLS lists; without a service it
+  ## is denied, never let through.
+  if service == nil:
+    return (if always: adDenied else: adApproved)
+  if not always and not requiresApproval(service, toolName):
     return adApproved
   if shouldStop != nil and shouldStop():
     return adDenied

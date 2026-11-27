@@ -94,5 +94,60 @@ proc runTests*() =
                            """{"message":"Not Found"}""")
       check r.isErr and "404" in r.error and "Not Found" in r.error
 
+proc runWriteTests*() =
+  suite "github — writing (E11.1)":
+    test "the four writes and what each needs":
+      check parseGithubContext(%* {"action": "create_issue", "repo": "o/r", "title": "Bug", "body": "x"}).isOk
+      check parseGithubContext(%* {"action": "create_issue", "repo": "o/r", "body": "x"}).isErr      ## title
+      check parseGithubContext(%* {"action": "comment", "repo": "o/r", "number": 3, "body": "oi"}).isOk
+      check parseGithubContext(%* {"action": "comment", "repo": "o/r", "number": 3}).isErr          ## body
+      check parseGithubContext(%* {"action": "add_labels", "repo": "o/r", "number": 3, "labels": ["bug"]}).isOk
+      check parseGithubContext(%* {"action": "add_labels", "repo": "o/r", "number": 3, "labels": []}).isErr
+      check parseGithubContext(%* {"action": "close_issue", "repo": "o/r", "number": 3}).isOk
+      check parseGithubContext(%* {"action": "merge_pr", "repo": "o/r", "number": 3}).isErr        ## never
+      check isWriteAction("comment") and not isWriteAction("get_issue")
+
+    test "each write is one request: method, URL and the exact JSON":
+      let issue = githubWriteRequest(parseGithubContext(%* {"action": "create_issue", "repo": "o/r",
+        "title": "Bug", "body": "linha 1\nlinha 2"}).get)
+      check issue == (meth: "POST", url: "https://api.github.com/repos/o/r/issues",
+                      body: $(%* {"title": "Bug", "body": "linha 1\nlinha 2"}))
+      check githubWriteRequest(parseGithubContext(%* {"action": "comment", "repo": "o/r", "number": 3,
+        "body": "oi"}).get) == (meth: "POST", url: "https://api.github.com/repos/o/r/issues/3/comments",
+        body: $(%* {"body": "oi"}))
+      check githubWriteRequest(parseGithubContext(%* {"action": "add_labels", "repo": "o/r", "number": 3,
+        "labels": ["bug", "p1"]}).get).body == $(%* {"labels": ["bug", "p1"]})
+      check githubWriteRequest(parseGithubContext(%* {"action": "close_issue", "repo": "o/r",
+        "number": 3}).get) == (meth: "PATCH", url: "https://api.github.com/repos/o/r/issues/3",
+        body: $(%* {"state": "closed"}))
+
+    test "the approval shows where and the exact text":
+      let c = parseGithubContext(%* {"action": "comment", "repo": "o/r", "number": 3,
+                                     "body": "Obrigado!\n\n— Donkey"}).get
+      let summary = writeSummary(c)
+      check "o/r#3" in summary and "comentar" in summary
+      check summary.endsWith("Obrigado!\n\n— Donkey")
+
+    test "the answer: what was done and where":
+      let c = parseGithubContext(%* {"action": "create_issue", "repo": "o/r", "title": "Bug", "body": ""}).get
+      check formatGithubWrite(c, 201, """{"number":12,"html_url":"https://github.com/o/r/issues/12"}""").get ==
+        "Issue #12 aberta: https://github.com/o/r/issues/12"
+      check formatGithubWrite(c, 403, """{"message":"Resource not accessible"}""").error.contains("403")
+
+  suite "github — policy per repository (E11.3)":
+    test "the default is ask; a repository's rule wins; deny stays deny":
+      var p = GithubPolicy()
+      check p.decide("o/r", "comment") == gpAsk
+      p = parseGithubPolicy(%* {"default": "deny",
+        "repos": {"o/r": {"comment": "allow", "close_issue": "deny"}, "o/x": {"*": "ask"}}}).get
+      check p.decide("o/r", "comment") == gpAllow
+      check p.decide("O/R", "comment") == gpAllow          ## GitHub names ignore case
+      check p.decide("o/r", "close_issue") == gpDeny
+      check p.decide("o/r", "create_issue") == gpDeny      ## the default
+      check p.decide("o/x", "add_labels") == gpAsk
+      check parseGithubPolicy(%* {"default": "maybe"}).isErr
+      check parseGithubPolicy(%* {"repos": {"o/r": {"merge": "allow"}}}).isErr
+
 when isMainModule:
   runTests()
+  runWriteTests()

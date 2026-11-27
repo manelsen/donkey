@@ -27,6 +27,19 @@ proc performGithub*(j: JsonNode; token: string; io: OffLoopIo):
     return err("Error: GitHub request failed: " & error)
   return formatGithub(c, resp.status, resp.body)
 
+proc performGithubWrite*(c: GithubContext; token: string; io: OffLoopIo):
+    Future[Result[string, string]] {.async: (raises: []).} =
+  ## One write (E11.1), with the token of the person who asked.
+  let req = githubWriteRequest(c)
+  let send = if req.meth == "PATCH": io.httpPatch else: io.httpPost
+  if send == nil:
+    return err("Error: writing to GitHub is not available in this process")
+  var headers = githubHeaders(token)
+  headers.add(("Content-Type", "application/json"))
+  let resp = (await send(req.url, req.body, headers, @["api.github.com"])).valueOr:
+    return err("Error: GitHub request failed: " & error)
+  return formatGithubWrite(c, resp.status, resp.body)
+
 proc performGitInspect*(c: GitInspectContext; repoDir: string; io: OffLoopIo):
     Future[Result[string, string]] {.async: (raises: []).} =
   if io.processRun == nil:

@@ -75,7 +75,6 @@ O que cada frente deixou de fora ao ser implementada. Nenhum está agendado.
 | Teams: edição de mensagens | E2 | arquivos entram e saem (com certificado, também nos apps de `[[bots]]`), cartões com botões; falta editar mensagens |
 | MCP sampling por HTTP | E5 | só servidores stdio podem pedir sampling |
 | Skill novo de usuário | E5 | as ferramentas aparecem a partir da mensagem seguinte (listagem em segundo plano) |
-| Escrita no GitHub (abrir issue, comentar) | 2ª rodada, frente 2 | fora de propósito: o agente lê texto de terceiros; pede decisão sobre aprovação |
 | IRC sem arquivos | 2ª rodada, frente 1 | o protocolo não carrega arquivos (só links, E9.5); só quem tem conta nos serviços da rede é atendido |
 | Fila de mensagens mortas para ferramentas | 2ª rodada, frente 4 | só envios entram na fila: a falha de uma ferramenta volta ao modelo no mesmo turno, e um reenvio depois não teria quem recebesse o resultado |
 | Resposta longa reenviada pela fila | 2ª rodada, frente 4 | uma resposta dividida que falhou no meio volta inteira, e os primeiros pedaços podem se repetir |
@@ -147,7 +146,7 @@ tomadas; no E13, o A2A entra, e o Donkey também chama agentes A2A.
 | E8 | Cache de prompt | **Feito** (#232–#236; #237 e #238 completam: raciocínio devolvido intacto e histórico só de acréscimo): prefixo estável (o que muda a cada turno vai com a mensagem da pessoa), marcadores `cache_control` para Claude (Anthropic, Bedrock, OpenRouter), tokens do cache no uso, nos traços, nas métricas e no `/insights`, aviso de cache que nunca acerta, compactação de verdade (40% do contexto em modelos de 1M, 60% nos menores; `/compact` funciona) | Decididas em 26/11 |
 | E9 | Mídia nos canais novos | **Feito** (#242, #243, #247–#249, #251–#253 e o PR de uploads): anexos entram em quase todos os canais; `send_file` sobe arquivo do paddock no Telegram, Mattermost, Teams, Discord, Slack e WhatsApp; o Teams completo (imagens, cartão de consentimento, token de certificado, cartões com botões) | Decididas em 26/11 |
 | E10 | Interface para editores (ACP) | **Feito** (#256, #258, #260 e o PR de leitura): `donkey acp` no Zed e afins, pareado pela pessoa, com streaming, ferramentas, aprovações no editor e leitura de arquivos do projeto | Decididas: pareamento; memória compartilhada com os outros canais |
-| E11 | Escrita no GitHub | Abrir e fechar issues, comentar, rotular, com o token de cada pessoa; política por repositório (`allow`, `ask`, `deny` por ação) | Decididas: política por repositório; token da pessoa |
+| E11 | Escrita no GitHub | **Feito** (#262 e o PR de escrita): abrir e fechar issues, comentar, rotular, com o token de cada pessoa (`/github token`, só em conversa privada) e política por repositório (`allow`, `ask`, `deny`; padrão `ask`) | Decididas: política por repositório; token da pessoa |
 | E12 | Supervisão de adapters | À maneira do OTP: árvore de supervisão, `one_for_one`, tipos de filho, intensidade de reinícios e escalada; fontes de `Defect` viram erro como valor; canais de socket como processo filho | Decidida: inspirar-se no OTP |
 | E13 | Canais restantes | ntfy, SimpleX, BlueBubbles (iMessage), A2A (atende e chama) | Decididas: A2A entra, também como cliente |
 
