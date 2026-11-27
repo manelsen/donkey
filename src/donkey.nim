@@ -129,6 +129,7 @@ import donkey/adapters/http/gateway_server
 import donkey/app/chat_bridge
 import donkey/acp_cli
 import donkey/app/editor_registry
+import donkey/app/editor_files
 from donkey/ports/command_services import CommandArgFn
 import donkey/domain/gateway/dashboard_pure
 import donkey/domain/gateway/identity_pure
@@ -1334,6 +1335,7 @@ proc setupIpcServer(cfg: DonkeyConfig;
                                           chatBridge = gwChatBridge,
                                           editors = runtime.editors,
                                           approvalInput = editorApprovalInput,
+                                          editorFiles = currentEditorFiles(),
                                           modelName = cfg.defaultModel,
                                           agentTimeoutMs = resolveAgentTimeoutMs(
                                             cfg.env.get("DONKEY_HTTP_AGENT_TIMEOUT_SEC")))
@@ -2113,6 +2115,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   ## The API bridge must exist before the gateway accepts a turn and before
   ## the outbox drainer can route `api:` replies.
   ctx.runtime.apiChatBridge = newChatBridge(apiChatNowMs, apiChatNap)
+  configureEditorFiles(newEditorFileRequests())   ## E10.5, before the gateway answers
   let editors = newEditorRegistry(newFsAdapter(), cfg.home / "state" / "editors.json",
                                   editorRandom, apiChatNowMs)
   if editors.isErr:

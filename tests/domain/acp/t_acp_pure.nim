@@ -118,6 +118,34 @@ proc runPermissionTests*() =
         "approval:abc:deny"   ## not one we offered
       check chosenCallback(newJNull(), options) == "approval:abc:deny"
 
+proc runEditorFileTests*() =
+  suite "acp — reading a file in the editor (E10.5)":
+    test "the stream's donkey_editor_request becomes an event with its id and params":
+      let e = parseStreamLine("""data: {"choices":[{"index":0,"delta":{"donkey_editor_request":{"id":"ef-1","method":"fs/read_text_file","params":{"path":"src/a.nim","line":3,"limit":20}}}}]}""")
+      check e.kind == sekEditorRequest and e.requestId == "ef-1"
+      check e.requestMethod == "fs/read_text_file"
+      check e.requestParams == %* {"path": "src/a.nim", "line": 3, "limit": 20}
+
+    test "fs/read_text_file: an absolute path, resolved from the session's folder":
+      let req = parseJson(fsReadRequest(%"fs-1", "s1", "/home/ana/proj", %* {"path": "src/a.nim", "line": 3, "limit": 20}).get)
+      check req["method"] == %"fs/read_text_file"
+      check req["params"] == %* {"sessionId": "s1", "path": "/home/ana/proj/src/a.nim", "line": 3, "limit": 20}
+      let abs = parseJson(fsReadRequest(%"fs-2", "s1", "/home/ana/proj", %* {"path": "/home/ana/proj/b.nim"}).get)
+      check abs["params"]["path"] == %"/home/ana/proj/b.nim"
+      check parseJson(fsReadRequest(%"fs-3", "s1", "/home/ana/proj", %* {"path": "./src/../c.nim"}).get)["params"]["path"] ==
+        %"/home/ana/proj/c.nim"
+
+    test "a path outside the project folder is refused, never asked":
+      for path in ["/etc/hosts", "../secret", "src/../../x", "/home/ana/projx/a"]:
+        check fsReadRequest(%"fs-9", "s1", "/home/ana/proj", %* {"path": path}).isErr
+      check fsReadRequest(%"fs-9", "s1", "", %* {"path": "a.nim"}).isErr   ## no folder to read from
+
+    test "the editor offers reading only when it says so":
+      check editorReadsFiles(%* {"protocolVersion": 1, "clientCapabilities": {"fs": {"readTextFile": true}}})
+      check not editorReadsFiles(%* {"protocolVersion": 1, "clientCapabilities": {"fs": {"writeTextFile": true}}})
+      check not editorReadsFiles(%* {"protocolVersion": 1})
+
 when isMainModule:
   runTests()
   runPermissionTests()
+  runEditorFileTests()

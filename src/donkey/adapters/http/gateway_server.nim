@@ -13,6 +13,7 @@ import ../../domain/gateway/identity_pure
 import ../../app/chat_bridge
 import ../../app/http_gateway
 import ../../app/editor_registry
+import ../../app/editor_files
 
 export http_gateway
 
@@ -123,6 +124,7 @@ proc startHttpGateway*(port: int;
                        agentTimeoutMs = 0;
                        editors: EditorRegistry = nil;
                        approvalInput: GatewayApprovalInputFn = nil;
+                       editorFiles: EditorFileRequests = nil;
                        log:       Logger = newLogger("http_gateway")
                       ): Result[GatewayServer, string] =
   ## Binds and starts the gateway on the calling thread's Chronos loop; the
@@ -130,7 +132,7 @@ proc startHttpGateway*(port: int;
   let ctx = ?newGatewayContext(
     statusFn, logFn, eventFn, inboundFn, sessionsFn, providersFn,
     sessionActionFn, authToken, agentDispatchFn, authorizeFn, chatBridge,
-    modelName, agentTimeoutMs, editors, approvalInput, log)
+    modelName, agentTimeoutMs, editors, approvalInput, editorFiles, log)
 
   proc onConnection(server: StreamServer; client: StreamTransport)
       {.async: (raises: []).} =

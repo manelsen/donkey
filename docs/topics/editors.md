@@ -74,6 +74,11 @@ its next message, and pairs again.
 - **Approvals** for tools that need one (`bash`, `edit_file`…) appear in the
   editor as a permission prompt: allow once, allow always (where offered) or
   reject. Dismissing the prompt, or cancelling the turn, rejects.
+- **Files from your project**: Donkey can read a file you have open in the
+  editor, unsaved changes included (`editor_read_file`), after your approval,
+  when the editor offers it (`fs.readTextFile`, Zed does). A relative path is
+  resolved from the folder the editor opened, and only files inside it are
+  read (a path leaving it is refused); a long file is cut at 200 KiB.
 - **Cancel** in the editor stops the turn; the daemon drops its late answer.
 
 ## Limits
@@ -81,5 +86,6 @@ its next message, and pairs again.
 - One prompt at a time per editor; a second while one runs is refused.
 - Every editor session is your one Donkey conversation: opening two editor
   threads does not split it.
-- The editor's own file reading and terminal (`fs/*`, `terminal/*`) are not
-  used: Donkey's tools run on the daemon's side, in its sandbox.
+- Donkey only reads through the editor (`fs/read_text_file`); it does not
+  write there, nor use the editor's terminal: its other tools run on the
+  daemon's side, in its sandbox.

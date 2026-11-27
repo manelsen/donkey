@@ -98,6 +98,7 @@ type
     inputTokens*:  int
     outputTokens*: int
     bridgeToken*:  uint64         ## API turn generation; 0 for channel traffic
+    editorRequest*: string        ## E10.5: a request for the editor (JSON), carried in the stream
 
   ToolDescription* = object
     name*:        string

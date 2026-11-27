@@ -15,7 +15,8 @@ proc runTests*() =
       check routeGatewayRequest(GatewayRequest(meth: "POST", path: "/v1/acp/pair/poll")) == "acp_pair_poll"
       check routeGatewayRequest(GatewayRequest(meth: "POST", path: "/v1/acp/chat/completions")) == "acp_chat"
       check routeGatewayRequest(GatewayRequest(meth: "POST", path: "/v1/acp/approve")) == "acp_approve"
-      for action in ["acp_pair", "acp_pair_poll", "acp_chat", "acp_approve"]:
+      check routeGatewayRequest(GatewayRequest(meth: "POST", path: "/v1/acp/editor_result")) == "acp_editor_result"
+      for action in ["acp_pair", "acp_pair_poll", "acp_chat", "acp_approve", "acp_editor_result"]:
         check not isApiRouteAction(action)
         check gatewayAuthVerdict(action, "", "operator-secret") == gavEditor
         check gatewayAuthVerdict(action, "Bearer operator-secret", "operator-secret") == gavEditor
@@ -45,6 +46,16 @@ proc runApproveTests*() =
       check parseApproveRequest("""{"callback":""}""").isErr
       check parseApproveRequest("[]").isErr
 
+proc runEditorResultTests*() =
+  suite "editor routes — the editor's answer to a request (E10.5)":
+    test "the request id, and the content or the error":
+      check parseEditorResult("""{"id":"ef-1","content":"echo 1"}""").get ==
+        (id: "ef-1", content: "echo 1", error: "")
+      check parseEditorResult("""{"id":"ef-1","error":"no such file"}""").get.error == "no such file"
+      check parseEditorResult("""{"content":"x"}""").isErr
+      check parseEditorResult("[]").isErr
+
 when isMainModule:
   runTests()
   runApproveTests()
+  runEditorResultTests()

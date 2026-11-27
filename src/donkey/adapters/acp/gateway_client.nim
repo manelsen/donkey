@@ -126,3 +126,11 @@ proc approve*(c: GatewayClient; token, callback: string): Future[Result[string, 
     return ok(parseJson(reply.body){"result"}.getStr)
   except CatchableError:
     return ok("")
+
+proc editorResult*(c: GatewayClient; token, id, content, error: string): Future[Result[void, string]] {.
+    async: (raises: []).} =
+  ## The editor's answer to a request the daemon sent through the stream (E10.5).
+  let reply = await noCancel c.exchange("/v1/acp/editor_result",
+    $(%* {"id": id, "content": content, "error": error}), token, nil)
+  if reply.status != 200: return err(reply.failure)
+  return ok()

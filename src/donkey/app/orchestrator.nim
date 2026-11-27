@@ -77,6 +77,7 @@ import ./session_state
 import ./channel_prefs_parse
 import ./native_tools
 import ./approval_runtime
+import ./editor_files
 import ./credential_runtime
 import ./onboarding_runtime
 import ./tool_loop_runtime
@@ -278,6 +279,7 @@ proc buildNativeCtx*(uid: UserId;
     toolWebPolicy: cfg.toolWebPolicy,
     tools:        tools,
     approval:     currentApprovalService(),
+    editorFiles:  currentEditorFiles(),
     log:          log,
     paddockDir:   paddockDir,
     sandboxMode:  sandboxMode,

@@ -31,7 +31,7 @@ type
     sessionId*, text*: string
 
   StreamEventKind* = enum
-    sekNone, sekText, sekTool, sekFinish, sekDone, sekError, sekApproval
+    sekNone, sekText, sekTool, sekFinish, sekDone, sekError, sekApproval, sekEditorRequest
 
   StreamEvent* = object
     kind*: StreamEventKind
@@ -39,6 +39,8 @@ type
     toolId*, toolName*: string
     finishReason*: string
     options*: seq[(string, string)]   ## an approval's buttons: (label, callback)
+    requestId*, requestMethod*: string  ## a request for the editor (E10.5)
+    requestParams*: JsonNode
 
 proc parseAcpLine*(line: string): Result[AcpMessage, string] =
   try:
@@ -159,6 +161,12 @@ proc parseStreamLine*(line: string): StreamEvent =
     let choice = j{"choices"}{0}
     if choice.isNil: return StreamEvent(kind: sekNone)
     let delta = choice{"delta"}
+    let editorRequest = delta{"donkey_editor_request"}
+    if not editorRequest.isNil:
+      return StreamEvent(kind: sekEditorRequest, requestId: editorRequest{"id"}.getStr,
+                         requestMethod: editorRequest{"method"}.getStr,
+                         requestParams: (let p = editorRequest{"params"};
+                                         if p.isNil: newJObject() else: p))
     let approval = delta{"donkey_approval"}
     if not approval.isNil:
       var options: seq[(string, string)]
@@ -208,3 +216,39 @@ proc chosenCallback*(answer: JsonNode; options: seq[(string, string)]): string =
   for (_, callback) in options:
     if callback == chosen: return chosen
   denial(options)
+
+proc editorReadsFiles*(initializeParams: JsonNode): bool =
+  ## E10.5: the editor said, in `initialize`, that Donkey may ask it to read
+  ## a text file.
+  if initializeParams.isNil: return false
+  initializeParams{"clientCapabilities"}{"fs"}{"readTextFile"}.getBool(false)
+
+func normalizedAbsolute(path: string): string =
+  ## `.` and `..` resolved, on text alone (nothing on disk is consulted).
+  var parts: seq[string]
+  for part in path.split('/'):
+    case part
+    of "", ".": discard
+    of "..":
+      if parts.len > 0: parts.setLen(parts.len - 1)
+    else: parts.add part
+  "/" & parts.join("/")
+
+proc fsReadRequest*(id: JsonNode; sessionId, cwd: string;
+                    params: JsonNode): Result[string, string] =
+  ## `fs/read_text_file` (agent → client). ACP wants an absolute path: a
+  ## relative one is resolved from the session's folder. Only files inside
+  ## that folder are asked for: a path the model was talked into (by a
+  ## prompt injection, say) cannot reach the rest of the person's machine.
+  if cwd.len == 0 or not cwd.startsWith("/"):
+    return err("the editor gave no project folder to read from")
+  let root = normalizedAbsolute(cwd)
+  let raw = params{"path"}.getStr
+  if raw.len == 0: return err("no path")
+  let path = normalizedAbsolute(if raw.startsWith("/"): raw else: root & "/" & raw)
+  if path != root and not path.startsWith(if root == "/": "/" else: root & "/"):
+    return err("outside the project folder (" & root & "): " & raw)
+  var p = %* {"sessionId": sessionId, "path": path}
+  if params{"line"}.getInt > 0: p["line"] = %params{"line"}.getInt
+  if params{"limit"}.getInt > 0: p["limit"] = %params{"limit"}.getInt
+  ok(rpcRequest(id, "fs/read_text_file", p))

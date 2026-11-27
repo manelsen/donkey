@@ -275,6 +275,22 @@ const
     "\"caption\":{\"type\":\"string\",\"description\":\"Optional text sent with the file\"}}" &
     ",\"required\":[\"path\"]}"
 
+# ── editor_read_file (E10.5) ───────────────────────────────────────────────────
+const
+  EditorReadFileToolName* = "editor_read_file"
+  EditorReadFileToolDescription* =
+    "Read a text file in the person's editor (Zed and others, through donkey " &
+    "acp), from the project they have open there, including unsaved changes. " &
+    "Only works when the person is talking to you from an editor; elsewhere " &
+    "it says so. A relative path is resolved from the project's folder. Asks " &
+    "the person's approval. Use line and limit for a part of a long file."
+  EditorReadFileToolSchema* =
+    "{\"type\":\"object\",\"properties\":{" &
+    "\"path\":{\"type\":\"string\",\"description\":\"File path, absolute or relative to the editor's project\"}," &
+    "\"line\":{\"type\":\"integer\",\"description\":\"Optional first line (1-based)\"}," &
+    "\"limit\":{\"type\":\"integer\",\"description\":\"Optional number of lines\"}}" &
+    ",\"required\":[\"path\"]}"
+
 # ── text_to_speech ─────────────────────────────────────────────────────────────
 const
   TextToSpeechToolName* = "text_to_speech"

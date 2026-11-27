@@ -56,6 +56,7 @@ import ./metrics
 import ./chat_bridge
 import ./agent_chat_runtime
 import ./editor_registry
+import ./editor_files
 import ../domain/acp/editor_gateway_pure
 import ../domain/acp/editor_pairing_pure
 
@@ -402,6 +403,7 @@ type
     authToken:       string
     editors:         EditorRegistry   ## nil = no editor routes (E10.2)
     approvalInput:   GatewayApprovalInputFn
+    editorFiles:     EditorFileRequests  ## E10.5: answers to requests sent to the editor
       ## An approval's button pressed in the editor (E10.4); nil = refused.
     log:             Logger
 
@@ -679,6 +681,36 @@ proc handleGatewayConn(ctx: GatewayContext; client: GatewayConnection)
           await client.sendResponse("200 OK", "application/json",
             $(%* {"result": reply.get("")}) & "\n", log)
 
+    of "acp_editor_result":
+      ## The editor's answer to a request the daemon sent through the stream
+      ## (E10.5): only the person whose turn asked can answer it.
+      let person = ctx.editors.personFor(parseBearerToken(authHeader))
+      if person.isErr:
+        await client.sendResponse("401 Unauthorized", "application/json",
+                                  "{\"error\":\"unknown editor; pair again\"}\n", log)
+      elif req.meth != "POST":
+        await client.sendResponse("405 Method Not Allowed", "application/json", "", log)
+      elif contentLength > MaxEditorResultBytes:
+        await client.sendResponse("413 Payload Too Large", "application/json",
+                                  "{\"error\":\"body too large\"}\n", log)
+      elif ctx.editorFiles.isNil:
+        await client.sendResponse("503 Service Unavailable", "application/json",
+                                  "{\"error\":\"editor requests are not available\"}\n", log)
+      else:
+        let body = await client.readRequestBody(contentLength, deadline)
+        let answer = parseEditorResult(body)
+        if answer.isErr:
+          await client.sendResponse("400 Bad Request", "application/json",
+                                    $(%* {"error": answer.error}) & "\n", log)
+        else:
+          let taken = ctx.editorFiles.answer(person.get, answer.get.id,
+                                             answer.get.content, answer.get.error)
+          if taken.isErr:
+            await client.sendResponse("404 Not Found", "application/json",
+                                      $(%* {"error": taken.error}) & "\n", log)
+          else:
+            await client.sendResponse("200 OK", "application/json", "{}\n", log)
+
     of "acp_chat":
       ## An editor's turn (E10.2): its credential says who the person is;
       ## the same stream as /v1/chat/completions.
@@ -796,6 +828,7 @@ proc newGatewayContext*(statusFn: GatewayStatusFn;
                         agentTimeoutMs = 0;
                         editors: EditorRegistry = nil;
                         approvalInput: GatewayApprovalInputFn = nil;
+                        editorFiles: EditorFileRequests = nil;
                         log:       Logger = newLogger("http_gateway")
                        ): Result[GatewayContext, string] =
   ## What every connection is served with. The providers are called on the
@@ -818,6 +851,7 @@ proc newGatewayContext*(statusFn: GatewayStatusFn;
     authToken: authToken,
     editors: editors,
     approvalInput: approvalInput,
+    editorFiles: editorFiles,
     log: log))
 
 proc serveGatewayConnection*(ctx: GatewayContext; conn: GatewayConnection)

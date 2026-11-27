@@ -94,6 +94,9 @@ proc runAcp*(env: Environment; args: seq[string]): int =
     nap: napMs,
     approve: proc(token, callback: string): Future[Result[string, string]] {.
                async: (raises: []).} =
-      return await client.approve(token, callback))
+      return await client.approve(token, callback),
+    editorResult: proc(token, id, content, error: string): Future[Result[void, string]] {.
+                    async: (raises: []).} =
+      return await client.editorResult(token, id, content, error))
   waitFor serve(newAcpRuntime(ports, AppVersion))
   0

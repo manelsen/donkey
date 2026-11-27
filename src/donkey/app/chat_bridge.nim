@@ -46,6 +46,8 @@ type
     outputTokens*: int
     keyboard*:     seq[seq[(string, string)]]
       ## An approval request's buttons (E10.4); empty otherwise.
+    editorRequest*: string
+      ## A request for the editor (E10.5), JSON; empty otherwise.
 
   ChatBridgePollStatus* = enum
     cbpEvents    ## drained events; the turn is still open (or non-blocking)
@@ -256,6 +258,7 @@ proc deliver*(bridge: ChatBridge; msg: OutboundMessage;
       inputTokens:  msg.inputTokens,
       outputTokens: msg.outputTokens,
       keyboard:     msg.keyboard,
+      editorRequest: msg.editorRequest,
     )
     if bridge.pending[key].orphaned:
       # The orphan may still speak, but never into a new turn. Its terminal
@@ -267,7 +270,8 @@ proc deliver*(bridge: ChatBridge; msg: OutboundMessage;
     if bridge.pending[key].finished:
       return false
     if msg.replyKind == rkDebug or
-       (msg.replyKind == rkChannel and not asksApproval(msg.keyboard)):
+       (msg.replyKind == rkChannel and not asksApproval(msg.keyboard) and
+        msg.editorRequest.len == 0):
       return true
     bridge.pending[key].appendEvent(event)
     true

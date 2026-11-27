@@ -20,6 +20,7 @@ type Fake = ref object
   naps: int
   approved: seq[(string, string)]   ## (token, callback) sent back
   waitApproval: bool                ## the turn waits for the decision, as the daemon's does
+  results: seq[(string, string, string, string)]   ## editor results: (token, id, content, error)
   decided: Future[void].Raising([CancelledError])
 
 var gF {.threadvar.}: Fake
@@ -52,22 +53,30 @@ proc fakeApprove(token, callback: string): Future[Result[string, string]] {.asyn
   if gF.waitApproval and not gF.decided.finished: gF.decided.complete()
   return ok("✅ Aprovado.")
 
+proc fakeEditorResult(token, id, content, error: string): Future[Result[void, string]] {.async: (raises: []).} =
+  gF.results.add((token, id, content, error))
+  if gF.waitApproval and not gF.decided.finished: gF.decided.complete()
+  return ok()
+
 proc fakePorts(f: Fake): AcpPorts =
   gF = f
   f.decided = Future[void].Raising([CancelledError]).init("fake.decided")
   AcpPorts(write: fakeWrite, loadToken: fakeLoad, saveToken: fakeSave,
            pair: fakePair, poll: fakePoll, turn: fakeTurn, nap: fakeNap,
-           approve: fakeApprove)
+           approve: fakeApprove, editorResult: fakeEditorResult)
 
 proc sent(f: Fake): seq[JsonNode] =
   for w in f.written: result.add parseJson(w)
 
 proc feed(rt: AcpRuntime; line: string) = waitFor rt.handleLine(line)
 
-proc started(f: Fake): AcpRuntime =
+proc started(f: Fake; reads = false): AcpRuntime =
   result = newAcpRuntime(fakePorts(f), "0.3.0")
-  result.feed("""{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}""")
-  result.feed("""{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/p","mcpServers":[]}}""")
+  if reads:
+    result.feed("""{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1,"clientCapabilities":{"fs":{"readTextFile":true}}}}""")
+  else:
+    result.feed("""{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}""")
+  result.feed("""{"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":"/proj","mcpServers":[]}}""")
 
 const Prompt = """{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"$1","prompt":[{"type":"text","text":"oi"}]}}"""
 
@@ -190,6 +199,49 @@ proc runTests*() =
       waitFor rt.idle()          ## would hang if the question outlived the prompt
       check f.approved.len == 0
       check f.sent[^1]["result"]["stopReason"] == %"end_turn"
+
+    test "a file request in the stream asks the editor; its content goes back (E10.5)":
+      let f = Fake(token: "tok", turnStatus: 200, waitApproval: true, turnLines: @[
+        """data: {"choices":[{"index":0,"delta":{"donkey_editor_request":{"id":"ef-1","method":"fs/read_text_file","params":{"path":"src/a.nim"}}}}]}"""])
+      let rt = started(f, reads = true)
+      rt.feed(Prompt % f.sent[1]["result"]["sessionId"].getStr)
+      var ask: JsonNode
+      for m in f.sent:
+        if m{"method"}.getStr == "fs/read_text_file": ask = m
+      check not ask.isNil and ask["params"]["path"] == %"/proj/src/a.nim"
+      rt.feed($(%* {"jsonrpc": "2.0", "id": ask["id"], "result": {"content": "echo 1"}}))
+      waitFor rt.idle()
+      check f.results == @[("tok", "ef-1", "echo 1", "")]
+
+    test "an editor that does not read files: the daemon is told so, the editor is not asked":
+      let f = Fake(token: "tok", turnStatus: 200, waitApproval: true, turnLines: @[
+        """data: {"choices":[{"index":0,"delta":{"donkey_editor_request":{"id":"ef-1","method":"fs/read_text_file","params":{"path":"a"}}}}]}"""])
+      let rt = started(f)
+      rt.feed(Prompt % f.sent[1]["result"]["sessionId"].getStr)
+      waitFor rt.idle()
+      for m in f.sent: check m{"method"}.getStr != "fs/read_text_file"
+      check f.results.len == 1 and f.results[0][1] == "ef-1" and "does not" in f.results[0][3]
+
+    test "a path outside the project is refused without asking the editor":
+      let f = Fake(token: "tok", turnStatus: 200, waitApproval: true, turnLines: @[
+        """data: {"choices":[{"index":0,"delta":{"donkey_editor_request":{"id":"ef-3","method":"fs/read_text_file","params":{"path":"../../etc/passwd"}}}}]}"""])
+      let rt = started(f, reads = true)
+      rt.feed(Prompt % f.sent[1]["result"]["sessionId"].getStr)
+      waitFor rt.idle()
+      for m in f.sent: check m{"method"}.getStr != "fs/read_text_file"
+      check f.results.len == 1 and "outside the project" in f.results[0][3]
+
+    test "the editor's error goes back as the reason":
+      let f = Fake(token: "tok", turnStatus: 200, waitApproval: true, turnLines: @[
+        """data: {"choices":[{"index":0,"delta":{"donkey_editor_request":{"id":"ef-2","method":"fs/read_text_file","params":{"path":"/proj/missing.nim"}}}}]}"""])
+      let rt = started(f, reads = true)
+      rt.feed(Prompt % f.sent[1]["result"]["sessionId"].getStr)
+      var askId: JsonNode
+      for m in f.sent:
+        if m{"method"}.getStr == "fs/read_text_file": askId = m["id"]
+      rt.feed($(%* {"jsonrpc": "2.0", "id": askId, "error": {"code": -32002, "message": "Resource not found"}}))
+      waitFor rt.idle()
+      check f.results == @[("tok", "ef-2", "", "Resource not found")]
 
     test "session/cancel stops the turn and the prompt answers cancelled":
       let f = Fake(token: "tok", turnStatus: 200, hangTurn: true)

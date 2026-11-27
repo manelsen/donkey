@@ -9,7 +9,9 @@ import std/[json, strutils]
 import ../../core/pipeops
 import ./editor_pairing_pure
 
-const MaxEditorRequestBytes* = 4096
+const
+  MaxEditorRequestBytes* = 4096
+  MaxEditorResultBytes* = 512 * 1024   ## a file read in the editor, JSON-escaped
 
 proc parsePairRequest*(body: string): Result[string, string] =
   ## The editor's name ("" when the body is empty: shown as "editor").
@@ -51,5 +53,17 @@ proc parseApproveRequest*(body: string): Result[string, string] =
     let callback = j{"callback"}.getStr
     if not callback.startsWith("approval:"): return err("not an approval's answer")
     ok(callback)
+  except CatchableError as e:
+    err("invalid JSON: " & e.msg)
+
+proc parseEditorResult*(body: string): Result[tuple[id, content, error: string], string] =
+  ## `POST /v1/acp/editor_result` (E10.5): the editor's answer to a request
+  ## the daemon sent through the stream: its content, or why it could not.
+  try:
+    let j = parseJson(body)
+    if j.kind != JObject: return err("expected a JSON object")
+    let id = j{"id"}.getStr
+    if id.len == 0: return err("missing 'id'")
+    ok((id: id, content: j{"content"}.getStr, error: j{"error"}.getStr))
   except CatchableError as e:
     err("invalid JSON: " & e.msg)

@@ -54,6 +54,7 @@ type DispatchMode = enum
   dmWrongTokenFinal       ## a terminal from another generation
   dmManyPartials          ## more partial deltas than a stream may send, no terminal
   dmApprovalThenFinal     ## an approval request (channel text with buttons), then the answer
+  dmEditorRequestThenFinal ## a request for the editor (E10.5), then the answer
 
 var fakeBridge {.threadvar.}: ChatBridge
 var dispatched {.threadvar.}: seq[InboundMessage]
@@ -101,6 +102,11 @@ proc fakeDispatch(msg: InboundMessage) {.gcsafe.} =
                                tool = ToolCallNotice(phase: "done"))
     deliverToBridge(msg.userId, finalText, rkFinalAnswer,
                                inputTokens = 11, outputTokens = 7)
+  of dmEditorRequestThenFinal:
+    discard fakeBridge.deliver(OutboundMessage(userId: msg.userId, replyKind: rkChannel,
+      bridgeToken: msg.bridgeToken,
+      editorRequest: """{"id":"ef-1","method":"fs/read_text_file","params":{"path":"a.nim"}}"""))
+    deliverToBridge(msg.userId, finalText, rkFinalAnswer, token = msg.bridgeToken)
   of dmApprovalThenFinal:
     discard fakeBridge.deliver(OutboundMessage(userId: msg.userId, replyKind: rkChannel,
       text: "Aprovação necessária: bash", bridgeToken: msg.bridgeToken,
@@ -540,6 +546,17 @@ proc runTests*() =
       check nodes[^1]["choices"][0]["finish_reason"].getStr() == "length"
 
   suite "runAgentStream SSE":
+
+    test "a request for the editor reaches the stream as donkey_editor_request (E10.5)":
+      resetStream()
+      dispatchMode = dmEditorRequestThenFinal
+      finalText = "li"
+      check runStream(bodyFor("alice", "oi")).outcome == asCompleted
+      var asked: seq[JsonNode]
+      for n in streamNodes():
+        let a = n{"choices"}{0}{"delta"}{"donkey_editor_request"}
+        if not a.isNil: asked.add a
+      check asked == @[%* {"id": "ef-1", "method": "fs/read_text_file", "params": {"path": "a.nim"}}]
 
     test "an approval request reaches the stream as donkey_approval; other chatter does not (E10.4)":
       resetStream()
