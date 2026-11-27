@@ -30,6 +30,7 @@ import ./named_agents
 import ./task_board
 import ../domain/agents/named_agent_pure
 import ./credential_runtime
+import ../domain/a2a/a2a_client_pure
 import ./tools/code_tools
 import ./tools/memory_ingest_io
 
@@ -644,6 +645,102 @@ proc githubWrite(ctx: NativeCtx; j: JsonNode): Future[NativeToolResult] {.async.
   if wrote.isErr: return handledError(wrote.error)
   return handledText(wrote.get)
 
+const
+  MaxDelegateChars = 3_500
+    ## The task shown for approval must be the whole of it, as for GitHub.
+  DelegatePollsMs = [200, 1_000, 2_000, 3_000, 5_000]
+    ## Waits between asking again for a task still running; then every 5 s.
+  DelegateDeadlineMs = 180_000
+
+proc postA2a(agent: A2aAgent; token, body: string;
+             unknownMethod: ptr bool = nil): Future[Result[string, string]] {.async.} =
+  ## `unknownMethod`, when given, is set when the answer may mean "this
+  ## method is not known": JSON-RPC's -32601, or HTTP 404, 405 or 400 (how
+  ## some servers refuse a method they do not have).
+  let resp = await offLoopIo().httpPost(agent.url, body,
+    @[("Authorization", "Bearer " & token), ("Content-Type", "application/json"),
+      ("A2A-Version", "1.0")], @[agent.host])
+  if resp.isErr: return err("o agente " & agent.name & " não respondeu: " & resp.error)
+  let notFound = isMethodNotFound(resp.get.body)
+  if unknownMethod != nil:
+    unknownMethod[] = notFound or resp.get.status in [400, 404, 405]
+  if resp.get.status div 100 != 2 and not notFound:
+    return err("o agente " & agent.name & " respondeu HTTP " & $resp.get.status)
+  return ok(resp.get.body)
+
+proc delegateToAgent(ctx: NativeCtx; j: JsonNode): Future[NativeToolResult] {.async.} =
+  ## E13.4: only `[[a2a.agents]]`, with the token each gave by pairing; the
+  ## person approves every call, seeing the whole task, and it is sent as shown.
+  let name = j{"agent"}.getStr.strip
+  let taskText = j{"task"}.getStr.strip
+  let agents = a2aAgents()
+  var agent: A2aAgent
+  for a in agents:
+    if a.name == name: agent = a
+  if agent.name.len == 0:
+    var names: seq[string]
+    for a in agents: names.add a.name
+    return handledError("Não há agente \"" & name & "\" configurado. Os permitidos: " &
+                        (if names.len > 0: names.join(", ") else: "nenhum") & ".")
+  if taskText.len == 0:
+    return handledError("Diga o que pedir ao agente em `task`.")
+  let token = a2aToken(agent)
+  if token.len == 0:
+    return handledError("O token do agente " & agent.name & " não está definido (" &
+                        agent.tokenEnv & "); peça ao operador: `donkey ctl secret set " &
+                        agent.tokenEnv & "`.")
+  let summary = delegateSummary(agent, taskText)
+  if summary.len > MaxDelegateChars:
+    return handledError("O pedido é longo demais para mostrar inteiro na aprovação (" &
+                        $summary.len & " caracteres); encurte ou divida.")
+  if ctx.approval.isNil:
+    return handledError("Delegar a outro agente pede aprovação, e as aprovações não estão " &
+                        "configuradas; nada foi enviado.")
+  let asked = await requestAndWait(ctx.approval, ctx.uid, ctx.channel, ctx.outbox,
+    DelegateToolName & " " & agent.name, summary, ctx.log,
+    shouldStop = proc(): bool {.gcsafe, raises: [].} = sessionStopRequested(ctx),
+    bridgeToken = ctx.bridgeToken, always = true)
+  case asked
+  of adApproved: discard
+  of adDenied: return handledError("O envio ao agente foi negado; nada foi enviado.")
+  of adTimeout: return handledError("A aprovação expirou; nada foi enviado.")
+  var legacy = false
+  var unknownMethod = false
+  let messageId = "donkey-" & $ctx.uid & "-" & $epochTime().int64
+  var body = await postA2a(agent, token, sendRequest(taskText, messageId, legacy = false),
+                           addr unknownMethod)
+  if unknownMethod:
+    ## Maybe a v0.3 agent. If it refuses this too, the first refusal is what
+    ## is told: a 404 may as well be a wrong URL.
+    let first = body
+    legacy = true
+    body = await postA2a(agent, token, sendRequest(taskText, messageId, legacy = true))
+    if body.isErr or isMethodNotFound(body.get):
+      body = if first.isErr: first
+             else: Result[string, string].err("o agente " & agent.name &
+                                              " não conhece SendMessage nem message/send")
+  if body.isErr: return handledError(body.error)
+  var outcome = parseOutcome(body.get)
+  var waited = 0
+  var poll = 0
+  while outcome.isOk and not outcome.get.done:
+    let pause = DelegatePollsMs[min(poll, DelegatePollsMs.high)]
+    ## The deadline checked before the wait: no request goes out past it.
+    if outcome.get.taskId.len == 0 or waited + pause > DelegateDeadlineMs or
+       sessionStopRequested(ctx):
+      return handledError("O agente " & agent.name & " não terminou a tarefa a tempo" &
+                          (if outcome.get.taskId.len > 0: " (tarefa " & outcome.get.taskId & ")" else: "") & ".")
+    await sleepAsync(chronos.milliseconds(pause))
+    waited += pause
+    inc poll
+    let again = await postA2a(agent, token, getTaskRequest(outcome.get.taskId, legacy))
+    if again.isErr: return handledError(again.error)
+    outcome = parseOutcome(again.get)
+  if outcome.isErr: return handledError("O agente " & agent.name & ": " & outcome.error)
+  if outcome.get.failed:
+    return handledError("O agente " & agent.name & ": " & outcome.get.text)
+  return handledText("Resposta do agente " & agent.name & ":\n\n" & outcome.get.text)
+
 proc executeWebNativeTool(tc: ToolCallRequest;
                           ctx: NativeCtx;
                           state: SessionState;
@@ -666,6 +763,8 @@ proc executeWebNativeTool(tc: ToolCallRequest;
     return webToolResult(await runWeb(WebToolJob(kind: wtkSearch, query: searchCtx.query,
       count: searchCtx.count, apiKey: ctx.braveApiKey, rules: rules,
       allowlist: ctx.webAllowlist), ctx))
+  of DelegateToolName:
+    return await delegateToAgent(ctx, j)
   of GithubToolName:
     if isWriteAction(j{"action"}.getStr.strip.toLowerAscii):
       return await githubWrite(ctx, j)

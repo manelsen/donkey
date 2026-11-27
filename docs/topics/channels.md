@@ -598,6 +598,26 @@ Other agents reach Donkey through the [Agent2Agent protocol](https://a2a-protoco
   since a task is finished before `SendMessage` returns. Text only; no
   streaming (`SendStreamingMessage` is not offered). v0.3's method names are
   refused.
+- **Calling other agents:** the operator lists them in `donkey.toml`; the
+  token is the one that agent gave when Donkey was paired with it, kept in
+  the vault:
+
+  ```toml
+  [[a2a.agents]]
+  name = "planner"                       # lowercase, digits, - or _
+  url = "https://planner.example/a2a"    # its JSON-RPC endpoint (https; http only on loopback)
+  token_env = "A2A_PLANNER_TOKEN"        # donkey ctl secret set A2A_PLANNER_TOKEN
+  description = "Plans trips"            # shown to the model
+  ```
+
+  The model then has `delegate_to_agent(agent, task)`, offered only with
+  these agents. Every call asks the person, showing the agent and the whole
+  task; it is sent as shown, to that agent's host only, and the answer comes
+  back (a task still running is asked about again, for up to 3 minutes). A
+  v1.0 agent gets `SendMessage`; one that answers "method not found" (or
+  HTTP 400, 404, 405) gets v0.3's `message/send`. Each request has 30
+  seconds: an agent that holds `SendMessage` longer, instead of answering a
+  running task, times out.
 
 ---
 

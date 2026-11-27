@@ -2277,6 +2277,8 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
   configurePersonSecrets(personSecrets(cfg.home))  ## E11: each person's GitHub token
   if cfg.githubPolicyError.len > 0:
     log.error("[github] policy not read, every write will ask: " & cfg.githubPolicyError)
+  if cfg.a2aAgentsError.len > 0:
+    log.error("[a2a] not read, no agent can be delegated to: " & cfg.a2aAgentsError)
   let editors = newEditorRegistry(newFsAdapter(), cfg.home / "state" / "editors.json",
                                   editorRandom, apiChatNowMs)
   if editors.isErr:
@@ -2653,6 +2655,7 @@ proc main =
   ## Provider keys and the presence checks of /about and /doctor read the
   ## snapshot installed here, on the loop thread that uses them.
   useCredentials(cfg.env)
+  useA2aAgents(cfg.a2aAgents)   ## E13.4: whom delegate_to_agent may call
   ## Native tools that await I/O (github, git_inspect) run it on the
   ## blocking executor through these, never on the loop.
   useOffLoopIo(OffLoopIo(httpGet: offLoopHttpGet, httpPost: offLoopHttpPost,

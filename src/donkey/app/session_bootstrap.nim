@@ -12,6 +12,7 @@ import ../core/providers/smart_routing
 import ./channel_prefs_parse
 import ../core/providers/credential_pool
 import ../domain/providers/descriptors
+import ../domain/a2a/a2a_client_pure
 import ./credential_runtime
 export credential_runtime.detectProviderAvailability
 import ../domain/agent_message
@@ -610,6 +611,12 @@ proc nativeSessionTools*(): seq[ToolDescription] {.gcsafe, raises: [].} =
   if githubToken().len > 0:
     result.add(ToolDescription(name: GithubToolName, description: GithubToolDescription,
                                schemaJson: GithubToolSchema))
+  let agents = a2aAgents()
+  if agents.len > 0:
+    ## E13.4: only the agents the operator listed, each by name.
+    result.add(ToolDescription(name: DelegateToolName,
+                               description: delegateToolDescription(agents),
+                               schemaJson: delegateToolSchema(agents)))
   if webSearchKey().len > 0:
     result.add(ToolDescription(
       name: WebSearchToolName,

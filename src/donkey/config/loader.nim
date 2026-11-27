@@ -6,6 +6,7 @@
 ##   2. Values in donkey.toml
 ##   3. Built-in defaults (see config/types.nim)
 
+import ../domain/a2a/a2a_client_pure
 import std/[json, options, os, strutils]
 import ./environment
 import ./toml
@@ -385,4 +386,8 @@ proc loadConfig*(path: string; env: Environment): DonkeyConfig =
     let policy = parseGithubPolicy(tomlToJson(doc["github"]))
     if policy.isErr: result.githubPolicyError = policy.error
     else: result.githubPolicy = policy.get
+  if doc.hasKey("a2a"):
+    let agents = parseA2aAgents(tomlToJson(doc["a2a"]))
+    if agents.isErr: result.a2aAgentsError = agents.error
+    else: result.a2aAgents = agents.get
   result = result.applyEnvOverrides(env)

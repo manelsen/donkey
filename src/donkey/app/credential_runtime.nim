@@ -20,11 +20,13 @@ import ../config/environment
 import ../domain/providers/bedrock_pure
 import ../domain/providers/descriptors
 import ../infra/thread_owner
+import ../domain/a2a/a2a_client_pure
 
 var
   gPools {.threadvar.}: Table[string, CredentialPool]
   gCredentials {.threadvar.}: Environment
   gCredentialsOwner: ThreadOwner
+  gA2aAgents {.threadvar.}: seq[A2aAgent]
 
 proc useCredentials*(env: Environment) {.gcsafe, raises: [].} =
   ## Installs the snapshot the provider keys are read from, and forgets the
@@ -61,6 +63,19 @@ proc credentialSet*(name: string): bool {.gcsafe, raises: [].} =
   ## Whether the installed snapshot has a value for `name`: presence only,
   ## for status views that list what is configured (never the value).
   credentialValue(name).len > 0
+
+proc useA2aAgents*(agents: seq[A2aAgent]) {.gcsafe, raises: [].} =
+  ## `[[a2a.agents]]` (E13.4): the agents delegate_to_agent may call; their
+  ## tokens are read from the same snapshot as the providers' keys.
+  if gCredentialsOwner.isOwner("provider credentials"):
+    gA2aAgents = agents
+
+proc a2aAgents*(): seq[A2aAgent] {.gcsafe, raises: [].} =
+  if gCredentialsOwner.isOwner("provider credentials"): gA2aAgents else: @[]
+
+proc a2aToken*(agent: A2aAgent): string {.gcsafe, raises: [].} =
+  ## The token the agent gave by pairing, from its `token_env`; "" when unset.
+  credentialValue(agent.tokenEnv)
 
 proc githubToken*(): string {.gcsafe, raises: [].} =
   ## The token behind the github tool; "" when it is off.
