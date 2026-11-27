@@ -176,7 +176,8 @@ returned intact. Cached tokens show up in usage, traces and `/insights`.
   default) ask the person first, with buttons where the app has them; the
   operator can answer too (`donkey ctl approval`).
 - **MCP**: servers over stdio or Streamable HTTP, with OAuth login; MCP
-  sampling runs only with the person's approval and under token caps.
+  sampling runs only with the person's approval and under token caps
+  ([`docs/topics/mcp.md`](docs/topics/mcp.md)).
 - **Skills**: Deno skills with explicit `--allow-*` permissions.
 
 ### It gets better with use
@@ -265,7 +266,8 @@ is in [`docs/reference/configuration.md`](docs/reference/configuration.md).
 
 - **Secrets**: `donkey ctl secret` stores keys encrypted with AES-256-GCM in
   `{home}/.secrets/`, with the key kept apart (`{home}/.secret_key`, 0600).
-  Never pass a secret as a command-line argument.
+  Never pass a secret as a command-line argument
+  ([`docs/topics/secrets.md`](docs/topics/secrets.md)).
 - **Who may talk to it**: DM policy (`open`, allowlist or operator
   `pairing`), group allowlists, revocation with `donkey ctl user revoke`.
 - **The HTTP gateway** listens on `127.0.0.1:8080`. Its data routes need
@@ -298,6 +300,9 @@ The deployment checklist is [`docs/hardening.md`](docs/hardening.md).
 | Use named agents | [`docs/topics/named-agents.md`](docs/topics/named-agents.md) |
 | Look up the chat commands | [`docs/topics/commands.md`](docs/topics/commands.md) |
 | Call it from other programs | [`docs/topics/interfaces.md`](docs/topics/interfaces.md) |
+| Connect MCP servers | [`docs/topics/mcp.md`](docs/topics/mcp.md) |
+| Keep secrets | [`docs/topics/secrets.md`](docs/topics/secrets.md) |
+| Run and compare the tests | [`docs/testing.md`](docs/testing.md) |
 | Harden a deployment | [`docs/hardening.md`](docs/hardening.md) |
 | See what comes next | [`docs/ROADMAP.md`](docs/ROADMAP.md) |
 
@@ -325,6 +330,9 @@ bash scripts/run_tests.sh                 # the whole suite, grouped compilation
 bash scripts/run_tests.sh tests/ports     # one folder or one file
 bash scripts/check_boundaries.sh          # layer imports (needs ripgrep)
 ```
+
+Comparing two runs and the grouped runner's numbers are in
+[`docs/testing.md`](docs/testing.md).
 
 Work is **test first**: a failing test, the code that makes it pass, then the
 refactor. Pull requests get an automated review and must pass CI. The
