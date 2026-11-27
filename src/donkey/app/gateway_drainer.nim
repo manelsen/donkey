@@ -6,7 +6,7 @@
 ## Strict hexagonal architecture: no direct imports from adapters/.
 ## Coordination occurs via functional ports and callbacks.
 
-import std/[strutils, tables, times]
+import std/[strutils, tables]
 import ../core/types
 import ../core/log
 import ../domain/message
@@ -200,7 +200,7 @@ proc guarded(drainer: GatewayDrainer; kind: ChannelKind; fn: GatewayDrainProc): 
     ## channel's exception out.
     try: return fn()
     except Exception: return false  ## effect boundary: callee raises are unannotated
-  let now = int64(epochTime() * 1000)
+  let now = monoMs()
   var g = drainer.guards.guards.getOrDefault(kind,
             DrainGuard(sup: newSupervised(kind, $kind & " drain")))
   if now < g.pausedUntil:

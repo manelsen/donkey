@@ -9,7 +9,7 @@
 ## approval's text says how to answer), a file becomes a note. The bot's
 ## address and auto-accept are set up by the operator in the CLI.
 
-import std/[atomics, json, net, os, random, strutils, times]
+import std/[atomics, json, net, os, random, strutils]
 import ../../core/log
 import ../../core/pipeops
 import ../../core/types
@@ -131,7 +131,7 @@ proc runSimplex(args: SimplexArgs) {.thread, nimcall.} =
   while not control.stop.load():
     var connected = false
     var why = "the connection ended"
-    let began = epochTime()
+    let began = monoMs()
     try:
       runSession(args, log, connected)
     except CatchableError as e:
@@ -142,7 +142,7 @@ proc runSimplex(args: SimplexArgs) {.thread, nimcall.} =
       socketDisconnected(ckSimplex)
     if control.stop.load():
       return
-    let wait = sup.ended(why, ranMs = int64((epochTime() - began) * 1000), log)
+    let wait = sup.ended(why, ranMs = monoMs() - began, log)
     if not sleepOrStop(control, wait + rand(max(0, wait div 4))):
       return
 

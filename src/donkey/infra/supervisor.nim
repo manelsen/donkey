@@ -8,7 +8,7 @@
 ## the restarts before it no longer count. Thread-local: each thread owns
 ## its own `Supervised`.
 
-import std/[options, times]
+import std/[monotimes, options]
 import ../core/log
 import ../core/types
 import ../domain/supervision_pure
@@ -30,7 +30,12 @@ proc newSupervised*(name: string; policy = DefaultPolicy): Supervised =
   ## A child that is not a channel (no state in the status).
   Supervised(name: name, policy: policy)
 
-proc nowMs(): int64 = int64(epochTime() * 1000)
+proc monoMs*(): int64 =
+  ## Milliseconds on the monotonic clock: an NTP step neither shortens a
+  ## session nor stretches the restart window.
+  getMonoTime().ticks div 1_000_000
+
+proc nowMs(): int64 = monoMs()
 
 proc started*(s: var Supervised; now = nowMs()) =
   ## A session opened: the channel is up.

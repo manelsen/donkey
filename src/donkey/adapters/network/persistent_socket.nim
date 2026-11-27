@@ -201,7 +201,7 @@ proc runSocket[C, S](args: SocketArgs[C, S]) {.thread, nimcall.} =
     var opened = false
     var step = ssReconnect
     var why = "the session ended"
-    let began = epochTime()
+    let began = monoMs()
     try:
       step = runSession(args, state, log, opened)
     except CatchableError as e:
@@ -215,7 +215,7 @@ proc runSocket[C, S](args: SocketArgs[C, S]) {.thread, nimcall.} =
       return
     if control.stop.load():
       return
-    let wait = sup.ended(why, ranMs = int64((epochTime() - began) * 1000), log)
+    let wait = sup.ended(why, ranMs = monoMs() - began, log)
     if not sleepOrStop(control, wait + rand(max(0, wait div 4))):
       return
 
