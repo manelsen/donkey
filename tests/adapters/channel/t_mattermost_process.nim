@@ -4,6 +4,8 @@ import std/unittest
 import donkey/adapters/channel/mattermost
 import donkey/adapters/channel/mattermost_socket
 import donkey/core/types
+import donkey/core/log
+import donkey/core/pipeops
 
 proc runTests*() =
   suite "mattermost — as its own process (E12.3)":
@@ -25,6 +27,14 @@ proc runTests*() =
     test "the command is this binary's channel-worker":
       let spec = mattermostWorkerSpec("/usr/bin/donkey")
       check spec.args == @["channel-worker", "mattermost"] and spec.channel == ckMattermost
+
+    test "the settings are checked before a child is started, and a second start is refused":
+      let log = newLogger("t", lvlError)
+      check startMattermostProcess("/bin/sleep", "http://insecure", "tok", log).isErr
+      check startMattermostProcess("/bin/sleep", "https://mm.example", " ", log).isErr
+      check startMattermostProcess("/bin/sleep", "https://mm.example", "tok", log).isOk
+      check startMattermostProcess("/bin/sleep", "https://mm.example", "tok", log).isErr
+      stopMattermostSocket()
 
 when isMainModule:
   runTests()

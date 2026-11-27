@@ -1038,7 +1038,7 @@ proc startOptionalMattermostGateway(url, token: string; asProcess: bool; log: Lo
     return
   if asProcess:
     ## E12.3: the socket in a child, so a Defect there spares the daemon.
-    startMattermostProcess(getAppFilename(), log).isOkOr:
+    startMattermostProcess(getAppFilename(), url, token, log).isOkOr:
       log.error("mattermost: " & error)
       return
     log.info("Mattermost socket started as its own process")
@@ -1715,7 +1715,7 @@ proc startDaemonIngress(ctx: DaemonContext;
     log.info("IRC_SERVER not set — IRC disabled")
   elif ckIrc in ctx.env.processChannels:
     ## E12.3: the connection in a child, so a Defect there spares the daemon.
-    startIrcProcess(getAppFilename(), log).isOkOr:
+    startIrcProcess(getAppFilename(), ctx.env.irc, log).isOkOr:
       log.error("irc: " & error)
   else:
     startIrc(ctx.env.irc, log).isOkOr:
