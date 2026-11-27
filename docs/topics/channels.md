@@ -34,6 +34,7 @@ This matrix reflects the capability registry (`ports/channel_capability`) the ru
 | Email | no | no | no | no | no | no |
 | [ntfy](#ntfy) | no | no | no | no | no | no |
 | [SimpleX](#simplex) | no | no | no | no | no | no |
+| [BlueBubbles (iMessage)](#bluebubbles-imessage) | no | no | no | no | no | no |
 | CLI | yes | no | no | no | no | no |
 
 Every channel sends text. "Files in" is the port's `downloadFile` (an attachment reaches the turn); "Files out" is `cfSendFile` (the adapter reads a paddock file and uploads it). The table is generated from `ports/channel_capability`, which a test keeps in line with the ports.
@@ -520,6 +521,29 @@ app or `curl`, and get its answers as notifications, on a topic of yours.
 - **Who:** SimpleX has no global user id: a person is a contact of the bot
   (its id in that CLI's database), linked to them by pairing or with
   `/continue <code>` from another channel.
+
+---
+
+## BlueBubbles (iMessage)
+
+iMessage as a channel (E13.3), through a [BlueBubbles](https://bluebubbles.app)
+Server running on the operator's Mac.
+
+- **Settings:** `BLUEBUBBLES_URL` (the server, https; plain http only on this
+  machine, since the password travels in the URL) and `BLUEBUBBLES_PASSWORD`
+  (keep it in the vault: `donkey ctl secret set BLUEBUBBLES_PASSWORD`).
+- **In:** BlueBubbles' webhooks carry no signature, so Donkey does not use
+  them: a thread polls the message query (`POST /api/v1/message/query`) every
+  3 seconds for what came after the newest message seen, with the password.
+  People's one-to-one messages are taken; Donkey's own and group chats are
+  left out. A message with only attachments gets a short note; attachments
+  next to text are named as unread.
+- **Out:** `POST /api/v1/message/text` to the chat the person wrote from
+  (`apple-script` method, a fresh temporary guid each time); text only:
+  buttons are dropped (an approval's text says `/approve <id>`), a file
+  becomes a note.
+- **Who:** an iMessage address (phone or e-mail), linked to the person by
+  pairing or with `/continue <code>` from another channel.
 
 ---
 

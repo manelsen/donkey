@@ -18,7 +18,7 @@ app_port: 8080
 [![TDD](https://img.shields.io/badge/tests-421%20files%2C%20TDD-brightgreen)](#-development)
 [![Code size](https://img.shields.io/badge/Nim-86k%20lines%20%C2%B7%20404%20modules-informational)](src/)
 
-[![Channels](https://img.shields.io/badge/channels-21-0088cc)](docs/topics/channels.md)
+[![Channels](https://img.shields.io/badge/channels-22-0088cc)](docs/topics/channels.md)
 [![Providers](https://img.shields.io/badge/providers-17-orange)](docs/topics/providers.md)
 [![MCP](https://img.shields.io/badge/MCP-stdio%20%C2%B7%20HTTP%20%C2%B7%20OAuth-black)](#tools-and-what-keeps-them-safe)
 [![Memory](https://img.shields.io/badge/memory-MAGMA%20graph%20(SQLite%20%7C%20pgvector)-8A2BE2)](docs/topics/memory.md)
@@ -112,10 +112,10 @@ flowchart LR
 
 ### Channels: where people talk to it
 
-21 channels, each with its own adapter: **Telegram, Discord, Slack, WhatsApp
+22 channels, each with its own adapter: **Telegram, Discord, Slack, WhatsApp
 (Cloud API), Microsoft Teams, Google Chat, Mattermost, WeCom, WeChat, QQ
 (OneBot and official), Feishu, DingTalk, LINE, Matrix, Signal, IRC, SMS
-(Twilio), Email, ntfy, SimpleX and CLI**. Telegram, Discord, WhatsApp and Teams can run
+(Twilio), Email, ntfy, SimpleX, iMessage (BlueBubbles) and CLI**. Telegram, Discord, WhatsApp and Teams can run
 several bots with their own persona (`[[bots]]`), sharing the instance's
 people and memory.
 
@@ -168,7 +168,9 @@ returned intact. Cached tokens show up in usage, traces and `/insights`.
 
 - **Built in**: files in the paddock, `bash` in a sandbox, code execution,
   web fetch and search, a browser, images, `send_file`, schedules, a task
-  board (`manage_tasks`, `/tasks`), read-only `github` and `git_inspect`.
+  board (`manage_tasks`, `/tasks`), `github` (reads; opens and closes
+  issues, comments and labels for the person who asked, with their own
+  token, under a policy per repository) and read-only `git_inspect`.
 - **Sandbox**: shell commands run in an OCI container (Docker or Podman) as
   the daemon's user, read-only root and no network by default, or as
   WebAssembly applets under `wasmtime`.
@@ -179,6 +181,16 @@ returned intact. Cached tokens show up in usage, traces and `/insights`.
   sampling runs only with the person's approval and under token caps
   ([`docs/topics/mcp.md`](docs/topics/mcp.md)).
 - **Skills**: Deno skills with explicit `--allow-*` permissions.
+
+### In your editor
+
+`donkey acp` puts Donkey in Zed and other editors that speak the Agent
+Client Protocol. The editor is **you**: paired once with `/editor <code>` on
+a channel where Donkey knows you, it shares your memory and conversation.
+Answers stream in, tools show as they run, approvals become the editor's
+permission prompt, and Donkey can read files of the project you have open
+(after you allow it, never outside the project folder). See
+[`docs/topics/editors.md`](docs/topics/editors.md).
 
 ### It gets better with use
 
@@ -300,6 +312,8 @@ The deployment checklist is [`docs/hardening.md`](docs/hardening.md).
 | Use named agents | [`docs/topics/named-agents.md`](docs/topics/named-agents.md) |
 | Look up the chat commands | [`docs/topics/commands.md`](docs/topics/commands.md) |
 | Call it from other programs | [`docs/topics/interfaces.md`](docs/topics/interfaces.md) |
+| Use it in Zed or another editor | [`docs/topics/editors.md`](docs/topics/editors.md) |
+| Let it write on GitHub | [`docs/topics/github-and-git.md`](docs/topics/github-and-git.md) |
 | Connect MCP servers | [`docs/topics/mcp.md`](docs/topics/mcp.md) |
 | Keep secrets | [`docs/topics/secrets.md`](docs/topics/secrets.md) |
 | Run and compare the tests | [`docs/testing.md`](docs/testing.md) |
