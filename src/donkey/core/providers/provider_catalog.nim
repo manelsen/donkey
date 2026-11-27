@@ -282,16 +282,16 @@ proc buildDefaultCatalog*(): ProviderCatalog =
 
   # ── OpenAI (direct) ──
   result.register(makeEntry(
-    "gpt-6.1-sol", "openai",
-    aliases = @["gpt-6-sol", "sol", "gpt-4o", "gpt-5.4"],
+    "gpt-6.2-sol", "openai",
+    aliases = @["gpt-6.1-sol", "gpt-6-sol", "sol", "gpt-4o", "gpt-5.4"],
     capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
     costTier = ctModerate,
     budgetPriority = bpDefault,
     contextWindow = 1_000_000,
   ))
   result.register(makeEntry(
-    "gpt-6-astra", "openai",
-    aliases = @["gpt-6", "astra"],
+    "gpt-6.2-astra", "openai",
+    aliases = @["gpt-6-astra", "gpt-6", "astra"],
     capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
     costTier = ctExpensive,
     budgetPriority = bpHigh,
@@ -316,8 +316,11 @@ proc buildDefaultCatalog*(): ProviderCatalog =
 
   # ── DeepSeek (direct) ──
   result.register(makeEntry(
-    "deepseek-4.1-flash", "deepseek",
-    aliases = @["deepseek-v4.1-flash", "deepseek-flash", "deepseek-chat", "deepseek-reasoner"],
+    "deepseek-flash", "deepseek",
+    # The API id of V4.1 Flash (version DeepSeek-V4.1-Flash-1017); the
+    # others are names people used, and DeepSeek's retired ones.
+    aliases = @["deepseek-4.1-flash", "deepseek-v4.1-flash", "deepseek-v4-flash",
+                "deepseek-chat", "deepseek-reasoner"],
     capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
     costTier = ctVeryCheap,
     budgetPriority = bpDefault,
@@ -399,6 +402,22 @@ proc buildDefaultCatalog*(): ProviderCatalog =
 
   # ── Gemini ──
   result.register(makeEntry(
+    "gemini-4-hydrogen", "gemini",
+    aliases = @["gemini-hydrogen", "hydrogen"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctCheap,
+    budgetPriority = bpDefault,
+    contextWindow = 1_048_576,
+  ))
+  result.register(makeEntry(
+    "gemini-4-neon", "gemini",
+    aliases = @["gemini-neon", "neon"],
+    capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
+    costTier = ctModerate,
+    budgetPriority = bpDefault,
+    contextWindow = 1_048_576,
+  ))
+  result.register(makeEntry(
     "gemini-3.8-flash", "gemini",
     aliases = @["gemini-flash"],
     capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
@@ -415,8 +434,8 @@ proc buildDefaultCatalog*(): ProviderCatalog =
     contextWindow = 1_048_576,
   ))
   result.register(makeEntry(
-    "gemini-3.1-pro", "gemini",
-    aliases = @["gemini-pro"],
+    "gemini-3.1-pro-preview", "gemini",
+    aliases = @["gemini-3.1-pro", "gemini-pro"],
     capabilities = {mcTools, mcImage, mcThinking, mcStreaming},
     costTier = ctModerate,
     budgetPriority = bpDefault,
@@ -449,20 +468,21 @@ proc buildDefaultCatalog*(): ProviderCatalog =
 
   # ── Groq ──
   result.register(makeEntry(
-    "llama-3.3-70b-versatile", "groq",
-    aliases = @["llama-3.3-70b"],
+    "openai/gpt-oss-120b", "groq",
+    # Groq shut Llama 3.x down for free and developer tiers on 2026-08-16.
+    aliases = @["gpt-oss-120b", "llama-3.3-70b-versatile", "llama-3.3-70b"],
     capabilities = {mcTools, mcStreaming},
     costTier = ctVeryCheap,
     budgetPriority = bpDefault,
-    contextWindow = 128_000,
+    contextWindow = 131_072,
   ))
   result.register(makeEntry(
-    "llama-3.1-8b-instant", "groq",
-    aliases = @["llama-3.1-8b"],
+    "openai/gpt-oss-20b", "groq",
+    aliases = @["gpt-oss-20b", "llama-3.1-8b-instant", "llama-3.1-8b"],
     capabilities = {mcTools, mcStreaming},
-    costTier = ctFree,
+    costTier = ctVeryCheap,
     budgetPriority = bpLow,
-    contextWindow = 128_000,
+    contextWindow = 131_072,
   ))
 
   # ── Ollama ──
@@ -493,12 +513,21 @@ proc buildDefaultCatalog*(): ProviderCatalog =
 
   # ── MiniMax ──
   result.register(makeEntry(
-    "MiniMax-M2", "minimax",
-    aliases = @["minimax-m2"],
+    "MiniMax-M3.1-Flash", "minimax",
+    aliases = @["minimax-m3.1-flash", "minimax-flash"],
+    capabilities = {mcStreaming},
+    costTier = ctVeryCheap,
+    budgetPriority = bpDefault,
+    contextWindow = 1_000_000,
+  ))
+  result.register(makeEntry(
+    "MiniMax-M3", "minimax",
+    # M2 is no longer on MiniMax's model list.
+    aliases = @["minimax-m3", "MiniMax-M2", "minimax-m2"],
     capabilities = {mcStreaming},
     costTier = ctCheap,
     budgetPriority = bpDefault,
-    contextWindow = 128_000,
+    contextWindow = 1_000_000,
   ))
   result.register(makeEntry(
     "MiniMax-M2.5", "minimax",
@@ -526,6 +555,14 @@ proc buildDefaultCatalog*(): ProviderCatalog =
   ))
 
   # ── Z.ai (direct) ──
+  result.register(makeEntry(
+    "glm-5.3", "zai",
+    aliases = @["glm5.3"],
+    capabilities = {mcTools, mcThinking, mcStreaming},
+    costTier = ctModerate,
+    budgetPriority = bpDefault,
+    contextWindow = 1_000_000,
+  ))
   result.register(makeEntry(
     "glm-5.1", "zai",
     aliases = @["glm51"],

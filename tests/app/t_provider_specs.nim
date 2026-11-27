@@ -41,8 +41,8 @@ proc runTests*() =
         (provider: "deepseek", envName: "DEEPSEEK_API_KEY", expectedName: "deepseek", expectedModel: "deepseek-flash"),
         (provider: "groq", envName: "GROQ_API_KEY", expectedName: "groq", expectedModel: "openai/gpt-oss-120b"),
         (provider: "anthropic", envName: "ANTHROPIC_API_KEY", expectedName: "anthropic", expectedModel: "claude-sonnet-5-5"),
-        (provider: "gemini", envName: "GEMINI_API_KEY", expectedName: "gemini", expectedModel: "gemini-3.8-flash"),
-        (provider: "minimax", envName: "MINIMAX_API_KEY", expectedName: "minimax", expectedModel: "MiniMax-M3"),
+        (provider: "gemini", envName: "GEMINI_API_KEY", expectedName: "gemini", expectedModel: "gemini-4-hydrogen"),
+        (provider: "minimax", envName: "MINIMAX_API_KEY", expectedName: "minimax", expectedModel: "MiniMax-M3.1-Flash"),
         (provider: "zai", envName: "ZAI_API_KEY", expectedName: "zai", expectedModel: "glm-4.7"),
         (provider: "zai-coding", envName: "ZAI_CODING_API_KEY", expectedName: "zai-coding", expectedModel: "glm-4.7"),
       ]

@@ -107,13 +107,14 @@ func staticCatalog(providerName: string): seq[ModelCatalogEntry] =
     ]
   of "gemini":
     @[
-      ModelCatalogEntry(providerName: providerName, modelName: "gemini-3.8-flash", label: "gemini-3.8-flash", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "gemini-4-hydrogen", label: "gemini-4-hydrogen", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "gemini-4-neon", label: "gemini-4-neon", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "gemini-4-argon", label: "gemini-4-argon", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "gemini-3.5-flash-lite", label: "gemini-3.5-flash-lite", isFree: true, available: true),
     ]
   of "minimax":
     @[
+      ModelCatalogEntry(providerName: providerName, modelName: "MiniMax-M3.1-Flash", label: "MiniMax-M3.1-Flash", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "MiniMax-M3", label: "MiniMax-M3", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "MiniMax-M2.5", label: "MiniMax-M2.5", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "MiniMax-M2.7", label: "MiniMax-M2.7", isFree: false, available: true),
