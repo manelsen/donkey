@@ -57,7 +57,7 @@ proc slackCommandOutcome(slAdapter: var SlackAdapter;
       return fallback()
   dispatchCommand(env.commands, sm, msgSeq,
     commandRequest(command, userId, ckSlack, messageId, event.slackUserId,
-                   slAdapter.resolver))
+                   slAdapter.resolver, privateChat = slackChannelIsDirect(event.channelId)))
 
 proc drainSlackEvents*(slAdapter: var SlackAdapter;
                        sm: var SessionManager;

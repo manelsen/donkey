@@ -371,6 +371,7 @@ func discordReplyStyle*(reply: CommandReply): (string, int) =
   of rtWhoami:      ("🆔 Identity", 0x5865F2)
   of rtReasoning:   ("🧠 Reasoning", 0x57F287)
   of rtEditor:      ("🖥️ Editores", if reply.failed: 0xED4245 else: 0x5865F2)
+  of rtGithub:      ("🐙 GitHub", if reply.failed: 0xED4245 else: 0x5865F2)
   of rtHelp, rtSkill, rtUi, rtMenu, rtConfig, rtUnsupported: ("", 0)
 
 func discordReplyRoute*(event: DiscordRawEvent; reply: CommandReply): ReplyRoute =
@@ -471,7 +472,8 @@ proc discordCommandRequest(dcAdapter: DiscordAdapter; event: DiscordRawEvent;
   CommandDispatchRequest(
     command: command, userId: userId, channel: ckDiscord, messageId: "",
     rawId: event.discordUserId, links: dcAdapter.resolver.identityLinkPort(),
-    interactiveUi: true)
+    interactiveUi: true,
+    privateChat: event.guildId.len == 0)   ## a DM has no server
 
 proc handleDiscordEvent*(sm: var SessionManager;
                          event: DiscordRawEvent;

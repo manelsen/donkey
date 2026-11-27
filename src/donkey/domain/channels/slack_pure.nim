@@ -363,3 +363,8 @@ proc parseUploadUrl*(body: string): Result[tuple[uploadUrl, fileId: string], str
 proc completeUploadBody*(fileId, title, channelId, text: string): JsonNode =
   result = %* {"files": [{"id": fileId, "title": title}], "channel_id": channelId}
   if text.len > 0: result["initial_comment"] = %text
+
+func slackChannelIsDirect*(channelId: string): bool =
+  ## A one-to-one conversation with the bot: Slack gives DMs ids starting
+  ## with D (channels C, private groups G).
+  channelId.startsWith("D")

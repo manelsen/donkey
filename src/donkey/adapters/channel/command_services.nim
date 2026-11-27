@@ -342,7 +342,8 @@ proc newCommandServices*(memory: MdFileAdapter;
                          toolsCount, toolClientsCount: int;
                          daemonStartMs: int64;
                          skillRegistry = "";
-                         editor: CommandArgFn = nil): CommandServicesPort =
+                         editor: CommandArgFn = nil;
+                         github: GithubCommandFn = nil): CommandServicesPort =
   ## `skillRegistry` is where `/skill` searches and installs ("" is the
   ## public registry); the daemon passes `CLAWHUB_REGISTRY` from the snapshot.
   CommandServicesPort(
@@ -361,6 +362,7 @@ proc newCommandServices*(memory: MdFileAdapter;
     taskBoard: proc(userId: UserId): Result[string, string] {.gcsafe.} =
       guarded: taskBoardText(memory, userId),
     editor: editor,
+    github: github,
     clearMemory: proc(userId: UserId): Result[void, string] {.gcsafe.} =
       try:
         memory.clearMemory(userId)

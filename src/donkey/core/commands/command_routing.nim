@@ -44,6 +44,7 @@ type
     cmdTts
     cmdPair
     cmdEditor     ## E10.2: confirm, list or revoke the person's editors
+    cmdGithub     ## E11.2: the person's own GitHub token
   CommandRoute* = enum
     crNone
     crLocal
@@ -77,6 +78,7 @@ type
     lcaContinueLink
     lcaReasoningToggle
     lcaEditor
+    lcaGithub
 
   CallbackKind* = enum
     cbkUnknown
@@ -157,6 +159,7 @@ func primaryCommandName*(kind: CommandKind): string =
   of cmdTts: "/tts"
   of cmdPair: "/pair"
   of cmdEditor: "/editor"
+  of cmdGithub: "/github"
   of cmdNone: ""
 
 func commandAliases*(kind: CommandKind): seq[string] =
@@ -167,7 +170,7 @@ func commandAliases*(kind: CommandKind): seq[string] =
     @[]
 
 func commandAcceptsValue*(kind: CommandKind): bool =
-  kind in {cmdModels, cmdThink, cmdBudget, cmdSkill, cmdContinue, cmdCallback, cmdEditor}
+  kind in {cmdModels, cmdThink, cmdBudget, cmdSkill, cmdContinue, cmdCallback, cmdEditor, cmdGithub}
 
 func commandAllowsBare*(kind: CommandKind): bool =
   kind != cmdNone and kind notin {cmdContinue, cmdCallback}
@@ -188,7 +191,7 @@ func parseCommandKind*(token: string): CommandKind =
 func decideCommandRoute*(kind: CommandKind): CommandRoute =
   case kind
   of cmdAbout, cmdStart, cmdMenu, cmdWhoami, cmdSkill, cmdForget, cmdDoctor, cmdHelp, cmdMemory,
-     cmdMyCode, cmdContinue, cmdReasoning, cmdPair, cmdEditor:
+     cmdMyCode, cmdContinue, cmdReasoning, cmdPair, cmdEditor, cmdGithub:
     crLocal
   of cmdDebug, cmdReset, cmdCompact, cmdNew,
      cmdStop, cmdRestart, cmdBind:
@@ -276,6 +279,8 @@ func decideLocalCommandAction*(decision: CommandDecision): LocalCommandAction =
     lcaReasoningToggle
   of cmdEditor:
     lcaEditor
+  of cmdGithub:
+    lcaGithub
   else:
     lcaNone
 func decideCallbackRoute*(kind: CallbackKind): CallbackRoute =

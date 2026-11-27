@@ -43,6 +43,7 @@ type
     sessionMode*:   SessionMode
     ensureSession*: EnsureSessionFn  ## smCreate only; nil → plain enqueue
     interactiveUi*: bool   ## help shows the interactive usage forms
+    privateChat*:   bool   ## a one-to-one conversation (false when unknown: fail closed)
 
 const NoLiveSessionText* = "Envie uma mensagem primeiro para iniciar o onboarding."
   ## The answer to a button pressed without a live session to take it.
@@ -120,6 +121,11 @@ proc localReply(env: CommandEnv; sm: SessionManager;
     replied(topic, buildWhoamiText(userId, sessionId, req.rawId))
   of lcaReasoningToggle:
     reasoningReply(env, userId)
+  of lcaGithub:
+    if s.github == nil:
+      replied(topic, "O GitHub não está habilitado nesta instância.", failed = true)
+    else:
+      fromResult(topic, s.github(userId, req.command.value, req.privateChat))
   of lcaEditor:
     if s.editor == nil:
       replied(topic, "Editores não estão habilitados nesta instância.", failed = true)

@@ -219,5 +219,36 @@ proc runTests*() =
         check fpGroupRead notin fixedPerms
         check fpOthersRead notin fixedPerms
 
+proc runPersonTests*() =
+  suite "secret vault — one per person (E11.2)":
+    test "a person's secrets: their own file, the instance's key, never the environment":
+      let home = getTempDir() / "donkey_person_vault"
+      removeDir(home)
+      let ana = newPersonVault(home, "8f1c2a3e-0000-4000-8000-000000000001").get
+      let bob = newPersonVault(home, "8f1c2a3e-0000-4000-8000-000000000002").get
+      check ana.setSecret("GITHUB_TOKEN", "ghp_ana").isOk
+      check ana.getSecret("GITHUB_TOKEN").get == "ghp_ana"
+      check bob.getSecret("GITHUB_TOKEN").get == ""          ## none: not an error
+      check ana.path.startsWith(home / ".secrets" / "people")
+      check ana.keyPath == home / ".secret_key"
+      check "ghp_ana" notin readFile(ana.path)
+      check getEnv("GITHUB_TOKEN") != "ghp_ana"
+      check ana.removeSecret("GITHUB_TOKEN").get
+      check ana.getSecret("GITHUB_TOKEN").get == ""
+
+    test "ids that differ only by : and _ get different files":
+      let home = getTempDir() / "donkey_person_vault_ids"
+      removeDir(home)
+      let colon = newPersonVault(home, "local:cli").get
+      let under = newPersonVault(home, "local_cli").get
+      check colon.path != under.path
+      check colon.setSecret("GITHUB_TOKEN", "a").isOk
+      check under.getSecret("GITHUB_TOKEN").get == ""
+
+    test "a person id that is not a plain id is refused":
+      check newPersonVault(getTempDir(), "../etc").isErr
+      check newPersonVault(getTempDir(), "").isErr
+
 when isMainModule:
   runTests()
+  runPersonTests()

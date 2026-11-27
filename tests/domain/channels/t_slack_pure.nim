@@ -440,6 +440,15 @@ proc runUploadTests*() =
                         "channel_id": "D123", "initial_comment": "segue"}
       check not completeUploadBody("F1", "a.pdf", "D123", "").hasKey("initial_comment")
 
+proc runDirectTests*() =
+  suite "slack — a direct conversation":
+    test "a DM's channel id starts with D; channels and groups do not":
+      check slackChannelIsDirect("D024BE91L")
+      check not slackChannelIsDirect("C024BE91L")
+      check not slackChannelIsDirect("G024BE91L")
+      check not slackChannelIsDirect("")
+
 when isMainModule:
   runTests()
   runUploadTests()
+  runDirectTests()

@@ -116,10 +116,11 @@ proc telegramCommandEnv(memory: MdFileAdapter;
                         toolsCount = 0; toolClientsCount = 0;
                         daemonStartMs = 0'i64;
                         skillRegistry = "";
-                        editor: CommandArgFn = nil): CommandEnv =
+                        editor: CommandArgFn = nil;
+                        github: GithubCommandFn = nil): CommandEnv =
   CommandEnv(services: newCommandServices(memory, completeBuilder, modelCatalogLoader,
                                           toolsCount, toolClientsCount, daemonStartMs,
-                                          skillRegistry, editor))
+                                          skillRegistry, editor, github))
 
 proc telegramCommandRequest(msg: InboundMessage; command: CommandDecision;
                             tgAdapter: TelegramAdapter;
@@ -138,7 +139,8 @@ proc telegramCommandRequest(msg: InboundMessage; command: CommandDecision;
       if msg.rawChannelId.len > 0: msg.rawChannelId
       else: tgAdapter.resolver.reverseChannel(msg.userId, ckTelegram),
     links: tgAdapter.resolver.identityLinkPort(),
-    sessionMode: smCreate, ensureSession: ensure, interactiveUi: true)
+    sessionMode: smCreate, ensureSession: ensure, interactiveUi: true,
+    privateChat: not msg.isGroup)
 
 func decorateTelegramStatus*(text: string): string =
   text
@@ -612,7 +614,8 @@ proc handleTelegramCommand*(sm: var SessionManager;
                             logger: Logger;
                             ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil;
                             skillRegistry = "";
-                            editor: CommandArgFn = nil): bool =
+                            editor: CommandArgFn = nil;
+                            github: GithubCommandFn = nil): bool =
   ## Every Telegram command goes through the shared dispatcher. Telegram only
   ## presents: the menu as a keyboard, a refreshed config keyboard after
   ## /reasoning, markdown and progress texts, and the group refusal for
@@ -636,7 +639,7 @@ proc handleTelegramCommand*(sm: var SessionManager;
     return true
   let env = telegramCommandEnv(memory, completeBuilder, modelCatalogLoader,
                                toolsCount, toolClientsCount, daemonStartMs,
-                               skillRegistry, editor)
+                               skillRegistry, editor, github)
   let outcome = dispatchCommand(env, sm, msgSeq,
     telegramCommandRequest(msg, command, tgAdapter, ensureTaskSession))
   if command.route == crLocal and action == lcaReasoningToggle and
@@ -720,7 +723,8 @@ proc handleTelegramMessage*(msg: InboundMessage;
                             logger: Logger;
                             ensureTaskSession: proc(msg: InboundMessage; taskKind: TaskKind; payload: string) {.gcsafe.} = nil;
                             skillRegistry = "";
-                            editor: CommandArgFn = nil): bool =
+                            editor: CommandArgFn = nil;
+                            github: GithubCommandFn = nil): bool =
   ## Behavior derived from hermes-agent (MIT) fix 1e18e0503f; see
   ## docs/hermes-mining/telegram/CASES.md#tg-015
   ##
@@ -790,4 +794,4 @@ proc handleTelegramMessage*(msg: InboundMessage;
   handleTelegramCommand(sm, msg, command, tgAdapter, presentationState, memory,
                         completeBuilder, modelCatalogLoader, toolsCount,
                         toolClientsCount, msgSeq, daemonStartMs, logger,
-                        ensureTaskSession, skillRegistry, editor)
+                        ensureTaskSession, skillRegistry, editor, github)
