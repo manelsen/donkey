@@ -199,9 +199,17 @@ func mattermostWorkerSpec*(binary: string): ChannelProcessSpec =
   ChannelProcessSpec(name: "mattermost", channel: ckMattermost, command: binary,
                      args: @["channel-worker", "mattermost"])
 
-proc startMattermostProcess*(binary: string; logger: Logger): Result[void, string] =
+proc startMattermostProcess*(binary, serverUrl, token: string;
+                             logger: Logger): Result[void, string] =
   ## The socket in a child (`donkey channel-worker mattermost`), restarted by
   ## the supervisor when it ends: a Defect there does not stop the daemon.
+  ## The settings are checked here, as the thread does: a child that could
+  ## only fail would be restarted in a loop.
+  discard ? websocketUrl(serverUrl)
+  if token.strip.len == 0:
+    return err("MATTERMOST_TOKEN is empty")
+  if gMattermostProcess.running:
+    return err("the Mattermost process is already started")
   gMattermostProcess = ? startChannelProcess(mattermostWorkerSpec(binary),
     mattermostProcessSink, mattermostProcessSource, logger)
   ok()

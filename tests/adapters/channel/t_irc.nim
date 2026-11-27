@@ -136,6 +136,13 @@ proc runTests*() =
       ircWorkerOut("PRIVMSG bia :tudo")
       check tryTakeOutLine() == (true, "PRIVMSG bia :tudo")
 
+    test "IRC as a process: the settings are checked before a child is started":
+      let log = newLogger("t", lvlError)
+      check startIrcProcess("/bin/sleep", IrcSettings(host: "irc.example", nick: ""), log).isErr
+      check startIrcProcess("/bin/sleep", IrcSettings(host: "irc.example", nick: "d"), log).isOk
+      check startIrcProcess("/bin/sleep", IrcSettings(host: "irc.example", nick: "d"), log).isErr
+      stopIrc()
+
     test "IRC as a process: the command is this binary's channel-worker":
       check ircWorkerSpec("/usr/bin/donkey").args == @["channel-worker", "irc"]
       check ircWorkerSpec("/usr/bin/donkey").channel == ckIrc

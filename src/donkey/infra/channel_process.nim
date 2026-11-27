@@ -176,6 +176,10 @@ proc startChannelProcess*(spec: ChannelProcessSpec; sink: EventSink; source: Out
     deallocShared(control)
     err(spec.name & ": cannot start its thread: " & e.msg)
 
+func running*(p: ChannelProcess): bool =
+  ## Started and not stopped: a second start would leave this child orphaned.
+  p.control != nil
+
 proc stop*(p: var ChannelProcess) =
   ## Ends the child and joins the thread. Safe twice, and when never started.
   if p.control == nil: return
