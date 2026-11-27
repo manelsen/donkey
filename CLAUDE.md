@@ -4,13 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## O que é o Donkey
 
-**Donkey** é um sistema de agentes de IA ("Claw") escrito em Nim, self-hosted em VPS, servindo equipes corporativas pequenas. São ~83 mil linhas em 387 módulos Nim, com 397 arquivos de teste, seguindo rigorosamente arquitetura hexagonal e TDD.
+**Donkey** é um sistema de agentes de IA ("Claw") escrito em Nim, self-hosted em VPS, servindo equipes corporativas pequenas. São ~86 mil linhas em 404 módulos Nim, com 419 arquivos de teste, seguindo rigorosamente arquitetura hexagonal e TDD.
 
-**Estado atual (25/11/2026; o planejamento está em [`docs/ROADMAP.md`](docs/ROADMAP.md), o detalhe por épico em [`docs/prd/PRD-roadmap.md`](docs/prd/PRD-roadmap.md)):**
+**Estado atual (26/11/2026; o planejamento está em [`docs/ROADMAP.md`](docs/ROADMAP.md), o detalhe por épico em [`docs/prd/PRD-roadmap.md`](docs/prd/PRD-roadmap.md)):**
 - **Canais (19):** Telegram, Discord, Slack, WhatsApp (Cloud API), Microsoft Teams, Google Chat, Mattermost, WeCom, WeChat, QQ (OneBot e oficial), Feishu, DingTalk, LINE, Matrix, Signal, IRC, SMS (Twilio), Email, CLI; vários bots por canal (Telegram, Discord, WhatsApp, Teams), só a fachada: usuários e memória são os da instância
 - **Providers:** OpenRouter, Anthropic, OpenAI, DeepSeek, Gemini, MiniMax, ZAI, Groq, Ollama, OpenCode Go e Zen, NVIDIA, Alibaba, Fireworks, Mistral, Bedrock, Azure OpenAI; streaming pela rota escolhida
 - **Memória:** MAGMA (grafo em SQLite por padrão; PostgreSQL + pgvector opcional), busca em conversas antigas, Backtrail
-- Orchestrator multi-turn, tool loop, agentes nomeados e salas, sub-agentes, agendamentos (cron, intervalo e disparo único), quadro de tarefas (`manage_tasks`, `/tasks`), onboarding, MCP (stdio e HTTP com OAuth; sampling com aprovação), skills Deno, ferramentas `github` e `git_inspect` (só leitura), métricas e traços por turno (arquivo e OpenTelemetry)
+- **Contexto e custo:** o histórico da sessão só cresce (nada sai do começo; o contexto recuperado fica com a mensagem do turno) e é compactado em degrau passado 40% do contexto de um modelo de 1M tokens ou 60% de um menor; cache de prompt (marcadores para Claude, tokens do cache no uso, nos traços e no `/insights`); raciocínio adaptativo na Anthropic com os blocos de raciocínio devolvidos intactos
+- **Mídia:** anexos entram por Telegram, Discord, WhatsApp, Mattermost, Google Chat, SMS (MMS) e Teams; a ferramenta `send_file` manda um arquivo do paddock onde o adapter sobe arquivo local (`cfSendFile`: Telegram, Mattermost)
+- **Auto-aprimoramento:** skills aprendidas por pessoa (`SKILL.md` com guarda que bloqueia), revisão em segundo plano, curador, `/learn`, `/refine`, `/insights`
+- Orchestrator multi-turn, tool loop, agentes nomeados (provider próprio, estrito por padrão quando local) e salas, sub-agentes, agendamentos (cron, intervalo e disparo único), quadro de tarefas (`manage_tasks`, `/tasks`), onboarding, MCP (stdio e HTTP com OAuth; sampling com aprovação), skills Deno, ferramentas `github` e `git_inspect` (só leitura), métricas e traços por turno (arquivo e OpenTelemetry)
 - Respostas que um canal recusa vão para uma fila de mensagens mortas e são reenviadas (`donkey ctl deliveries`)
 - Retomada de turno após queda (journal em `state/turns/`, sem refazer efeitos); nenhuma chamada de ferramenta segura o laço
 - Gestão pela TUI: usuários, pareamentos, agendamentos, aprovações, traços, agentes da instância e saúde dos providers
@@ -151,21 +154,17 @@ Quirks conhecidos por adapter:
 - **OpenRouterAdapter** — injeta `HTTP-Referer` e `X-Title` em todo request (obrigatório pela plataforma); suporta model catalog live com cache TTL
 - **ZhipuAdapter** — traduz `ToolCall` para formato GLM nativo; declara native tools (`web_search`, `code_interpreter`) em `caps()` para que o orchestrator possa delegar ao provider em vez de usar o ToolPort
 - **GeminiAdapter** — normaliza histórico antes de enviar: function calls devem vir após model turns, nunca após user turns; converte `functionCall`/`functionResponse` (formato Gemini ≠ OpenAI)
-- **AnthropicAdapter** — formato de mensagens próprio (`content` blocks), `tool_use`/`tool_result` blocks distintos do padrão OpenAI
-- **MiniMaxAdapter** — API MiniMax (série abab), formato próprio
+- **AnthropicAdapter** — formato de mensagens próprio (`content` blocks), `tool_use`/`tool_result` blocks distintos do padrão OpenAI; raciocínio adaptativo e blocos de raciocínio (`thinking`, com assinatura) devolvidos intactos; marcadores de cache só na API oficial
+- **MiniMaxAdapter** — API MiniMax (série M2), compatível com OpenAI (`/v1/chat/completions`)
 - **DeepSeekAdapter** — OpenAI-compatible com quirks de reasoning tokens
-- **OllamaAdapter** — instância local; sem streaming nativo, polling de resposta
+- **OllamaAdapter** — instância local; streaming por linhas JSON (`makeStreamFn`); como provider de agente, estrito por padrão (o dado não sai da máquina)
 - **OpenCode Zen e Go** — gateways curados do opencode (descritores `zen` e `opencode-go` em `domain/providers/descriptors.nim`), pela rota compatível com OpenAI (`/zen/v1/chat/completions`).
 
 Sem adapter genérico compartilhado — cada um tem o seu. OpenCode Zen é gateway curado (gratuitos disponíveis, zero markup), não OpenAI-compatible universal.
 
-### Secrets — nimcrypto (pure Nim, zero deps C)
+### Secrets — cofre em AES-256-GCM (`nimcrypto`, pure Nim)
 
-`nimcrypto`: ChaCha20-Poly1305 + PBKDF2-SHA256. Sem `age` externo, sem GPG.
-
-Formato do arquivo: `[salt 32B][nonce 12B][ciphertext][tag 16B]` — binário puro.
-
-`DONKEY_MASTER_KEY` no ambiente (ou prompt interativo na inicialização) → decrypt em memória → `SecretString` (zeroed destructor). Disco nunca vê plaintext. Interface `SecretStore` como port para futuros backends.
+`adapters/secrets/vault.nim`: AES-256-GCM (AEAD) com uma chave de 256 bits em `{home}/.secret_key` (0600), fora de `{home}/.secrets/`; os valores ficam em `{home}/.secrets/secrets.json` (`{"version":1,"secrets":{NOME:"enc2:..."}}`). Sem `age` externo, sem GPG. `donkey ctl secret` grava; o daemon decifra na partida e põe no ambiente só as variáveis que ainda não estão definidas (o shell e o `donkey.env` têm precedência). Protege contra cópia acidental de `.secrets/`; um backup do home inteiro leva a chave junto, e outro processo do mesmo usuário Unix lê a chave.
 
 ### Config
 **TOML** para toda configuração. Sem YAML.
@@ -182,10 +181,10 @@ O ambiente é lido uma vez: `config/environment.readEnvironment` tira um snapsho
 
 | Port | Concept | Adapters |
 |------|---------|----------|
-| `ProviderPort` | `complete(CompletionRequest) → Result[CompletionResponse, string]` + `caps()` | Zhipu, OpenRouter, Anthropic, Gemini, MiniMax |
+| `ProviderPort` | `complete(CompletionRequest) → Result[CompletionResponse, string]` + `caps()` | um adapter por provider, escolhido pela tabela de descritores (`domain/providers/descriptors.nim`): OpenRouter, Anthropic, OpenAI, DeepSeek, Gemini, MiniMax, Zhipu/ZAI, Ollama, Bedrock e a família compatível com OpenAI (`compat_adapter`) |
 | `ToolPort` | `listTools() → Result[seq[ToolSchema], string]` + `invoke(ToolCall) → Result[ToolResult, string]` | `McpClientAdapter` (MCP servers + Deno skills) |
 | `MemoryPort` | `hasProfile`, `loadContext`, `saveUserMd`, `appendMemory`, `savePreferences` | `MdFileAdapter` (sem grafo), `MagmaMemoryAdapter` (MAGMA em SQLite ou PostgreSQL) |
-| `ChannelPort` | `send(OutboundMessage) → Result[void, string]` + `receive() → Result[seq[InboundMessage], string]` + `ack(string)` | `TelegramAdapter` |
+| `ChannelPort` | `send(OutboundMessage) → Result[void, string]` + `receive() → Result[seq[InboundMessage], string]` + `ack(string)` | um adapter por canal em `adapters/channel/`; o daemon fala com eles pelo `OutboundChannelPort` (objeto de closures, `outbound_builder`), e o que cada um sabe fazer está em `ports/channel_capability` |
 | `HttpPort` | `get(url, headers) → Result[HttpResponse, string]` + `post(url, body, headers) → Result[HttpResponse, string]` | `StdHttpAdapter` sobre `deadline_transport` (Chronos + bearssl, prazo por requisição) |
 
 Ports têm dois estilos. Os da tabela acima são `concept` Nim (structural typing verificado em compile-time; adapters não declaram conformidade). Os que a camada `app` recebe em runtime são objetos de closures (`*RuntimePort`, `ReminderPort`, `AccessPort`, `CommandServicesPort`, `LinkCodePort`, …): o adapter monta o objeto (`toRuntimePort`, `newFsAdapter`), e o teste passa um objeto com closures falsas. Um campo de closure não preenchido é `nil`: o port oferece um default que falha fechado (`unavailableFs`, `unavailableProcess`) ou um `orUnavailable`. O `HttpPort` é interno (adapters → HttpPort), não exposto para a camada de aplicação.
@@ -197,13 +196,13 @@ INBOUND ADAPTERS (adapters/channel/)
   TelegramAdapter ─┐
   DiscordAdapter  ─┼→ IdentityResolver → SessionManager
   WeComAdapter    ─┤
-  [13 canais]     ─┘
+  [19 canais]     ─┘
 
 APPLICATION LAYER (app/ — Chronos, effectful)
   SessionManager → OrchestratorAgent (por sessão, AsyncQueue[AgentMessage] como inbox)
     ├── MemoryAgent  → MemoryPort  → MdFileAdapter / MagmaMemoryAdapter (MAGMA)
     ├── ToolAgent    → ToolPort    → McpClientAdapter (MCP/Deno subprocess)
-    └── NativeTools  → ProviderPort → OpenRouterAdapter / ZhipuAdapter / [8 providers]
+    └── NativeTools  → ProviderPort → um adapter por provider (tabela de descritores)
 
 DOMAIN LAYER (domain/ — Nim `func`, zero side effects, 100% testável)
   ├── message.nim       → ChatMessage, CompletionRequest/Response, ToolCall
@@ -284,8 +283,9 @@ O caminho dos paddocks é configurável via `donkey.toml` (`paddocks = "~/.donke
   MEMORY.md           ← índice de memórias
   CONTACTS.md         ← pessoas e relações
   SOLUTIONS.md        ← soluções técnicas indexadas por problema
-  sessions/{id}.md    ← resumo por sessão (gerado ao fechar)
-  attachments/
+  sessions/{id}.jsonl ← transcrição da sessão (JSONL, uma mensagem por linha, só acréscimo)
+  attachments/        ← anexos recebidos e arquivos gerados (send_file manda daqui)
+  learned_skills/     ← skills que o agente aprendeu com a pessoa (SKILL.md por pasta)
   skills/             ← overrides de skills por usuário
   .secrets/
     secrets.toml.age  ← API keys pessoais (nimcrypto)

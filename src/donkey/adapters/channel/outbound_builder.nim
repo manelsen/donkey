@@ -302,7 +302,7 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
     downloadFile: unsupportedDownloadFile,
   )
 
-  # ── WeChat — capability descriptor says: send only ────────────────────────
+  # ── WeChat — capability descriptor says: send, downloadFile ────────────────────────
   result.wechat = OutboundChannelPort(
     send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
       wchAdapter[].send(msg),
@@ -330,7 +330,7 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
     downloadFile: unsupportedDownloadFile,
   )
 
-  # ── Feishu — capability descriptor says: send only ────────────────────────
+  # ── Feishu — capability descriptor says: send, downloadFile ────────────────────────
   result.feishu = OutboundChannelPort(
     send: proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
       fsAdapter[].send(msg),
@@ -402,7 +402,7 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
       mxAdapter[].downloadFile(fileId),
   )
 
-  # ── Teams — capability descriptor says: send only ─────────────────────────
+  # ── Teams — capability descriptor says: send, downloadFile ─────────────────────────
   result.teams = teamsOutboundPort(teamsAdapter, teamsPick)
   result.mattermost = mattermostOutboundPort(mattermostAdapter)
   result.sms = smsOutboundPort(smsAdapter)
