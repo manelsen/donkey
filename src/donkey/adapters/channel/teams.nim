@@ -257,6 +257,10 @@ proc fileToken(a: TeamsAdapter; url, tenant: string): Result[string, string] =
   var jti = ""
   for b in raw: jti.add b.toHex(2).toLowerAscii
   let tenantId = if tenant.len > 0: tenant else: a.tenantId
+  if tenantId.len == 0:
+    ## A client assertion is issued to one tenant's token endpoint; a
+    ## multi-tenant app without one has nowhere to ask.
+    return err("Teams: the file token needs MICROSOFT_APP_TENANT_ID (or the upload's tenant)")
   let input = fileTokenAssertionInput(a.appId, tenantId, a.certX5t, jti, now div 1000)
   let signature = ? rs256Sign(a.certPem, input)
   let assertion = input & "." & encode(signature, safe = true).strip(leading = false, chars = {'='})
