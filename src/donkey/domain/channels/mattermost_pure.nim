@@ -9,7 +9,7 @@
 ## go into the post's thread (`root_id`). Formats from the Mattermost API
 ## reference ("WebSocket", "Create a post").
 
-import std/[algorithm, json, options, strutils]
+import std/[algorithm, json, jsonutils, options, strutils]
 import ../../core/pipeops
 
 const
@@ -226,3 +226,16 @@ proc postsSince*(body, channelType: string; me: MattermostMe;
       channelId: p{"channel_id"}.getStr, rootId: p{"root_id"}.getStr, text: cleaned,
       isGroup: isGroup, mentioned: mentioned, createdMs: created, files: files)
   result.sort(proc(a, b: MattermostPost): int = cmp(a.createdMs, b.createdMs))
+
+# ── Across a process (E12.3) ──────────────────────────────────────────────────
+
+proc postToWire*(p: MattermostPost): string = $toJson(p)
+
+proc postFromWire*(payload: string): Result[MattermostPost, string] =
+  try:
+    let node = parseJson(payload)
+    if node.kind != JObject:
+      return err("mattermost wire: not an object")
+    ok(node.jsonTo(MattermostPost))
+  except CatchableError as e:
+    err("mattermost wire: " & e.msg)

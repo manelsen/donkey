@@ -55,9 +55,11 @@ runs IRC's connection in a child (`donkey channel-worker irc`, started by
 the daemon with its environment): messages and the connection's state cross
 its stdin and stdout, and its log lines appear in the daemon's. When the
 child ends for any reason, a Defect included, the supervisor restarts it
-under the same rules, and the daemon and the other channels go on. Only IRC
-can run this way for now; naming another channel is reported at start and
-ignored.
+under the same rules, and the daemon and the other channels go on.
+`DONKEY_CHANNEL_PROCESSES=irc,mattermost` does the same for Mattermost's
+socket (its replies still go out by REST from the daemon). IRC and
+Mattermost can run this way for now; naming another channel is reported at
+start, and every channel then runs as a thread.
 
 ---
 

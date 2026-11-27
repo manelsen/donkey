@@ -661,8 +661,9 @@ thread), então a árvore tem dois níveis de filho: a tarefa dentro do daemon
   levam mensagens e o estado da conexão pelo stdin e stdout do filho, e o
   log do filho passa para o do daemon. `infra/channel_process` (lado do
   daemon, sob o supervisor) e `infra/channel_worker` (lado do filho) são
-  genéricos; Discord e Mattermost entram quando as filas deles ganharem a
-  codificação, cada um no seu PR.
+  genéricos. *Mattermost feito (27/11):* o socket roda em `donkey
+  channel-worker mattermost`, só a entrada atravessa o pipe (as respostas
+  saem por REST no daemon). Falta o Discord.
 
 *Aceite geral:* um adapter que falha repetidamente não interrompe os outros
 canais nem os turnos em curso; um `Defect` num canal que roda como processo

@@ -42,7 +42,7 @@ proc decodeFrame*(line: string): Result[WireFrame, string] =
       return ok(WireFrame(kind: k, payload: node{"p"}.getStr))
   err("channel wire: unknown frame " & code)
 
-const ProcessCapable* = {ckIrc}
+const ProcessCapable* = {ckIrc, ckMattermost}
   ## The channels that know how to run as their own process.
 
 func processChannels*(value: string): Result[set[ChannelKind], string] =

@@ -32,6 +32,7 @@ proc runTests*() =
       check processChannels("").get == {}
       check processChannels(" irc ").get == {ckIrc}
       check processChannels("IRC,irc").get == {ckIrc}
+      check processChannels("irc, Mattermost").get == {ckIrc, ckMattermost}
       let bad = processChannels("irc, telegram")
       check bad.isErr and "telegram" in bad.error and "irc" in bad.error
 
