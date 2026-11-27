@@ -5,9 +5,9 @@
 > [`docs/prd/PRD-roadmap.md`](prd/PRD-roadmap.md), um épico por frente.
 > Decisões abaixo tomadas pelo mantenedor em 25/11/2026.
 
-## 1. Onde estamos (26/11/2026, `master` em `a9be135f`)
+## 1. Onde estamos (27/11/2026, `master` em `b659f41e`)
 
-- **Código:** 404 módulos e ~86 mil linhas em `src/`, 419 arquivos de teste,
+- **Código:** 423 módulos e ~90 mil linhas em `src/`, 443 arquivos de teste,
   suíte completa verde. Arquitetura hexagonal com as fronteiras verificadas
   por testes de arquitetura.
 - **Cobertura estimada:** ~83% (faixa 80–86%), contra ~91,9% do Hermes e
@@ -16,9 +16,10 @@
   `COBERTURA_HERMES_VS_DONKEY_V*`: ~82,4% depois da segunda rodada, mais o
   auto-aprimoramento (E7), que soma memória de procedimento às ferramentas e
   à memória.
-- **Canais (19):** Telegram, Discord, Slack, WhatsApp (Cloud API), Microsoft
+- **Canais (22):** Telegram, Discord, Slack, WhatsApp (Cloud API), Microsoft
   Teams, Google Chat, Mattermost, WeCom, WeChat, QQ (OneBot e oficial),
-  Feishu, DingTalk, LINE, Matrix, Signal, IRC, SMS (Twilio), Email, CLI;
+  Feishu, DingTalk, LINE, Matrix, Signal, IRC, SMS (Twilio), Email, ntfy,
+  SimpleX, iMessage (BlueBubbles), CLI;
   multi-bot em Telegram, Discord, WhatsApp e Teams.
   Webhooks num receptor compartilhado; gateways de conexão permanente numa
   infraestrutura comum.
@@ -37,11 +38,17 @@
   guardadas por uma guarda que bloqueia antes de gravar; uma revisão em
   segundo plano guarda o que merece, um curador consolida e arquiva, e
   `/learn`, `/refine`, `ctl skill learned` e `ctl insights` completam o ciclo.
-- **Mídia nos canais (E9):** anexos entram por Mattermost, Google Chat, SMS
-  (MMS) e Teams, além dos canais antigos; a ferramenta `send_file` manda um
-  arquivo do paddock onde o adapter sobe arquivo local (Telegram,
-  Mattermost). Falta o Teams completo (arquivos de saída e cartões), em
-  andamento.
+- **Mídia nos canais (E9):** anexos entram em quase todos os canais; a
+  ferramenta `send_file` sobe arquivo do paddock no Telegram, Mattermost,
+  Teams, Discord, Slack e WhatsApp; o Teams é completo (imagens, cartão de
+  consentimento, token de certificado, cartões com botões). O transporte HTTP
+  lê no máximo 64 MiB de uma resposta (25 MB nos canais que baixam anexos).
+- **Editores (E10):** `donkey acp` (Agent Client Protocol) no Zed e afins,
+  pareado pela pessoa como um dispositivo (`/editor <código>`), com
+  streaming, ferramentas, aprovações e leitura de arquivos do projeto.
+- **Escrita no GitHub (E11):** abrir e fechar issues, comentar e rotular com
+  o token de cada pessoa (`/github token`, só em conversa privada), sob uma
+  política por repositório (`allow`, `ask`, `deny`; padrão `ask`).
 - **Auditoria externa (26/11):** os cinco achados corrigidos (gravação
   exclusiva de anexos, `core` sem escrita em disco, heartbeat que não se
   repete, README fiel aos providers, provider estrito por agente).
@@ -148,7 +155,7 @@ tomadas; no E13, o A2A entra, e o Donkey também chama agentes A2A.
 | E10 | Interface para editores (ACP) | **Feito** (#256, #258, #260 e o PR de leitura): `donkey acp` no Zed e afins, pareado pela pessoa, com streaming, ferramentas, aprovações no editor e leitura de arquivos do projeto | Decididas: pareamento; memória compartilhada com os outros canais |
 | E11 | Escrita no GitHub | **Feito** (#262 e o PR de escrita): abrir e fechar issues, comentar, rotular, com o token de cada pessoa (`/github token`, só em conversa privada) e política por repositório (`allow`, `ask`, `deny`; padrão `ask`) | Decididas: política por repositório; token da pessoa |
 | E12 | Supervisão de adapters | À maneira do OTP: árvore de supervisão, `one_for_one`, tipos de filho, intensidade de reinícios e escalada; fontes de `Defect` viram erro como valor; canais de socket como processo filho | Decidida: inspirar-se no OTP |
-| E13 | Canais restantes | ntfy, SimpleX, BlueBubbles (iMessage), A2A (atende e chama) | Decididas: A2A entra, também como cliente |
+| E13 | Canais restantes | **Em andamento:** ntfy (#264), SimpleX (#265) e BlueBubbles/iMessage (#266) feitos; falta o A2A (atende e chama), deixado para depois do E12 | Decididas: A2A entra, também como cliente |
 
 ## 7. Decidido não fazer
 
