@@ -51,6 +51,11 @@ func isApiUserId*(userId: UserId): bool =
   ## callers are not interactive users and must never enter onboarding.
   ($userId).startsWith(ApiUserPrefix)
 
+func answersApiTurn*(msg: OutboundMessage): bool =
+  ## The reply belongs to a waiting HTTP turn: an API user's, or a person's
+  ## turn behind a stream (an editor, E10.2), which carries the turn's token.
+  isApiUserId(msg.userId) or msg.bridgeToken != 0
+
 func isApiChatReply*(msg: OutboundMessage): bool =
   ## True only for replies that belong to the API namespace. Keyed on the
   ## user id alone: `replyTo`/`channelId` are routing hints, not identity.

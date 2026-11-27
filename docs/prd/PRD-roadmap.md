@@ -515,6 +515,16 @@ memória compartilhada.
   pessoa confirma num canal onde já é conhecida (ou o operador, com
   `ctl pair`); depois, o editor guarda uma credencial local e a sessão é da
   pessoa, com a memória dela.
+  *Feito (27/11), lado do daemon:* no modelo do "device flow" do OAuth: o
+  editor pede (`/v1/acp/pair`), mostra o código, a pessoa confirma com
+  `/editor <código>`, o editor recolhe a credencial com um segredo que só ele
+  tem. Nada que venha da rede pode ser adivinhado (por isso não reaproveita o
+  `/continue`, cujo código de 6 caracteres ficaria exposto a tentativa). O
+  turno do editor roda como a pessoa pela mesma rota de streaming da API
+  (`/v1/acp/chat/completions`), não pela IPC local: a IPC só responde
+  pedidos curtos e só existe na máquina do daemon, e o editor costuma estar
+  em outra. `/editor` lista e revoga; `ctl editor list|revoke` para o
+  operador.
 - **E10.3 Streaming e ferramentas.** Pedaços da resposta como
   `session/update`; cada chamada de ferramenta aparece com título e estado.
 - **E10.4 Aprovações.** Os pedidos de aprovação do Donkey (ferramentas

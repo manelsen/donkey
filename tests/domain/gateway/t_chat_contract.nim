@@ -54,6 +54,12 @@ proc runTests*() =
       check not isApiChatReply(OutboundMessage(userId: UserId("x-api:alice")))
       check isApiChatReply(OutboundMessage(userId: UserId("api:alice")))
 
+  suite "answersApiTurn":
+    test "an API user's reply, or any reply carrying a turn token (an editor's, E10.2)":
+      check answersApiTurn(OutboundMessage(userId: UserId("api:alice")))
+      check answersApiTurn(OutboundMessage(userId: UserId("u-ana"), bridgeToken: 7))
+      check not answersApiTurn(OutboundMessage(userId: UserId("u-ana")))
+
   suite "AuthVerdict":
 
     test "authorize is the ingress decision type":

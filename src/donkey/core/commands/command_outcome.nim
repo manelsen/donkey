@@ -22,6 +22,7 @@ type
     rtHelp
     rtMemory
     rtContinue
+    rtEditor        ## /editor (E10.2): the person's editors
     rtNoSession     ## session task requested but the user has no live session
     rtUi            ## text form of a UI command (/models, /think, …)
     rtUnsupported   ## no text form on this channel
@@ -69,7 +70,7 @@ func topicVisibility*(topic: ReplyTopic): ReplyVisibility =
   ## Link codes take over a session; doctor and memory expose private data;
   ## whoami leaks internal user and session ids.
   case topic
-  of rtLinkCode, rtContinue, rtDoctor, rtMemory, rtWhoami: rvRequesterOnly
+  of rtLinkCode, rtContinue, rtDoctor, rtMemory, rtWhoami, rtEditor: rvRequesterOnly
   else: rvPublic
 
 func localActionTopic*(action: LocalCommandAction): ReplyTopic =
@@ -86,6 +87,7 @@ func localActionTopic*(action: LocalCommandAction): ReplyTopic =
   of lcaShowMemory:       rtMemory
   of lcaContinueLink:     rtContinue
   of lcaReasoningToggle:  rtReasoning
+  of lcaEditor:           rtEditor
   of lcaNone:             rtUnsupported
 
 func replied*(topic: ReplyTopic; text: string; failed = false): CommandOutcome =

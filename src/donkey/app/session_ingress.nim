@@ -175,7 +175,9 @@ proc buildSessionIngressContext*(sm: var SessionManager;
                                           answerableAsk = answerableAsk)
   inc msgSeq
   result.msgId = $msg.userId & "-" & $msgSeq
-  if result.plan.decision.shouldRecordChannel:
+  if result.plan.decision.shouldRecordChannel and msg.bridgeToken == 0:
+    ## A turn behind an API stream (an editor's, E10.2) answers there; the
+    ## channel that reminders and scheduled replies use stays the person's.
     sm.recordChannel(msg.userId, msg.channel, msg.channelId, persist = false)
   sm.persistSession(msg.userId)
 

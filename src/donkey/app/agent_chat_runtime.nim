@@ -95,7 +95,8 @@ proc prepareTurn(body: string;
                  dispatch: AgentDispatchFn;
                  authorize: AuthorizeFn;
                  tokenConfigured: bool;
-                 timeoutMs: int): Result[PreparedTurn, AgentChatReply] =
+                 timeoutMs: int;
+                 asUser = UserId("")): Result[PreparedTurn, AgentChatReply] =
   ## Shared preflight for both wire shapes: token, body cap, parser,
   ## availability, authorization and the effective deadline. It never writes
   ## anything, so a failure can still become a plain JSON 4xx/5xx.
@@ -110,7 +111,11 @@ proc prepareTurn(body: string;
   if parsed.isErr:
     return err(AgentChatReply(status: parsed.error.status,
                               body: parsed.error.body))
-  let request = parsed.get()
+  var request = parsed.get()
+  if ($asUser).len > 0:
+    ## An editor's turn (E10.2): the person its credential was paired with,
+    ## whatever the body's `user` says.
+    request.userId = asUser
 
   ## Authorization runs before dispatch: an ingress refusal must never be
   ## reached, and no refusal text may become assistant content.
@@ -332,7 +337,8 @@ proc runAgentStream*(body: string;
                      streamNow: AgentStreamClockFn = nil;
                      streamNap: AgentNapFn = nil;
                      timeoutMs = DefaultAgentTurnTimeoutMs;
-                     model = ""): Future[AgentStreamResult] {.async.} =
+                     model = "";
+                     asUser = UserId("")): Future[AgentStreamResult] {.async.} =
   ## Runs the same turn behind `stream: true` and emits OpenAI
   ## `chat.completion.chunk` events: role, content deltas (one per partial),
   ## tool-call deltas, then a single finish chunk with usage and `[DONE]`.
@@ -342,7 +348,7 @@ proc runAgentStream*(body: string;
   ## SSE error event with no `[DONE]`. The slot is released on every exit,
   ## including a client abort and the deadline.
   let prepared = prepareTurn(body, bridge, dispatch, authorize,
-                             tokenConfigured, timeoutMs)
+                             tokenConfigured, timeoutMs, asUser)
   if prepared.isErr:
     return AgentStreamResult(outcome: asPreflightError, reply: prepared.error)
   let request = prepared.get().request
@@ -371,7 +377,7 @@ proc runAgentStream*(body: string;
       dispatch(InboundMessage(
         userId:    request.userId,
         channel:   ckCli,
-        channelId: $request.userId,
+        channelId: (if ($asUser).len > 0: "editor" else: $request.userId),
         text:      request.text,
         bridgeToken: turnToken,
       ))

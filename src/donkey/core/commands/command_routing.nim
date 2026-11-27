@@ -43,6 +43,7 @@ type
     cmdBind
     cmdTts
     cmdPair
+    cmdEditor     ## E10.2: confirm, list or revoke the person's editors
   CommandRoute* = enum
     crNone
     crLocal
@@ -75,6 +76,7 @@ type
     lcaShowMemory
     lcaContinueLink
     lcaReasoningToggle
+    lcaEditor
 
   CallbackKind* = enum
     cbkUnknown
@@ -154,6 +156,7 @@ func primaryCommandName*(kind: CommandKind): string =
   of cmdBind: "/bind"
   of cmdTts: "/tts"
   of cmdPair: "/pair"
+  of cmdEditor: "/editor"
   of cmdNone: ""
 
 func commandAliases*(kind: CommandKind): seq[string] =
@@ -164,7 +167,7 @@ func commandAliases*(kind: CommandKind): seq[string] =
     @[]
 
 func commandAcceptsValue*(kind: CommandKind): bool =
-  kind in {cmdModels, cmdThink, cmdBudget, cmdSkill, cmdContinue, cmdCallback}
+  kind in {cmdModels, cmdThink, cmdBudget, cmdSkill, cmdContinue, cmdCallback, cmdEditor}
 
 func commandAllowsBare*(kind: CommandKind): bool =
   kind != cmdNone and kind notin {cmdContinue, cmdCallback}
@@ -185,7 +188,7 @@ func parseCommandKind*(token: string): CommandKind =
 func decideCommandRoute*(kind: CommandKind): CommandRoute =
   case kind
   of cmdAbout, cmdStart, cmdMenu, cmdWhoami, cmdSkill, cmdForget, cmdDoctor, cmdHelp, cmdMemory,
-     cmdMyCode, cmdContinue, cmdReasoning, cmdPair:
+     cmdMyCode, cmdContinue, cmdReasoning, cmdPair, cmdEditor:
     crLocal
   of cmdDebug, cmdReset, cmdCompact, cmdNew,
      cmdStop, cmdRestart, cmdBind:
@@ -271,6 +274,8 @@ func decideLocalCommandAction*(decision: CommandDecision): LocalCommandAction =
     lcaContinueLink
   of cmdReasoning:
     lcaReasoningToggle
+  of cmdEditor:
+    lcaEditor
   else:
     lcaNone
 func decideCallbackRoute*(kind: CallbackKind): CallbackRoute =

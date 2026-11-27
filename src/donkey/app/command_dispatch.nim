@@ -120,6 +120,11 @@ proc localReply(env: CommandEnv; sm: SessionManager;
     replied(topic, buildWhoamiText(userId, sessionId, req.rawId))
   of lcaReasoningToggle:
     reasoningReply(env, userId)
+  of lcaEditor:
+    if s.editor == nil:
+      replied(topic, "Editores não estão habilitados nesta instância.", failed = true)
+    else:
+      fromResult(topic, s.editor(userId, req.command.value))
   of lcaNone:
     replied(rtUnsupported, UnsupportedCommandText)
 

@@ -78,6 +78,9 @@ func routeGatewayRequest*(req: GatewayRequest): string =
   of "/api/providers": "providers"
   of "/v1/chat/completions": "openai_chat"
   of "/v1/models":     "openai_models"
+  of "/v1/acp/pair":   "acp_pair"
+  of "/v1/acp/pair/poll": "acp_pair_poll"
+  of "/v1/acp/chat/completions": "acp_chat"
   of "/dashboard":     "dashboard"
   else:                "notfound"
 

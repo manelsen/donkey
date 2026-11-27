@@ -19,6 +19,9 @@ wire formats in `domain/gateway/`.
 |---|---|---|---|
 | `/v1/chat/completions` | POST | Bearer + token configured | Run one agent turn |
 | `/v1/models` | GET | Bearer | The configured model, `owned_by: donkey` |
+| `/v1/acp/pair` | POST | none | An editor asks to pair (E10.2) |
+| `/v1/acp/pair/poll` | POST | the pairing secret | The editor collects its credential once confirmed |
+| `/v1/acp/chat/completions` | POST | Bearer: the editor's credential | One streamed turn as the paired person |
 | `/api/sessions` | GET | Bearer | Paged session list |
 | `/api/providers` | GET | Bearer | Provider health table |
 | `/api/sessions/{userId}/task` | POST | Bearer | `{"action":"new"}` |
@@ -75,6 +78,33 @@ reaches the normal agent turn with whatever profile/memory already exists.
 Onboarding is skipped, so no profile is created for it.
 
 ---
+
+## Editors (E10.2)
+
+An editor (Zed and others, through `donkey acp`) speaks **as a person**, not
+as an `api:` user: same identity, same session, same memory as on their
+channels. It pairs the device-flow way, so nothing reachable from the
+network can be guessed:
+
+1. The editor calls `POST /v1/acp/pair` with `{"name":"Zed"}` and gets
+   `{"code","pairing","expiresIn","confirmWith"}`. It shows the six-character
+   code and keeps `pairing`, a long secret.
+2. The person sends `/editor <code>` on a channel where Donkey already knows
+   them. Codes live ten minutes; at most 32 wait at once.
+3. The editor polls `POST /v1/acp/pair/poll` with `{"pairing"}`: `202` while
+   pending, then `200 {"token"}` once, then `404`.
+4. Turns go to `POST /v1/acp/chat/completions` with `Authorization: Bearer
+   <token>` and the body of `/v1/chat/completions` (`stream: true`; the `user`
+   field is ignored). The answer is the same SSE stream.
+
+The daemon keeps only the token's SHA-256 in `state/editors.json` (0600),
+with the person, the editor's name and a public id. The person lists and
+revokes their editors with `/editor` and `/editor revogar <id>`; the operator
+with `donkey ctl editor list|revoke`. A revocation takes effect on the next
+request. A person who is revoked or not allowed by the DM policy is refused
+here too. These routes never take `DONKEY_HTTP_TOKEN`: an editor holds only
+its own credential. An editor's turn does not change the channel the
+person's reminders go to.
 
 ## `POST /v1/chat/completions`
 

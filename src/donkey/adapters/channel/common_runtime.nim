@@ -17,6 +17,7 @@ import ./command_services
 import ./model_catalog_ui
 import ../../core/commands/preference_commands
 import ../../core/pipeops
+import ../../ports/command_services as command_services_port
 
 export command_text, channel_prefs_store, model_catalog_ui, command_services
 export preference_commands.preferencesUnreadableText
@@ -75,11 +76,12 @@ proc newChannelRuntimeEnv*(memory: MdFileAdapter;
                            toolsCount = 0;
                            toolClientsCount = 0;
                            daemonStartMs = 0'i64;
-                           skillRegistry = ""): ChannelRuntimeEnv =
+                           skillRegistry = "";
+                           editor: CommandArgFn = nil): ChannelRuntimeEnv =
   ChannelRuntimeEnv(
     commands: CommandEnv(services: newCommandServices(
       memory, completeBuilder, modelCatalogLoader, toolsCount, toolClientsCount,
-      daemonStartMs, skillRegistry)),
+      daemonStartMs, skillRegistry, editor)),
     memory: memory,
     completeBuilder: completeBuilder,
     modelCatalogLoader: modelCatalogLoader,

@@ -370,6 +370,7 @@ func discordReplyStyle*(reply: CommandReply): (string, int) =
   of rtStatus:      ("📊 Status", 0x57F287)
   of rtWhoami:      ("🆔 Identity", 0x5865F2)
   of rtReasoning:   ("🧠 Reasoning", 0x57F287)
+  of rtEditor:      ("🖥️ Editores", if reply.failed: 0xED4245 else: 0x5865F2)
   of rtHelp, rtSkill, rtUi, rtMenu, rtConfig, rtUnsupported: ("", 0)
 
 func discordReplyRoute*(event: DiscordRawEvent; reply: CommandReply): ReplyRoute =

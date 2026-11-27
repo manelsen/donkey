@@ -55,6 +55,8 @@ proc fakeServices(p: Probe; memoryFails = false): CommandServicesPort =
       ok(),
     toolCounts: proc(): ToolCounts {.gcsafe.} =
       ToolCounts(tools: 3, clients: 1),
+    editor: proc(u: UserId; v: string): Result[string, string] {.gcsafe.} =
+      if v == "BAD": err("nenhum editor espera esse código") else: ok("editor " & $u & " " & v),
   )
 
 proc fakeLinks(p: Probe): IdentityLinkPort =
@@ -92,6 +94,14 @@ proc runTests*() =
         check o.kind == cokReply
         check o.reply.topic == topic
         check o.reply.text.len > 0
+
+    test "/editor <code> confirms an editor for this person (E10.2)":
+      let o = dispatchCommand(env, sm, msgSeq, request(p, cmdEditor, "K7QP2M"))
+      check o.kind == cokReply and o.reply.text == "editor u-1 K7QP2M"
+      let bare = dispatchCommand(env, sm, msgSeq, request(p, cmdEditor))
+      check bare.reply.text == "editor u-1 "                  ## the list
+      let bad = dispatchCommand(env, sm, msgSeq, request(p, cmdEditor, "BAD"))
+      check bad.reply.failed and "nenhum editor" in bad.reply.text
 
     test "/agents asks the port for the tool counts":
       let o = dispatchCommand(env, sm, msgSeq, request(p, cmdAgents))
