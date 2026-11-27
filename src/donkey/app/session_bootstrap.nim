@@ -477,6 +477,8 @@ func sessionReplyTo*(msg: InboundMessage): string =
     msg.channelId   ## the space, and the thread in a room (google_chat_pure.replyTarget)
   of ckNtfy:
     msg.channelId   ## the topic
+  of ckSimplex:
+    msg.channelId   ## the contact id
   else:
     ""
 
