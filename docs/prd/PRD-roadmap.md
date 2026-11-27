@@ -460,8 +460,13 @@ arquivo por SMS, responde com texto.
   com o `x5t` do certificado, escopo `/.default` do host do arquivo,
   conferido contra o OpenSSL num certificado de teste); sem ele, funciona só
   até 1º/3/2027. Os apps de `[[bots]]` ainda não recebem certificado.
-  *Falta:* a parte 4, os cartões de aprovação (`Action.Execute`,
-  `invoke adaptiveCard/action`).
+  *Parte 4, feita:* botões viram um Adaptive Card com `Action.Execute`; o
+  clique (`invoke adaptiveCard/action`) é respondido no webhook com a
+  resposta que o Teams exige e vira a mensagem da pessoa (o dado do botão
+  como texto, pelo mesmo controle de acesso) ou, numa escolha do
+  onboarding, uma tarefa da sessão, como no Slack. Achado ao fazer: antes,
+  uma mensagem com botões falhava no Teams; os pedidos de aprovação nunca
+  chegavam a quem usa o Teams.
 - **E9.5 IRC.** Só links: o protocolo não carrega arquivos (DCC fica fora).
   Na entrada, uma URL de imagem pode ir ao `inspect_image` por decisão do
   agente, como em qualquer canal.

@@ -390,3 +390,38 @@ func fileTokenForm*(appId, scope, assertion: string): string =
     "&grant_type=client_credentials" &
     "&client_assertion_type=" & encodeUrl("urn:ietf:params:oauth:client-assertion-type:jwt-bearer") &
     "&client_assertion=" & encodeUrl(assertion)
+
+
+# ── Cards with buttons (Teams complete, part 4) ───────────────────────────────
+## Buttons (approvals, choices) go as an Adaptive Card with Action.Execute; a
+## click comes back as an `invoke` named `adaptiveCard/action` whose
+## `value.action.data` carries what the button was for. The HTTP response to
+## that invoke must say what Teams shows ("Universal Actions" docs).
+
+const CardActionVerb = "donkey"
+
+proc cardBody*(text: string; keyboard: seq[seq[(string, string)]];
+               replyToId: string): JsonNode =
+  var actions = newJArray()
+  for row in keyboard:
+    for (label, callback) in row:
+      actions.add(%* {"type": "Action.Execute", "title": label, "verb": CardActionVerb,
+                      "data": {"donkey": callback}})
+  result = messageBody("", replyToId)
+  result.delete("text")
+  result["attachments"] = %* [{"contentType": "application/vnd.microsoft.card.adaptive",
+    "content": {"type": "AdaptiveCard", "version": "1.4",
+                "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                "body": [{"type": "TextBlock", "text": text, "wrap": true}],
+                "actions": actions}}]
+
+proc parseCardAction*(name: string; value: JsonNode): Result[string, string] =
+  ## The callback a clicked button carried.
+  if name != "adaptiveCard/action": return err("not a card action")
+  if value.isNil or value.kind != JObject: return err("card action without a value")
+  let callback = value{"action"}{"data"}{"donkey"}.getStr
+  if callback.len == 0: return err("card action without a callback")
+  ok(callback)
+
+proc cardActionResponse*(text: string): string =
+  $(%* {"statusCode": 200, "type": "application/vnd.microsoft.activity.message", "value": text})

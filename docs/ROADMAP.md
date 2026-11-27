@@ -72,7 +72,7 @@ O que cada frente deixou de fora ao ser implementada. Nenhum está agendado.
 
 | Item | Frente | Limite atual |
 |---|---|---|
-| Teams: cartões e certificado dos bots extras | E2 | arquivos entram e saem, com token de certificado (`MICROSOFT_APP_CERT`, exigido a partir de 1º/3/2027); faltam os cartões de aprovação e o certificado dos apps de `[[bots]]` |
+| Teams: certificado dos bots extras e edição | E2 | arquivos entram e saem, com token de certificado (`MICROSOFT_APP_CERT`); cartões com botões (aprovações, onboarding); faltam o certificado dos apps de `[[bots]]` e a edição de mensagens |
 | MCP sampling por HTTP | E5 | só servidores stdio podem pedir sampling |
 | Skill novo de usuário | E5 | as ferramentas aparecem a partir da mensagem seguinte (listagem em segundo plano) |
 | Escrita no GitHub (abrir issue, comentar) | 2ª rodada, frente 2 | fora de propósito: o agente lê texto de terceiros; pede decisão sobre aprovação |
