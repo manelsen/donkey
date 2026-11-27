@@ -147,6 +147,7 @@ type
     ## the person answers (Microsoft: keep the bytes out of the card).
     path, mediaRoot, name: string
     serviceUrl, conversationId: string
+    createdMs: int64
 
   TeamsState = ref object
     token:         AppToken
@@ -275,6 +276,29 @@ proc readPaddockFile(path, mediaRoot: string; limit: int): Result[(string, strin
   opened.closeComponent()
   ok((opened.name, ? data))
 
+const
+  MaxPendingFiles* = 256
+  PendingTtlMs = 86_400_000'i64   ## an offer nobody answered in a day is dropped
+
+func pendingExpired*(createdMs, nowMs: int64): bool =
+  nowMs - createdMs > PendingTtlMs
+
+proc prunePending(a: TeamsAdapter) =
+  ## Expired offers go; past the cap, the oldest go first.
+  let now = a.clock()
+  var keys: seq[string]
+  for k, p in a.state.pending:
+    if pendingExpired(p.createdMs, now): keys.add k
+  for k in keys: a.state.pending.del k
+  while a.state.pending.len >= MaxPendingFiles:
+    var oldest = ""
+    var at = high(int64)
+    for k, p in a.state.pending:
+      if p.createdMs < at:
+        at = p.createdMs
+        oldest = k
+    a.state.pending.del oldest
+
 proc newPendingId(): string =
   var raw: array[12, byte]
   if not urandom(raw): return ""
@@ -315,8 +339,10 @@ proc send*(a: TeamsAdapter; msg: OutboundMessage): Result[void, string] =
   let pending = newPendingId()
   if pending.len == 0:
     return err("Teams: no randomness for a pending file id")
+  a.prunePending()
   a.state.pending[pending] = PendingFile(path: msg.mediaUrl, mediaRoot: msg.mediaRoot,
-    name: name, serviceUrl: target.serviceUrl, conversationId: target.conversationId)
+    name: name, serviceUrl: target.serviceUrl, conversationId: target.conversationId,
+    createdMs: a.clock())
   a.postActivity(target.serviceUrl, target.conversationId, target.activityId,
     fileConsentBody(name, (if msg.text.strip.len > 0: msg.text else: "Arquivo do Donkey"),
                     data.len.int64, pending, target.activityId))
@@ -331,19 +357,36 @@ proc handleFileConsent*(a: TeamsAdapter; act: TeamsActivity): Result[void, strin
   if consent.pending notin a.state.pending:
     return ok()
   let offered = a.state.pending[consent.pending]
+  ## Only the conversation the file was offered in may answer: a personal
+  ## conversation is the person's own, so a leaked id answered elsewhere
+  ## does nothing.
+  if act.conversationId != offered.conversationId:
+    return ok()
   a.state.pending.del consent.pending
   if not consent.accepted:
     return a.postActivity(offered.serviceUrl, offered.conversationId, "",
       messageBody("Tudo bem, não enviei " & offered.name & ".", ""))
+  proc failed(why: string): Result[void, string] =
+    ## The person accepted: tell them it did not go, so they can ask again.
+    discard a.postActivity(offered.serviceUrl, offered.conversationId, "",
+      messageBody("Não consegui enviar " & offered.name & ". Peça de novo, por favor.", ""))
+    err(why)
   if not uploadAllowed(consent.uploadUrl):
-    return err("Teams: upload URL outside SharePoint")
-  let (_, data) = ? readPaddockFile(offered.path, offered.mediaRoot, TeamsMaxFileBytes)
+    return failed("Teams: upload URL outside SharePoint")
+  let file = readPaddockFile(offered.path, offered.mediaRoot, TeamsMaxFileBytes)
+  if file.isErr:
+    return failed("Teams: " & file.error)
+  let data = file.get[1]
   var headers = uploadHeaders(data.len)
-  let token = ? a.fileToken(consent.uploadUrl, consent.tenantId)
-  if token.len > 0: headers.add ("Authorization", "Bearer " & token)
-  let resp = ? a.http.put(consent.uploadUrl, data, headers)
-  if resp.status notin [200, 201]:
-    return err("Teams: upload status " & $resp.status)
+  let token = a.fileToken(consent.uploadUrl, consent.tenantId)
+  if token.isErr:
+    return failed(token.error)
+  if token.get.len > 0: headers.add ("Authorization", "Bearer " & token.get)
+  let sent = a.http.put(consent.uploadUrl, data, headers)
+  if sent.isErr:
+    return failed("Teams: upload: " & sent.error)
+  if sent.get.status notin [200, 201]:
+    return failed("Teams: upload status " & $sent.get.status)
   a.postActivity(offered.serviceUrl, offered.conversationId, "",
     fileInfoBody(consent.contentUrl, (if consent.name.len > 0: consent.name else: offered.name),
                  consent.uniqueId, consent.fileType, ""))
