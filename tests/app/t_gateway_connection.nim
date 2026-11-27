@@ -1,7 +1,7 @@
 ## The gateway's request handler served through a `GatewayConnection` built
 ## on strings: no socket, no server. What the port buys.
 
-import std/[json, os, strutils, unittest]
+import std/[json, options, os, strutils, unittest]
 import chronos
 import donkey/core/pipeops
 import donkey/core/log
@@ -123,8 +123,15 @@ proc post(path, body: string; auth = ""): string =
     (if auth.len > 0: "Authorization: Bearer " & auth & "\r\n" else: "") &
     "Content-Type: application/json\r\nContent-Length: " & $body.len & "\r\n\r\n" & body
 
+var gApprovalInputs {.threadvar.}: seq[(string, string)]
+
+proc fakeApprovalInput(userId: UserId; text: string): Option[string] {.gcsafe, raises: [].} =
+  gApprovalInputs.add(($userId, text))
+  some("✅ Aprovado.")
+
 proc serveEditor(editors: EditorRegistry; request: string): string =
   let ctx = newGatewayContext(statusFn, logFn, authToken = "secret", editors = editors,
+                              approvalInput = fakeApprovalInput,
                               log = newLogger("t_gateway_connection", lvlError)).get()
   let wire = Wire(input: request)
   waitFor serveGatewayConnection(ctx, fakeConnection(wire))
@@ -163,6 +170,23 @@ proc runEditorTests*() =
       check response.startsWith("HTTP/1.1 405")
       check response.count("HTTP/1.1") == 1
       check editors.confirmPairing("AAAAAA", UserId("u")).isErr   ## nothing pending
+
+    test "an approval answered from the editor is decided as its person (E10.4)":
+      let editors = editorRegistry()
+      let started = serveEditor(editors, post("/v1/acp/pair", "{}")).bodyOf
+      check editors.confirmPairing(started["code"].getStr, UserId("u-ana")).isOk
+      let token = serveEditor(editors, post("/v1/acp/pair/poll",
+        $(%* {"pairing": started["pairing"].getStr}))).bodyOf["token"].getStr
+      gApprovalInputs = @[]
+      let answered = serveEditor(editors, post("/v1/acp/approve",
+        """{"callback":"approval:abc:allow"}""", token))
+      check answered.startsWith("HTTP/1.1 200")
+      check gApprovalInputs == @[("u-ana", "approval:abc:allow")]
+      check serveEditor(editors, post("/v1/acp/approve", """{"callback":"/reset"}""", token))
+        .startsWith("HTTP/1.1 400")
+      check serveEditor(editors, post("/v1/acp/approve", """{"callback":"approval:abc:allow"}""", "nope"))
+        .startsWith("HTTP/1.1 401")
+      check gApprovalInputs.len == 1
 
     test "without a registry the editor routes are not there":
       check serve(post("/v1/acp/pair", "{}")).startsWith("HTTP/1.1 404")

@@ -1176,6 +1176,14 @@ proc editorCommandFn(editors: EditorRegistry): CommandArgFn =
   proc(userId: UserId; value: string): Result[string, string] {.gcsafe.} =
     editors.editorCommand(userId, value)
 
+proc editorApprovalInput(userId: UserId; text: string): Option[string] {.gcsafe, raises: [].} =
+  ## An approval answered in the editor (E10.4): the channels' handler.
+  ## effect boundary: callee raises are unannotated
+  try:
+    tryHandleApprovalInput(userId, text)
+  except Exception as e:
+    some("Erro: " & e.msg)
+
 proc apiChatNap(ms: int) {.gcsafe, raises: [].} =
   ## The gateway runs on the daemon loop and its turns wait with `sleepAsync`
   ## (`poll(stepMs = 0)`), so the bridge never naps here. A blocking poll on
@@ -1326,6 +1334,7 @@ proc setupIpcServer(cfg: DonkeyConfig;
                                           authorizeFn = gwAuthorizeFn,
                                           chatBridge = gwChatBridge,
                                           editors = runtime.editors,
+                                          approvalInput = editorApprovalInput,
                                           modelName = cfg.defaultModel,
                                           agentTimeoutMs = resolveAgentTimeoutMs(
                                             cfg.env.get("DONKEY_HTTP_AGENT_TIMEOUT_SEC")))

@@ -13,7 +13,7 @@
 ## Waiting is injected (`now`/`nap`) so tests never sleep and the production
 ## adapter can use the real clock without leaking it into domain code.
 
-import std/[locks, tables]
+import std/[locks, strutils, tables]
 import ../core/pipeops
 import ../core/types
 import ../domain/message
@@ -44,6 +44,8 @@ type
     isPartial*:    bool
     inputTokens*:  int
     outputTokens*: int
+    keyboard*:     seq[seq[(string, string)]]
+      ## An approval request's buttons (E10.4); empty otherwise.
 
   ChatBridgePollStatus* = enum
     cbpEvents    ## drained events; the turn is still open (or non-blocking)
@@ -74,6 +76,14 @@ type
 
 const ChatBridgeBusy* = cbeBusy
   ## The `register` refusal for a user that already has a pending turn.
+
+func asksApproval*(keyboard: seq[seq[(string, string)]]): bool =
+  ## Channel text with approval buttons is the one kind of channel message an
+  ## API stream carries: its reader may be the only one who can answer.
+  for row in keyboard:
+    for (_, callback) in row:
+      if callback.startsWith("approval:"): return true
+  false
 
 func isBusy*(error: ChatBridgeError): bool =
   error.kind == ChatBridgeBusy
@@ -245,6 +255,7 @@ proc deliver*(bridge: ChatBridge; msg: OutboundMessage;
       isPartial:    msg.isPartial,
       inputTokens:  msg.inputTokens,
       outputTokens: msg.outputTokens,
+      keyboard:     msg.keyboard,
     )
     if bridge.pending[key].orphaned:
       # The orphan may still speak, but never into a new turn. Its terminal
@@ -255,7 +266,8 @@ proc deliver*(bridge: ChatBridge; msg: OutboundMessage;
       return false
     if bridge.pending[key].finished:
       return false
-    if msg.replyKind in {rkDebug, rkChannel}:
+    if msg.replyKind == rkDebug or
+       (msg.replyKind == rkChannel and not asksApproval(msg.keyboard)):
       return true
     bridge.pending[key].appendEvent(event)
     true

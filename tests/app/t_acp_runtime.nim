@@ -18,6 +18,7 @@ type Fake = ref object
   turnTokens: seq[string]
   hangTurn: bool
   naps: int
+  approved: seq[(string, string)]   ## (token, callback) sent back
 
 var gF {.threadvar.}: Fake
 
@@ -42,11 +43,15 @@ proc fakeTurn(token, text: string; onLine: LineSink): Future[TurnReply] {.async:
   return TurnReply(status: gF.turnStatus, error: gF.turnError)
 proc fakeNap(ms: int): Future[void] {.async: (raises: [CancelledError]).} =
   inc gF.naps
+proc fakeApprove(token, callback: string): Future[Result[string, string]] {.async: (raises: []).} =
+  gF.approved.add((token, callback))
+  return ok("✅ Aprovado.")
 
 proc fakePorts(f: Fake): AcpPorts =
   gF = f
   AcpPorts(write: fakeWrite, loadToken: fakeLoad, saveToken: fakeSave,
-           pair: fakePair, poll: fakePoll, turn: fakeTurn, nap: fakeNap)
+           pair: fakePair, poll: fakePoll, turn: fakeTurn, nap: fakeNap,
+           approve: fakeApprove)
 
 proc sent(f: Fake): seq[JsonNode] =
   for w in f.written: result.add parseJson(w)
@@ -142,6 +147,34 @@ proc runTests*() =
       rt.feed(Prompt % f.sent[1]["result"]["sessionId"].getStr)
       waitFor rt.idle()
       check "interrompida" in f.written[^2] and "Não consegui falar" notin f.written[^2]
+
+    test "an approval in the stream asks the editor; the choice goes back to the daemon (E10.4)":
+      let f = Fake(token: "tok", turnStatus: 200, turnLines: @[
+        """data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"bash"}}]}}]}""",
+        """data: {"choices":[{"index":0,"delta":{"donkey_approval":{"text":"Aprovar bash?","options":[{"label":"✅ Aprovar","callback":"approval:abc:allow"},{"label":"❌ Negar","callback":"approval:abc:deny"}]}}}]}"""])
+      let rt = started(f)
+      rt.feed(Prompt % f.sent[1]["result"]["sessionId"].getStr)
+      var ask: JsonNode
+      for m in f.sent:
+        if m{"method"}.getStr == "session/request_permission": ask = m
+      check not ask.isNil
+      check ask["params"]["toolCall"]["toolCallId"] == %"c1"
+      rt.feed($(%* {"jsonrpc": "2.0", "id": ask["id"],
+                    "result": {"outcome": {"outcome": "selected", "optionId": "approval:abc:allow"}}}))
+      waitFor rt.idle()
+      check f.approved == @[("tok", "approval:abc:allow")]
+
+    test "an approval the editor cancels is denied":
+      let f = Fake(token: "tok", turnStatus: 200, turnLines: @[
+        """data: {"choices":[{"index":0,"delta":{"donkey_approval":{"text":"Aprovar?","options":[{"label":"✅","callback":"approval:x:allow"},{"label":"❌","callback":"approval:x:deny"}]}}}]}"""])
+      let rt = started(f)
+      rt.feed(Prompt % f.sent[1]["result"]["sessionId"].getStr)
+      var askId: JsonNode
+      for m in f.sent:
+        if m{"method"}.getStr == "session/request_permission": askId = m["id"]
+      rt.feed($(%* {"jsonrpc": "2.0", "id": askId, "result": {"outcome": {"outcome": "cancelled"}}}))
+      waitFor rt.idle()
+      check f.approved == @[("tok", "approval:x:deny")]
 
     test "session/cancel stops the turn and the prompt answers cancelled":
       let f = Fake(token: "tok", turnStatus: 200, hangTurn: true)

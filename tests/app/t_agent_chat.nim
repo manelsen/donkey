@@ -53,6 +53,7 @@ type DispatchMode = enum
   dmTokenEchoFinal        ## the terminal carries the inbound turn token
   dmWrongTokenFinal       ## a terminal from another generation
   dmManyPartials          ## more partial deltas than a stream may send, no terminal
+  dmApprovalThenFinal     ## an approval request (channel text with buttons), then the answer
 
 var fakeBridge {.threadvar.}: ChatBridge
 var dispatched {.threadvar.}: seq[InboundMessage]
@@ -100,6 +101,13 @@ proc fakeDispatch(msg: InboundMessage) {.gcsafe.} =
                                tool = ToolCallNotice(phase: "done"))
     deliverToBridge(msg.userId, finalText, rkFinalAnswer,
                                inputTokens = 11, outputTokens = 7)
+  of dmApprovalThenFinal:
+    discard fakeBridge.deliver(OutboundMessage(userId: msg.userId, replyKind: rkChannel,
+      text: "Aprovação necessária: bash", bridgeToken: msg.bridgeToken,
+      keyboard: @[@[("✅ Aprovar", "approval:abc:allow"), ("❌ Negar", "approval:abc:deny")]]))
+    discard fakeBridge.deliver(OutboundMessage(userId: msg.userId, replyKind: rkChannel,
+      text: "chatter", bridgeToken: msg.bridgeToken))
+    deliverToBridge(msg.userId, finalText, rkFinalAnswer, token = msg.bridgeToken)
   of dmTwoPartialsThenFinal:
     deliverToBridge(msg.userId, "Olá, ", rkFinalAnswer,
                                partial = true, inputTokens = 3, outputTokens = 2)
@@ -532,6 +540,21 @@ proc runTests*() =
       check nodes[^1]["choices"][0]["finish_reason"].getStr() == "length"
 
   suite "runAgentStream SSE":
+
+    test "an approval request reaches the stream as donkey_approval; other chatter does not (E10.4)":
+      resetStream()
+      dispatchMode = dmApprovalThenFinal
+      finalText = "feito"
+      check runStream(bodyFor("alice", "oi")).outcome == asCompleted
+      var approvals: seq[JsonNode]
+      for n in streamNodes():
+        let a = n{"choices"}{0}{"delta"}{"donkey_approval"}
+        if not a.isNil: approvals.add a
+      check approvals.len == 1
+      check approvals[0] == %* {"text": "Aprovação necessária: bash", "options": [
+        {"label": "✅ Aprovar", "callback": "approval:abc:allow"},
+        {"label": "❌ Negar", "callback": "approval:abc:deny"}]}
+      check "chatter" notin sseChunks.join
 
     test "an editor's stream runs as the person it was paired with (E10.2)":
       resetStream()

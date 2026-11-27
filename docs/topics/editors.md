@@ -71,6 +71,9 @@ its next message, and pairs again.
 - **Files attached to the prompt** (the editor's `@file`) arrive in the turn
   as `<file uri="…">…</file>` blocks; a link without contents is named.
   Images and audio are not offered.
+- **Approvals** for tools that need one (`bash`, `edit_file`…) appear in the
+  editor as a permission prompt: allow once, allow always (where offered) or
+  reject. Dismissing the prompt, or cancelling the turn, rejects.
 - **Cancel** in the editor stops the turn; the daemon drops its late answer.
 
 ## Limits
@@ -78,7 +81,5 @@ its next message, and pairs again.
 - One prompt at a time per editor; a second while one runs is refused.
 - Every editor session is your one Donkey conversation: opening two editor
   threads does not split it.
-- Tool approvals still arrive on your channel, not in the editor (planned:
-  `session/request_permission`).
 - The editor's own file reading and terminal (`fs/*`, `terminal/*`) are not
   used: Donkey's tools run on the daemon's side, in its sandbox.

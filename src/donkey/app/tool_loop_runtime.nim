@@ -383,7 +383,9 @@ proc executeToolCallUntimed(globalOutbox: AsyncQueue[OutboundMessage];
   if nativeCtx.beforeEffect != nil and isEffectfulTool(tc.name):
     nativeCtx.beforeEffect(tc.name)
 
-  let nr = await executeNativeTool(tc, nativeCtx, state, history)
+  var turnCtx = nativeCtx
+  turnCtx.bridgeToken = bridgeToken   ## approvals asked inside a native tool
+  let nr = await executeNativeTool(tc, turnCtx, state, history)
   if nr.handled:
     return ToolCallResult(
       text: nr.text,
@@ -426,7 +428,8 @@ proc executeToolCallUntimed(globalOutbox: AsyncQueue[OutboundMessage];
       )
     let decision = await requestAndWait(
       nativeCtx.approval, uid, channel, nativeCtx.outbox, tc.name, summary, log,
-      shouldStop = proc(): bool {.gcsafe, raises: [].} = sessionStopRequested(nativeCtx))
+      shouldStop = proc(): bool {.gcsafe, raises: [].} = sessionStopRequested(nativeCtx),
+      bridgeToken = bridgeToken)
     case decision
     of adApproved:
       discard

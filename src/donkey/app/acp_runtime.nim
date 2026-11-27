@@ -12,7 +12,7 @@
 ## arrives. Every port is injected: the shell (`donkey acp`) wires stdio, the
 ## credential file and the HTTP client; tests pass fakes.
 
-import std/[json, strutils]
+import std/[json, strutils, tables]
 import chronos
 import ../core/pipeops
 import ../domain/acp/acp_pure
@@ -52,6 +52,9 @@ type
       ## Streams the turn's SSE lines to `onLine`; cancelling it closes the
       ## stream, and the daemon drops the turn's late answer.
     nap*: proc(ms: int): Future[void] {.async: (raises: [CancelledError]).}
+    approve*: proc(token, callback: string): Future[Result[string, string]] {.
+                async: (raises: []).}
+      ## The person's answer to an approval, back to the daemon (E10.4).
 
   AcpRuntime* = ref object
     ports: AcpPorts
@@ -60,8 +63,13 @@ type
     sessions: seq[string]
     current: Future[void].Raising([])
     currentSession: string
+    asked: int
+    answers: Table[string, Future[JsonNode].Raising([CancelledError])]
+      ## session/request_permission sent, by request id, waiting for the editor
+    asking: seq[Future[void].Raising([])]
 
   TurnState = ref object
+    token: string
     openTool: string
     finish: string
     tools: int
@@ -113,6 +121,27 @@ proc closeTool(rt: AcpRuntime; st: TurnState; sessionId: string; ok = true) =
     rt.ports.write(toolCallFinished(sessionId, st.openTool, ok))
     st.openTool = ""
 
+proc askPermission(rt: AcpRuntime; token, sessionId, toolCallId, text: string;
+                   options: seq[(string, string)]) {.async: (raises: []).} =
+  ## E10.4: the approval in the editor. The turn waits on the daemon side
+  ## until this answers; cancelled or anything unexpected is a denial.
+  inc rt.asked
+  let id = "perm-" & $rt.asked
+  let answer = Future[JsonNode].Raising([CancelledError]).init("acp.permission")
+  rt.answers[id] = answer
+  rt.ports.write(permissionRequest(%id, sessionId, toolCallId, text, options))
+  var reply: JsonNode = nil
+  try:
+    reply = await answer
+  except CancelledError:
+    reply = nil
+  rt.answers.del(id)
+  let callback = chosenCallback(reply, options)
+  if callback.len == 0: return
+  let sent = await rt.ports.approve(token, callback)
+  if sent.isErr:
+    rt.say(sessionId, "\n\n⚠️ Não consegui entregar sua resposta ao Donkey: " & sent.error)
+
 proc sinkFor(rt: AcpRuntime; st: TurnState; sessionId: string): LineSink =
   result = proc(line: string) {.gcsafe, raises: [].} =
     let event = parseStreamLine(line)
@@ -132,6 +161,9 @@ proc sinkFor(rt: AcpRuntime; st: TurnState; sessionId: string): LineSink =
       rt.ports.write(toolCallStarted(sessionId, st.openTool, event.toolName))
     of sekFinish:
       st.finish = event.finishReason
+    of sekApproval:
+      let toolCallId = if st.openTool.len > 0: st.openTool else: "approval-" & $(rt.asked + 1)
+      rt.asking.add rt.askPermission(st.token, sessionId, toolCallId, event.text, event.options)
     of sekError:
       rt.closeTool(st, sessionId, ok = false)
       rt.ports.write(messageChunk(sessionId, "\n\n⚠️ " & event.text))
@@ -153,7 +185,7 @@ proc refusalText(reply: TurnReply): string =
 
 proc streamTurn(rt: AcpRuntime; token: string; prompt: AcpPrompt): Future[string] {.
     async: (raises: [CancelledError]).} =
-  let st = TurnState()
+  let st = TurnState(token: token)
   var reply: TurnReply
   try:
     reply = await rt.ports.turn(token, prompt.text, rt.sinkFor(st, prompt.sessionId))
@@ -234,9 +266,16 @@ proc handleLine*(rt: AcpRuntime; line: string): Future[void] {.async: (raises: [
        msg.params{"sessionId"}.getStr == rt.currentSession:
       rt.current.cancelSoon()
   of amResponse:
-    discard   ## answers to requests Donkey sends (permissions, E10.4)
+    ## The editor's answer to a session/request_permission (E10.4).
+    let key = msg.id.getStr
+    let waiting = rt.answers.getOrDefault(key)
+    if not waiting.isNil:
+      if not waiting.finished:
+        waiting.complete(if msg.error.isNil: msg.result else: newJNull())
 
 proc idle*(rt: AcpRuntime): Future[void] {.async: (raises: []).} =
   ## Waits for the running prompt, if any (tests, and a clean exit).
   if rt.running:
     await noCancel rt.current
+  for asking in rt.asking:
+    if not asking.finished: await noCancel asking

@@ -71,6 +71,9 @@ proc serve(rt: AcpRuntime) {.async: (raises: []).} =
     except IOError: discard
   await rt.idle()
 
+proc napMs(ms: int): Future[void] {.async: (raises: [CancelledError]).} =
+  await sleepAsync(chronos.milliseconds(ms))
+
 proc runAcp*(env: Environment; args: seq[string]): int =
   let url = acpUrl(env, args)
   let client = newGatewayClient(url)
@@ -88,7 +91,9 @@ proc runAcp*(env: Environment; args: seq[string]): int =
     turn: proc(token, text: string; onLine: LineSink): Future[TurnReply] {.
              async: (raises: [CancelledError]).} =
       return await client.turn(token, text, onLine),
-    nap: proc(ms: int): Future[void] {.async: (raises: [CancelledError]).} =
-      await sleepAsync(chronos.milliseconds(ms)))
+    nap: napMs,
+    approve: proc(token, callback: string): Future[Result[string, string]] {.
+               async: (raises: []).} =
+      return await client.approve(token, callback))
   waitFor serve(newAcpRuntime(ports, AppVersion))
   0

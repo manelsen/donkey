@@ -32,7 +32,7 @@
 ## any `api:<name>`. Per-user authentication is an explicit PRD non-goal and is
 ## pinned by `tests/app/t_http_gateway.nim` so the limitation stays deliberate.
 
-import std/[json, os, strutils, times]
+import std/[json, options, os, strutils, times]
 import chronos
 import chronos/transports/stream
 import ../core/pipeops
@@ -382,6 +382,9 @@ proc readRequestBodyStrict(conn: GatewayConnection; contentLength: int;
 # ── Connection handler ────────────────────────────────────────────────────────
 
 type
+  GatewayApprovalInputFn* = proc(userId: UserId; text: string): Option[string] {.gcsafe, raises: [].}
+    ## The channels' approval handler (`tryHandleApprovalInput`).
+
   GatewayContext* = ref object
     ## Everything a connection needs; built once by `newGatewayContext`.
     statusFn:        GatewayStatusFn
@@ -398,6 +401,8 @@ type
     agentTimeoutMs:  int
     authToken:       string
     editors:         EditorRegistry   ## nil = no editor routes (E10.2)
+    approvalInput:   GatewayApprovalInputFn
+      ## An approval's button pressed in the editor (E10.4); nil = refused.
     log:             Logger
 
 proc handleGatewayConn(ctx: GatewayContext; client: GatewayConnection)
@@ -648,6 +653,32 @@ proc handleGatewayConn(ctx: GatewayContext; client: GatewayConnection)
               await client.sendResponse(httpStatusLine(reply.status), "application/json",
                                         $reply.body & "\n", log)
 
+    of "acp_approve":
+      ## The person answered an approval in the editor (E10.4): the same
+      ## handler as a channel's button, as the person the credential names.
+      let person = ctx.editors.personFor(parseBearerToken(authHeader))
+      if person.isErr:
+        await client.sendResponse("401 Unauthorized", "application/json",
+                                  "{\"error\":\"unknown editor; pair again\"}\n", log)
+      elif req.meth != "POST":
+        await client.sendResponse("405 Method Not Allowed", "application/json", "", log)
+      elif contentLength > MaxEditorRequestBytes:
+        await client.sendResponse("413 Payload Too Large", "application/json",
+                                  "{\"error\":\"body too large\"}\n", log)
+      else:
+        let body = await client.readRequestBody(contentLength, deadline)
+        let callback = parseApproveRequest(body)
+        if callback.isErr:
+          await client.sendResponse("400 Bad Request", "application/json",
+                                    $(%* {"error": callback.error}) & "\n", log)
+        elif ctx.approvalInput.isNil:
+          await client.sendResponse("503 Service Unavailable", "application/json",
+                                    "{\"error\":\"approvals are not available\"}\n", log)
+        else:
+          let reply = ctx.approvalInput(person.get, callback.get)
+          await client.sendResponse("200 OK", "application/json",
+            $(%* {"result": reply.get("")}) & "\n", log)
+
     of "acp_chat":
       ## An editor's turn (E10.2): its credential says who the person is;
       ## the same stream as /v1/chat/completions.
@@ -764,6 +795,7 @@ proc newGatewayContext*(statusFn: GatewayStatusFn;
                         modelName = "";
                         agentTimeoutMs = 0;
                         editors: EditorRegistry = nil;
+                        approvalInput: GatewayApprovalInputFn = nil;
                         log:       Logger = newLogger("http_gateway")
                        ): Result[GatewayContext, string] =
   ## What every connection is served with. The providers are called on the
@@ -785,6 +817,7 @@ proc newGatewayContext*(statusFn: GatewayStatusFn;
       else: resolveAgentTimeoutMs(""),
     authToken: authToken,
     editors: editors,
+    approvalInput: approvalInput,
     log: log))
 
 proc serveGatewayConnection*(ctx: GatewayContext; conn: GatewayConnection)

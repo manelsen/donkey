@@ -544,6 +544,12 @@ memória compartilhada.
   Guia em `docs/topics/editors.md`.
 - **E10.4 Aprovações.** Os pedidos de aprovação do Donkey (ferramentas
   perigosas, sampling) viram `session/request_permission` no editor.
+  *Feito (27/11) para ferramentas:* o pedido leva o token do turno e vai ao
+  stream como `donkey_approval`; o `donkey acp` pergunta ao editor (uma
+  opção por botão: permitir uma vez, sempre, negar) e devolve a escolha por
+  `POST /v1/acp/approve`, ao mesmo tratador dos botões dos canais. Cancelar
+  ou responder algo desconhecido nega. O sampling de MCP segue pedindo no
+  canal.
 - **E10.5 Contexto do editor.** Arquivos anexados ao prompt pelo editor
   entram como anexos do turno; leitura de arquivos pelo editor
   (`fs/read_text_file`) só se o editor oferecer e com aprovação.

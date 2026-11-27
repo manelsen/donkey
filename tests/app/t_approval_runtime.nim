@@ -106,6 +106,28 @@ proc runTests*() =
       check outbox.len == 1
       check statusCalls >= 1
 
+    test "an editor's turn: the request carries the turn's token, to reach its stream (E10.4)":
+      let fake = ApprovalStorePort(
+        create: proc(userId: string; channel: string; toolName, summary: string;
+                     ttlMs: int64): Result[ApprovalRequest, string] {.gcsafe, raises: [].} =
+          ok(ApprovalRequest(id: "abcdefgh", userId: userId, channel: channel,
+                             toolName: toolName, summary: summary,
+                             createdAtMs: 0, expiresAtMs: 60_000, status: apsPending)),
+        status: proc(id: string): Result[ApprovalStatus, string] {.gcsafe, raises: [].} =
+          ok(apsApproved),
+        decide: proc(id, userId: string; approved: bool;
+                     admin: bool): Result[void, string] {.gcsafe, raises: [].} = ok(),
+        listPending: proc(userId: string): Result[seq[ApprovalRequest], string] {.gcsafe, raises: [].} =
+          ok(newSeq[ApprovalRequest]()),
+      )
+      configureApprovalService(fake, @["bash"])
+      defer: resetApprovalService()
+      let outbox = newAsyncQueue[OutboundMessage](4)
+      discard waitFor requestAndWait(currentApprovalService(), UserId("u1"), ckCli, outbox,
+                                     "bash", "ls", approvalLog, bridgeToken = 42)
+      let asked = outbox.getNoWait()
+      check asked.bridgeToken == 42 and asked.keyboard.len > 0
+
     test "requestAndWait aborts before creating when stop is requested":
       var created = 0
       let fake = ApprovalStorePort(

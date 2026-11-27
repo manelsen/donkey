@@ -14,7 +14,8 @@ proc runTests*() =
       check routeGatewayRequest(GatewayRequest(meth: "POST", path: "/v1/acp/pair")) == "acp_pair"
       check routeGatewayRequest(GatewayRequest(meth: "POST", path: "/v1/acp/pair/poll")) == "acp_pair_poll"
       check routeGatewayRequest(GatewayRequest(meth: "POST", path: "/v1/acp/chat/completions")) == "acp_chat"
-      for action in ["acp_pair", "acp_pair_poll", "acp_chat"]:
+      check routeGatewayRequest(GatewayRequest(meth: "POST", path: "/v1/acp/approve")) == "acp_approve"
+      for action in ["acp_pair", "acp_pair_poll", "acp_chat", "acp_approve"]:
         check not isApiRouteAction(action)
         check gatewayAuthVerdict(action, "", "operator-secret") == gavEditor
         check gatewayAuthVerdict(action, "Bearer operator-secret", "operator-secret") == gavEditor
@@ -35,5 +36,15 @@ proc runTests*() =
       check pollReply(epsConfirmed, "tok") == (status: 200, body: %* {"status": "paired", "token": "tok"})
       check pollReply(epsUnknown, "").status == 404
 
+proc runApproveTests*() =
+  suite "editor routes — an approval answered from the editor (E10.4)":
+    test "only an approval's callback is accepted":
+      check parseApproveRequest("""{"callback":"approval:abc:allow"}""").get == "approval:abc:allow"
+      check parseApproveRequest("""{"callback":"approval:abc:always"}""").get == "approval:abc:always"
+      check parseApproveRequest("""{"callback":"/reset"}""").isErr
+      check parseApproveRequest("""{"callback":""}""").isErr
+      check parseApproveRequest("[]").isErr
+
 when isMainModule:
   runTests()
+  runApproveTests()
