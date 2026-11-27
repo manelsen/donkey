@@ -177,6 +177,65 @@ proc runMediaTests*() =
       check teamsDownload("image:https:", @["smba.trafficmanager.net"]).isErr
       check hostOfUrl("") == "" and hostOfUrl("ht") == ""   ## never a crash on short input
 
+proc runOutboundMediaTests*() =
+  suite "teams — files out (Teams complete, parts 1 and 2)":
+    test "a small PNG, JPEG or GIF goes inline as a data URI":
+      check inlineImageMime("grafico.png") == "image/png"
+      check inlineImageMime("foto.JPG") == "image/jpeg"
+      check inlineImageMime("anim.gif") == "image/gif"
+      check inlineImageMime("relatorio.pdf") == ""
+      let body = imageMessageBody("segue", "act-1", "image/png", "grafico.png", "PNGBYTES")
+      check body["text"].getStr == "segue" and body["replyToId"].getStr == "act-1"
+      check body["attachments"][0]["contentType"].getStr == "image/png"
+      check body["attachments"][0]["contentUrl"].getStr == "data:image/png;base64,UE5HQllURVM="
+      check body["attachments"][0]["name"].getStr == "grafico.png"
+
+    test "files go by consent only in a personal conversation":
+      check isPersonalConversation("a:1xyz")
+      check not isPersonalConversation("19:abc@thread.v2")
+      check not isPersonalConversation("19:team@thread.tacv2;messageid=9")
+
+    test "the consent card offers the file by name and size, with its pending id":
+      let body = fileConsentBody("relatorio.pdf", "O relatório do mês", 2048, "p-1", "")
+      let card = body["attachments"][0]
+      check card["contentType"].getStr == "application/vnd.microsoft.teams.card.file.consent"
+      check card["name"].getStr == "relatorio.pdf"
+      check card["content"]["sizeInBytes"].getInt == 2048
+      check card["content"]["description"].getStr == "O relatório do mês"
+      check card["content"]["acceptContext"] == %* {"pending": "p-1"}
+      check card["content"]["declineContext"] == %* {"pending": "p-1"}
+
+    test "the person's answer: accepted with where to upload, or declined":
+      let accepted = %* {"type": "invoke", "name": "fileConsent/invoke", "value": {
+        "type": "fileUpload", "action": "accept", "context": {"pending": "p-1"},
+        "uploadInfo": {"name": "relatorio.pdf", "uploadUrl": "https://contoso-my.sharepoint.com/upload?x=1",
+                       "contentUrl": "https://contoso-my.sharepoint.com/personal/belle/relatorio.pdf",
+                       "uniqueId": "U-1", "fileType": "pdf"}}}
+      let c = parseFileConsent(accepted).get
+      check c.accepted and c.pending == "p-1"
+      check c.uploadUrl == "https://contoso-my.sharepoint.com/upload?x=1"
+      check c.contentUrl.endsWith("/relatorio.pdf") and c.uniqueId == "U-1" and c.fileType == "pdf"
+      let declined = %* {"type": "invoke", "name": "fileConsent/invoke",
+                         "value": {"action": "decline", "context": {"pending": "p-1"}}}
+      check not parseFileConsent(declined).get.accepted
+      check parseFileConsent(%* {"type": "invoke", "name": "adaptiveCard/action"}).isErr
+
+    test "the upload goes only to SharePoint/OneDrive, in one PUT with its range":
+      check uploadAllowed("https://contoso-my.sharepoint.com/upload?x=1")
+      check not uploadAllowed("https://evil.example/upload")
+      check not uploadAllowed("http://contoso-my.sharepoint.com/upload")
+      check uploadHeaders(2048) == @[("Content-Type", "application/octet-stream"),
+                                     ("Content-Range", "bytes 0-2047/2048")]
+
+    test "after the upload, a file card points at it":
+      let body = fileInfoBody("https://contoso-my.sharepoint.com/personal/belle/relatorio.pdf",
+                              "relatorio.pdf", "U-1", "pdf", "")
+      let card = body["attachments"][0]
+      check card["contentType"].getStr == "application/vnd.microsoft.teams.card.file.info"
+      check card["contentUrl"].getStr.endsWith("/relatorio.pdf") and card["name"].getStr == "relatorio.pdf"
+      check card["content"] == %* {"uniqueId": "U-1", "fileType": "pdf"}
+
 when isMainModule:
   runTests()
   runMediaTests()
+  runOutboundMediaTests()

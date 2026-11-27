@@ -3,7 +3,7 @@
 ## text are turns; a redelivered activity is a turn once; a group outside the
 ## allowed chats is dropped; `/continue` links the identity locally.
 
-import std/[os, strutils, unittest]
+import std/[json, os, strutils, unittest]
 import donkey/adapters/channel/teams
 import donkey/adapters/channel/teams_runtime
 import donkey/domain/channels/teams_pure
@@ -218,9 +218,51 @@ proc runMediaTests*() =
 
     test "the registry and the port: attachments in":
       check supports(ckTeams, cfDownloadFile)
-      check not supports(ckTeams, cfSendFile)
+      check supports(ckTeams, cfSendFile)   ## files out since Teams complete
       check teamsOutboundPort(nil).downloadFile("file:x").isErr
+
+proc runConsentTests*() =
+  suite "teams runtime — a file consent answer (Teams complete)":
+    setup:
+      while tryRecvActivity()[0]: discard
+
+    test "the answer reaches the adapter, uploads the file, and is not a turn":
+      let dir = getTempDir() / "donkey_teams_rt_consent"
+      removeDir(dir); createDir(dir / "attachments")
+      writeFile(dir / "attachments" / "relatorio.pdf", "%PDF")
+      var puts = 0
+      var posts: seq[string]
+      var a = newTeamsAdapter(appId = "app-123", appPassword = "pw", tenantId = "tenant-1",
+        identityPath = dir / "ids.tsv", conversationsPath = dir / "conv.json",
+        http = HttpRuntimePort(
+          post: proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+            if url.startsWith("https://login.microsoftonline.com/"):
+              return ok(HttpResponse(status: 200, body: """{"access_token":"t","expires_in":3600}"""))
+            {.cast(gcsafe).}: posts.add body
+            ok(HttpResponse(status: 201)),
+          put: proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+            {.cast(gcsafe).}: inc puts
+            ok(HttpResponse(status: 201))))
+      check a.send(OutboundMessage(channel: ckTeams, replyTo: replyTarget(ServiceUrl, "a:1xyz", "act-1"),
+        mediaUrl: dir / "attachments" / "relatorio.pdf", mediaRoot: dir)).isOk
+      let pending = parseJson(posts[0])["attachments"][0]["content"]["acceptContext"]["pending"].getStr
+      var sm: SessionManager
+      sm.init()
+      var seen: TeamsSeen
+      let s = Sink()
+      var inv = message("inv-1", "", kind = "invoke")
+      inv.name = "fileConsent/invoke"
+      inv.value = $(%* {"action": "accept", "context": {"pending": pending},
+        "uploadInfo": {"name": "relatorio.pdf", "uploadUrl": "https://contoso-my.sharepoint.com/u",
+                       "contentUrl": "https://contoso-my.sharepoint.com/f", "uniqueId": "U", "fileType": "pdf"}})
+      pushActivity(inv)
+      discard drainTeamsEvents(a, sm, seen, fallbackFor(s), replyFor(s), rtLog)
+      check puts == 1 and s.turns.len == 0
+
+    test "Teams is offered send_file":
+      check supports(ckTeams, cfSendFile)
 
 when isMainModule:
   runTests()
   runMediaTests()
+  runConsentTests()

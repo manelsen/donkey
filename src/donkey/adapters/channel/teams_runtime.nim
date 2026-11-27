@@ -37,6 +37,20 @@ proc drainTeamsEvents*(a: var TeamsAdapter;
   var (has, act) = tryRecvActivity()
   while has:
     block next:
+      if act.kind == "invoke" and act.name == "fileConsent/invoke":
+        ## The answer to a file consent card (Teams complete): handled by the
+        ## app that offered the file; not a turn. The pending id is a random
+        ## value only that card carried.
+        let owner =
+          if act.bot.len == 0: addr a
+          elif pickBot != nil: pickBot(act.bot)
+          else: nil
+        if owner.isNil:
+          log.warn("teams: file consent for bot " & act.bot & ", which is not configured")
+        else:
+          owner[].handleFileConsent(act).isOkOr:
+            log.warn("teams: file consent: " & error)
+        break next
       if act.kind != "message" or (act.text.strip.len == 0 and act.attachments.len == 0):
         log.debug("teams: skipped " & act.kind & " activity " & act.id)
         break next

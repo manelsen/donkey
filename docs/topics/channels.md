@@ -18,7 +18,7 @@ This matrix reflects the capability registry (`ports/channel_capability`) the ru
 | [Discord](#discord) | yes | yes | yes | yes | yes | no |
 | [Slack](#slack) | yes | no | yes | no | no | no |
 | WhatsApp | no | no | no | no | yes | no |
-| [Microsoft Teams](#microsoft-teams) | no | no | no | no | yes | no |
+| [Microsoft Teams](#microsoft-teams) | no | no | no | no | yes | yes |
 | [Google Chat](#google-chat) | no | no | no | no | yes | no |
 | [Mattermost](#mattermost) | no | no | no | no | yes | yes |
 | WeChat Work | no | no | no | no | no | no |
@@ -332,7 +332,22 @@ nothing is queued.
   SharePoint. With several apps (`[[bots]]`), an inline image is fetched
   with the default app's token. The app manifest needs `supportsFiles` for
   files in personal chats.
-- Nothing goes out as a file, and no cards or edits yet.
+- Files go out (`send_file`): a PNG, JPEG or GIF up to 1 MB inline, as a
+  data URI in the message; any other file, in a personal chat, offered with
+  a file consent card. The bytes stay in the paddock until the person
+  accepts; then the file is read again (inside the paddock), uploaded in one
+  PUT to their OneDrive (`uploadInfo.uploadUrl`, SharePoint only) and shown
+  with a file info card; declined, they are told. In a group chat or a
+  channel, where Teams does not offer consent cards to bots, the reply says
+  the file is kept in the person's workspace. Pending offers live in memory
+  (a restart forgets them; the person can ask again).
+- **Deadline, 1 March 2027:** Microsoft drops the `tempauth` parameter from
+  file download and upload URLs; from then on they need an access token
+  acquired with a certificate, a federated credential or a managed identity
+  (not the client secret), and the app manifest needs the RSC permission
+  `File.ReadWriteSelected.User` (accepted from 15 January 2027). Until the
+  certificate token exists here, files in and out of Teams stop on that day.
+- No cards (approvals) or edits yet.
 
 ---
 

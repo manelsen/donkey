@@ -448,6 +448,16 @@ arquivo por SMS, responde com texto.
   Framework. *Fica:* mandar arquivo (no Teams pede um cartão de
   consentimento em conversa pessoal) e os Adaptive Cards de aprovação; com
   vários apps, a imagem é buscada com o token do app padrão.
+  *Teams completo, partes 1 e 2 (pedido do mantenedor, 26/11: há demanda):*
+  uma imagem PNG, JPEG ou GIF de até 1 MB vai embutida (data URI); outro
+  arquivo, em conversa pessoal, por cartão de consentimento
+  (`file.consent`), enviado por PUT ao OneDrive da pessoa quando ela aceita
+  (`fileConsent/invoke`) e mostrado num cartão `file.info`; em grupo ou canal,
+  uma nota. A resposta ao `invoke` é HTTP 200 sem corpo, a convenção dos SDKs
+  (a documentação não mostra; conferir num tenant real). *Faltam:* a parte
+  3, o token de arquivos com certificado (a Microsoft exige a partir de
+  1º/3/2027; sem ele, arquivos param no Teams nesse dia) e a parte 4, os
+  cartões de aprovação (`Action.Execute`, `invoke adaptiveCard/action`).
 - **E9.5 IRC.** Só links: o protocolo não carrega arquivos (DCC fica fora).
   Na entrada, uma URL de imagem pode ir ao `inspect_image` por decisão do
   agente, como em qualquer canal.

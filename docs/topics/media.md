@@ -143,9 +143,13 @@ send_file(path, caption)
        no  -> nothing goes out; the agent is told the file's workspace path,
               to tell the person
   -> the adapter reads the file confined to the paddock (confined_read) and
-     uploads it: Telegram (sendDocument / sendPhoto), Mattermost (POST /files)
+     uploads it: Telegram (sendDocument / sendPhoto), Mattermost (POST /files),
+     Teams (an image inline; another file by a consent card in a personal
+     chat, uploaded when accepted)
 ```
 
+- On Teams the tool reports "File sent" when the consent card goes out; the
+  upload happens when the person accepts it.
 - `cfSendFile` is its own capability: `sendMedia` says a channel shows media,
   not that its adapter reads a paddock file. Discord drops `mediaUrl` on send
   and WhatsApp would send the path as a link, so neither is offered the tool
