@@ -127,6 +127,7 @@ import donkey/app/sandbox
 import donkey/app/ipc_server
 import donkey/adapters/http/gateway_server
 import donkey/app/chat_bridge
+import donkey/acp_cli
 import donkey/app/editor_registry
 from donkey/ports/command_services import CommandArgFn
 import donkey/domain/gateway/dashboard_pure
@@ -2407,6 +2408,10 @@ proc main =
 
   if args.len >= 3 and args[0] == SandboxExecCommand:
     quit(runSandboxWorker(newProcessAdapter(), args[1], args[2]))
+
+  # The editor's side (E10.1) needs no config, and stdout is its protocol.
+  if args.len >= 1 and args[0] == "acp":
+    quit(runAcp(readEnvironment(), args[1 .. ^1]))
 
   # setup doesn't need config — handle it early
   if args.len >= 1 and args[0] == "setup":

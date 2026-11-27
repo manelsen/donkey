@@ -527,6 +527,15 @@ memória compartilhada.
   operador.
 - **E10.3 Streaming e ferramentas.** Pedaços da resposta como
   `session/update`; cada chamada de ferramenta aparece com título e estado.
+  *E10.1 e E10.3 feitos (27/11):* `donkey acp [url]` fala ACP v1 por stdio
+  (`initialize`, `session/new`, `session/prompt`, `session/cancel`), pareia
+  no primeiro prompt e transmite o stream do gateway lido aos poucos
+  (cliente HTTP do Chronos): texto em `agent_message_chunk`, ferramentas em
+  `tool_call` / `tool_call_update` (o fim de uma ferramenta é inferido pelo
+  que vem depois, porque o stream só marca o início). Arquivos anexados ao
+  prompt entram como `<file uri>`; imagens e áudio não são oferecidos.
+  Credencial por URL em `~/.config/donkey/acp_credentials.json` (0600).
+  Guia em `docs/topics/editors.md`.
 - **E10.4 Aprovações.** Os pedidos de aprovação do Donkey (ferramentas
   perigosas, sampling) viram `session/request_permission` no editor.
 - **E10.5 Contexto do editor.** Arquivos anexados ao prompt pelo editor
