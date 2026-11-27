@@ -11,6 +11,7 @@ import donkey/ports/gateway_connection
 import donkey/app/http_gateway
 import donkey/app/editor_registry
 import donkey/app/editor_files
+import donkey/app/a2a_server
 import donkey/domain/message
 import donkey/adapters/filesystem/fs_adapter
 import donkey/core/types
@@ -210,6 +211,65 @@ proc runEditorTests*() =
     test "without a registry the editor routes are not there":
       check serve(post("/v1/acp/pair", "{}")).startsWith("HTTP/1.1 404")
 
+proc a2aTurn(person: UserId; text: string): Future[Result[string, string]] {.async.} =
+  return ok($person & " leu: " & text)
+
+proc a2aServer(): A2aServer =
+  newA2aServer(a2aTurn, proc(): string {.gcsafe, raises: [].} = "t-1",
+               proc(): string {.gcsafe, raises: [].} = "2026-11-27T22:00:00Z")
+
+const TestCard = """{"name":"Donkey"}"""
+
+proc serveA2a(editors: EditorRegistry; request: string; enabled = true): string =
+  let ctx = newGatewayContext(statusFn, logFn, authToken = "secret", editors = editors,
+                              a2a = (if enabled: a2aServer() else: nil),
+                              a2aCard = (if enabled: TestCard else: ""),
+                              log = newLogger("t_gateway_connection", lvlError)).get()
+  let wire = Wire(input: request)
+  waitFor serveGatewayConnection(ctx, fakeConnection(wire))
+  wire.output
+
+proc runA2aTests*() =
+  suite "gateway over the connection port — A2A (E13.4)":
+    let send = $(%* {"jsonrpc": "2.0", "id": 1, "method": "SendMessage",
+                     "params": {"message": {"messageId": "m", "role": "ROLE_USER",
+                                            "parts": [{"text": "oi"}]}}})
+
+    test "the agent card is public":
+      let r = serveA2a(editorRegistry(), "GET /.well-known/agent-card.json HTTP/1.1\r\n\r\n")
+      check r.startsWith("HTTP/1.1 200")
+      check r.bodyOf["name"].getStr == "Donkey"
+
+    test "without A2A configured, its routes are not there":
+      let editors = editorRegistry()
+      check serveA2a(editors, "GET /.well-known/agent-card.json HTTP/1.1\r\n\r\n",
+                     enabled = false).startsWith("HTTP/1.1 404")
+      check serveA2a(editors, post("/a2a", send), enabled = false).startsWith("HTTP/1.1 404")
+      check serveA2a(editors, post("/a2a/pair", "{}"), enabled = false).startsWith("HTTP/1.1 404")
+
+    test "an agent pairs like an editor, shown as an agent, then its tasks run as the person":
+      let editors = editorRegistry()
+      let started = serveA2a(editors, post("/a2a/pair", """{"name":"Planner"}"""))
+      check started.startsWith("HTTP/1.1 200")
+      let code = started.bodyOf["code"].getStr
+      let secret = started.bodyOf["pairing"].getStr
+      check editors.confirmPairing(code, UserId("u-ana")).get == "agente Planner"
+      let paired = serveA2a(editors, post("/a2a/pair/poll", $(%* {"pairing": secret})))
+      let token = paired.bodyOf["token"].getStr
+      let r = serveA2a(editors, post("/a2a", send, token))
+      check r.startsWith("HTTP/1.1 200")
+      let task = r.bodyOf["result"]["task"]
+      check task["status"]["state"].getStr == "TASK_STATE_COMPLETED"
+      check task["artifacts"][0]["parts"][0]["text"].getStr == "u-ana leu: oi"
+
+    test "the JSON-RPC endpoint refuses no credential, an unknown one, the operator's, and a GET":
+      let editors = editorRegistry()
+      check serveA2a(editors, post("/a2a", send)).startsWith("HTTP/1.1 401")
+      check serveA2a(editors, post("/a2a", send, "nope")).startsWith("HTTP/1.1 401")
+      check serveA2a(editors, post("/a2a", send, "secret")).startsWith("HTTP/1.1 401")
+      check serveA2a(editors, "GET /a2a HTTP/1.1\r\n\r\n").startsWith("HTTP/1.1 405")
+
 when isMainModule:
   runTests()
   runEditorTests()
+  runA2aTests()

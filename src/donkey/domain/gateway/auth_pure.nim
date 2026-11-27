@@ -69,7 +69,9 @@ func chatRequestAllowed*(origin, contentType, token: string): bool =
 func isPublicGatewayAction*(action: string): bool =
   ## Liveness/readiness probes must not require credentials. Only static text is
   ## exposed here; every data-bearing endpoint stays behind the token.
-  action in ["index", "health", "dashboard"]
+  ## The A2A agent card (E13.4) is public by design: it says how to talk to
+  ## the agent, never anything about the people it serves.
+  action in ["index", "health", "dashboard", "a2a_card"]
 
 type
   GatewayAuthVerdict* = enum
@@ -83,7 +85,10 @@ type
 func isEditorAction*(action: string): bool =
   ## The editor routes never take the operator's token: an editor holds only
   ## its own credential.
-  action in ["acp_pair", "acp_pair_poll", "acp_chat", "acp_approve", "acp_editor_result"]
+  ## A remote A2A agent (E13.4) is paired the same way and holds the same
+  ## kind of credential.
+  action in ["acp_pair", "acp_pair_poll", "acp_chat", "acp_approve", "acp_editor_result",
+             "a2a_rpc", "a2a_pair", "a2a_pair_poll"]
 
 func isApiRouteAction*(action: string): bool =
   ## The `/api/*` data surface. A set of route actions, not a prefix test: the

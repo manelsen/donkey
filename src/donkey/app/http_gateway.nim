@@ -57,6 +57,7 @@ import ./chat_bridge
 import ./agent_chat_runtime
 import ./editor_registry
 import ./editor_files
+import ./a2a_server
 import ../domain/acp/editor_gateway_pure
 import ../domain/acp/editor_pairing_pure
 
@@ -257,8 +258,10 @@ proc runAdmittedAgentTurn*(body: string;
                            now: AgentNowFn;
                            timeoutMs: int;
                            model: string;
-                           nap: AgentNapFn = nil): Future[AgentChatReply]
+                           nap: AgentNapFn = nil;
+                           asUser = UserId("")): Future[AgentChatReply]
                           {.async.} =
+  ## `asUser`: the person a paired A2A agent acts as (E13.4).
   ## Non-streaming `/v1/chat/completions`: reserve one long-lived slot before
   ## the turn can register or dispatch. A refusal never reaches the dispatch
   ## hook and keeps the streaming path's mapping: `429` with a
@@ -300,9 +303,23 @@ proc runAdmittedAgentTurn*(body: string;
       timeoutMs       = timeoutMs,
       model           = model,
       nap             = nap,
+      asUser          = asUser,
     )
   finally:
     releaseLongLived(capacity.llChatTurn)
+
+proc a2aTurnVia*(bridge: ChatBridge; dispatch: GatewayAgentDispatchFn;
+                 authorize: AuthorizeFn; timeoutMs: int; model: string): A2aTurnFn =
+  ## A2A's turns (E13.4) take the agent endpoint's path, admission included,
+  ## as the person the agent was paired with.
+  result = proc(person: UserId; text: string): Future[Result[string, string]] {.async.} =
+    let body = $(%* {"model": model, "user": "a2a",
+                     "messages": [{"role": "user", "content": text}]})
+    let reply = await runAdmittedAgentTurn(body, bridge, dispatch, authorize,
+                                           tokenConfigured = true, now = agentNowSeconds,
+                                           timeoutMs = timeoutMs, model = model,
+                                           asUser = person)
+    return replyText(reply.status, reply.body)
 
 # ── HTTP over the connection port ─────────────────────────────────────────────
 
@@ -404,6 +421,8 @@ type
     editors:         EditorRegistry   ## nil = no editor routes (E10.2)
     approvalInput:   GatewayApprovalInputFn
     editorFiles:     EditorFileRequests  ## E10.5: answers to requests sent to the editor
+    a2a:             A2aServer        ## nil = no A2A routes (E13.4)
+    a2aCard:         string           ## the agent card, JSON
       ## An approval's button pressed in the editor (E10.4); nil = refused.
     log:             Logger
 
@@ -499,6 +518,9 @@ proc handleGatewayConn(ctx: GatewayContext; client: GatewayConnection)
       discard
     if isEditorAction(action) and ctx.editors.isNil:
       action = "notfound"
+    if action.startsWith("a2a_") and
+       (ctx.a2a.isNil or ctx.a2aCard.len == 0 or ctx.editors.isNil):
+      action = "notfound"   ## A2A is off: its routes, the card included, are not there
     if not isPublicGatewayAction(action) and ctx.authToken.len == 0 and
        origin.len > 0 and not isLocalOrigin(origin):
       await client.sendResponse("403 Forbidden", "application/json",
@@ -617,8 +639,32 @@ proc handleGatewayConn(ctx: GatewayContext; client: GatewayConnection)
       else:
         await client.sendResponse("405 Method Not Allowed", "text/plain", "", log)
 
-    of "acp_pair", "acp_pair_poll":
-      ## Pairing an editor (E10.2): no credential yet; the poll is
+    of "a2a_card":
+      ## E13.4: how to talk to this agent; public by design.
+      if req.meth != "GET":
+        await client.sendResponse("405 Method Not Allowed", "application/json", "", log)
+      else:
+        await client.sendResponse("200 OK", "application/json", ctx.a2aCard & "\n", log)
+
+    of "a2a_rpc":
+      ## E13.4: JSON-RPC from a paired agent, run as the person who paired it.
+      let person = ctx.editors.personFor(parseBearerToken(authHeader))
+      if req.meth != "POST":
+        await client.sendResponse("405 Method Not Allowed", "application/json", "", log)
+      elif person.isErr:
+        await client.sendResponse("401 Unauthorized", "application/json",
+                                  "{\"error\":\"unknown agent; pair it first (POST /a2a/pair)\"}\n", log)
+      elif contentLength > MaxEditorRequestBytes:
+        await client.sendResponse("413 Payload Too Large", "application/json",
+                                  "{\"error\":\"body too large\"}\n", log)
+      else:
+        let body = await client.readRequestBody(contentLength, deadline)
+        let reply = await ctx.a2a.handleRpc(person.get, body)
+        await client.sendResponse("200 OK", "application/json", $reply & "\n", log)
+
+    of "acp_pair", "acp_pair_poll", "a2a_pair", "a2a_pair_poll":
+      ## Pairing an editor (E10.2), or a remote A2A agent (E13.4), which
+      ## the person confirms the same way: no credential yet; the poll is
       ## authenticated by the pairing's secret.
       if req.meth != "POST":
         await client.sendResponse("405 Method Not Allowed", "application/json", "", log)
@@ -627,11 +673,15 @@ proc handleGatewayConn(ctx: GatewayContext; client: GatewayConnection)
                                   "{\"error\":\"body too large\"}\n", log)
       else:
         let body = await client.readRequestBody(contentLength, deadline)
-        if action == "acp_pair":
+        if action in ["acp_pair", "a2a_pair"]:
           let name = parsePairRequest(body)
+          ## An agent is shown as one where the person lists what acts as them.
+          let shown =
+            if name.isErr or action == "acp_pair": name
+            else: Result[string, string].ok("agente " & name.get)
           let started =
-            if name.isErr: Result[PairingStarted, string].err(name.error)
-            else: ctx.editors.beginPairing(name.get)
+            if shown.isErr: Result[PairingStarted, string].err(shown.error)
+            else: ctx.editors.beginPairing(shown.get)
           if started.isErr:
             await client.sendResponse("429 Too Many Requests", "application/json",
                                       $(%* {"error": started.error}) & "\n", log)
@@ -829,6 +879,8 @@ proc newGatewayContext*(statusFn: GatewayStatusFn;
                         editors: EditorRegistry = nil;
                         approvalInput: GatewayApprovalInputFn = nil;
                         editorFiles: EditorFileRequests = nil;
+                        a2a: A2aServer = nil;
+                        a2aCard = "";
                         log:       Logger = newLogger("http_gateway")
                        ): Result[GatewayContext, string] =
   ## What every connection is served with. The providers are called on the
@@ -852,6 +904,8 @@ proc newGatewayContext*(statusFn: GatewayStatusFn;
     editors: editors,
     approvalInput: approvalInput,
     editorFiles: editorFiles,
+    a2a: a2a,
+    a2aCard: a2aCard,
     log: log))
 
 proc serveGatewayConnection*(ctx: GatewayContext; conn: GatewayConnection)

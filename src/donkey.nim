@@ -80,6 +80,7 @@ import donkey/adapters/channel/mattermost_socket
 import donkey/adapters/channel/sms
 import donkey/adapters/channel/sms_runtime
 import donkey/domain/channels/channel_wire
+import donkey/domain/a2a/a2a_pure
 import donkey/adapters/channel/irc
 import donkey/adapters/channel/irc_runtime
 import donkey/adapters/channel/ntfy
@@ -1400,6 +1401,13 @@ proc setupIpcServer(cfg: DonkeyConfig;
                 ") requires DONKEY_HTTP_TOKEN and DONKEY_HTTP_ALLOW_INSECURE=1")
     else:
       let gwChatBridge = runtime.apiChatBridge
+      ## E13.4: A2A on when its public URL is set (and valid).
+      var a2aUrl = ""
+      let a2aRaw = cfg.env.get("A2A_PUBLIC_URL").strip()
+      if a2aRaw.len > 0:
+        let checked = publicA2aUrl(a2aRaw)
+        if checked.isErr: log.error(checked.error & " — A2A off")
+        else: a2aUrl = checked.get
       let gatewayStart = startHttpGateway(httpPort, gwStatusFn, gwLogFn, gwEventFn, gwInboundFn,
                                           bindAddr = httpBind, authToken = httpToken,
                                           agentDispatchFn = gwInboundFn,
@@ -1411,6 +1419,7 @@ proc setupIpcServer(cfg: DonkeyConfig;
                                           editors = runtime.editors,
                                           approvalInput = editorApprovalInput,
                                           editorFiles = currentEditorFiles(),
+                                          a2aUrl = a2aUrl,
                                           modelName = cfg.defaultModel,
                                           agentTimeoutMs = resolveAgentTimeoutMs(
                                             cfg.env.get("DONKEY_HTTP_AGENT_TIMEOUT_SEC")))
