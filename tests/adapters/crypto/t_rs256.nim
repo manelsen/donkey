@@ -6,6 +6,7 @@
 import std/[base64, os, strutils, unittest]
 import donkey/core/pipeops
 import donkey/adapters/crypto/rs256
+import ../channel/teams_cert_vectors
 import donkey/adapters/channel/teams_auth
 
 const
@@ -41,5 +42,17 @@ proc runTests*() =
       let escaped = readFile(KeyPath).replace("\n", "\\n")
       check rs256Sign(escaped, "header.payload").get == b64u(ExpectedB64u)
 
+proc runCertTests*() =
+  suite "rs256 — a certificate file (Teams complete, part 3)":
+    test "the key is found in a file that holds the certificate first":
+      check rs256Sign(TestCombinedPem, "x").isOk
+    test "the certificate's SHA-1 thumbprint, base64url, as OpenSSL computes it":
+      check certThumbprint(TestCombinedPem).get == TestCertX5t
+      check certThumbprint(TestKeyPem).isErr   ## no certificate in it
+    test "a file with only a certificate says there is no key":
+      let r = rs256Sign(TestCertPem, "x")
+      check r.isErr and "private key" in r.error
+
 when isMainModule:
   runTests()
+  runCertTests()

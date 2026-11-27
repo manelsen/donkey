@@ -300,6 +300,7 @@ webhook receiver. Bots created since July 2025 are single-tenant.
 | `MICROSOFT_APP_ID` | yes | The bot's App ID: the audience every incoming token must carry. |
 | `MICROSOFT_APP_PASSWORD` | yes | The app's client secret, for the token Donkey sends with. Without both, `/webhook/teams` answers 404. |
 | `MICROSOFT_APP_TENANT_ID` | single-tenant | The tenant the app is registered in; its token endpoint is used. Empty = the old multi-tenant endpoint. |
+| `MICROSOFT_APP_CERT` | for files from 1 March 2027 | Path to a PEM file with the app's certificate and its private key (either order). Upload the certificate to the app registration in Entra (Certificates & secrets). File downloads and uploads then carry a token got with a client assertion signed by that key; the client secret stays for messages. |
 | `TEAMS_SERVICE_HOSTS` | no | Connector hosts besides `smba.trafficmanager.net` that replies may go to (comma-separated, exact). |
 
 ### What is checked
@@ -343,10 +344,14 @@ nothing is queued.
   (a restart forgets them; the person can ask again).
 - **Deadline, 1 March 2027:** Microsoft drops the `tempauth` parameter from
   file download and upload URLs; from then on they need an access token
-  acquired with a certificate, a federated credential or a managed identity
-  (not the client secret), and the app manifest needs the RSC permission
-  `File.ReadWriteSelected.User` (accepted from 15 January 2027). Until the
-  certificate token exists here, files in and out of Teams stop on that day.
+  acquired with a certificate, a federated credential or a managed identity,
+  not the client secret. With `MICROSOFT_APP_CERT` set, every file download
+  and upload already carries such a token (a client assertion, RS256, with
+  the certificate's `x5t`, for the file host's `/.default` scope); without
+  it, files keep working only until that day. The app manifest also needs
+  the RSC permission `File.ReadWriteSelected.User` (Teams accepts it from
+  15 January 2027; publish the updated manifest by 1 March 2027). Apps
+  added with `[[bots]]` do not take a certificate yet.
 - No cards (approvals) or edits yet.
 
 ---

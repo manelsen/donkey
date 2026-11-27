@@ -8,6 +8,7 @@ import donkey/core/types
 import donkey/domain/message
 import donkey/ports/http
 import donkey/adapters/channel/teams
+import ./teams_cert_vectors
 import donkey/adapters/identity/identity_resolver
 import ./teams_jwt_vectors
 
@@ -230,6 +231,7 @@ proc runMediaTests*() =
       check gets[].len == 0 and r.tokenCalls == 0
 
 type Wire = ref object
+  tokenForms: seq[string]
   posts: seq[(string, string)]
   puts: seq[(string, string, seq[HttpHeader])]
   putStatus: int
@@ -238,6 +240,7 @@ proc wireHttp(w: Wire): HttpRuntimePort =
   result.post = proc(url, body: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
     {.cast(gcsafe).}:
       if url.startsWith("https://login.microsoftonline.com/"):
+        if "client_assertion" in body: w.tokenForms.add body
         return ok(HttpResponse(status: 200, body: """{"access_token":"tok","expires_in":3600}"""))
       w.posts.add (url, body)
     ok(HttpResponse(status: 201, body: """{"id":"new"}"""))
@@ -333,6 +336,60 @@ proc runFilesTests*() =
         mediaUrl: "/etc/passwd", mediaRoot: dir)).isOk
       check "/etc/passwd" notin w.posts[^1][1] and "file.consent" notin w.posts[^1][1]
 
+proc runFileTokenTests*() =
+  suite "teams — the file token from a certificate (Teams complete, part 3)":
+    proc certAdapter(w: Wire; gets: ref seq[(string, seq[HttpHeader])]; tag: string): (TeamsAdapter, string) =
+      let dir = tempDir("cert_" & tag)
+      createDir(dir / "attachments")
+      writeFile(dir / "attachments" / "relatorio.pdf", "%PDF")
+      writeFile(dir / "app.pem", TestCombinedPem)
+      var http = wireHttp(w)
+      http.get = proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+        {.cast(gcsafe).}: gets[].add (url, headers)
+        ok(HttpResponse(status: 200, body: "DATA"))
+      (newTeamsAdapter(appId = "app-123", appPassword = "pw", tenantId = "tenant-1",
+                       identityPath = dir / "identities.tsv",
+                       conversationsPath = dir / "teams_conversations.json",
+                       http = http, clock = proc(): int64 {.gcsafe.} = 1_000,
+                       certPath = dir / "app.pem"), dir)
+
+    test "with a certificate, a SharePoint download carries a token got by a client assertion":
+      let w = Wire()
+      let gets = new seq[(string, seq[HttpHeader])]
+      let (a, _) = certAdapter(w, gets, "dl")
+      check a.downloadFile("file:https://contoso.sharepoint.com/x/a.pdf").isOk
+      check headerOf(gets[][0][1], "Authorization") == "Bearer tok"
+      check w.tokenForms.len == 1
+      check "client_assertion=" in w.tokenForms[0] and "client_secret" notin w.tokenForms[0]
+      check "scope=https%3A%2F%2Fcontoso.sharepoint.com%2F.default" in w.tokenForms[0]
+
+    test "with a certificate, the upload carries the token too":
+      let w = Wire()
+      let gets = new seq[(string, seq[HttpHeader])]
+      let (a, dir) = certAdapter(w, gets, "up")
+      check a.send(OutboundMessage(channel: ckTeams, replyTo: replyTarget(ServiceUrl, "a:1xyz", "act-1"),
+        mediaUrl: dir / "attachments" / "relatorio.pdf", mediaRoot: dir)).isOk
+      check a.handleFileConsent(consent(pendingOf(w.posts[0][1]), "accept")).isOk
+      check headerOf(w.puts[0][2], "Authorization") == "Bearer tok"
+
+    test "without a tenant the file token is refused with why, never a broken audience":
+      let dir = tempDir("cert_notenant")
+      writeFile(dir / "app.pem", TestCombinedPem)
+      let a = newTeamsAdapter(appId = "app-123", appPassword = "pw", tenantId = "",
+        identityPath = dir / "identities.tsv", conversationsPath = dir / "c.json",
+        http = wireHttp(Wire()), clock = proc(): int64 {.gcsafe.} = 1_000, certPath = dir / "app.pem")
+      let r = a.downloadFile("file:https://contoso.sharepoint.com/x/a.pdf")
+      check r.isErr and "MICROSOFT_APP_TENANT_ID" in r.error
+
+    test "a certificate file that cannot be read fails the file calls, with why":
+      let dir = tempDir("cert_bad")
+      writeFile(dir / "app.pem", "not a pem")
+      let a = newTeamsAdapter(appId = "app-123", appPassword = "pw", tenantId = "tenant-1",
+        identityPath = dir / "identities.tsv", conversationsPath = dir / "c.json",
+        http = wireHttp(Wire()), clock = proc(): int64 {.gcsafe.} = 1_000, certPath = dir / "app.pem")
+      let r = a.downloadFile("file:https://contoso.sharepoint.com/x/a.pdf")
+      check r.isErr and "MICROSOFT_APP_CERT" in r.error
+
 proc runConsentHardeningTests*() =
   suite "teams — consent hardening (review of #251)":
     let personal = replyTarget(ServiceUrl, "a:1xyz", "act-1")
@@ -367,4 +424,5 @@ when isMainModule:
   runTests()
   runMediaTests()
   runFilesTests()
+  runFileTokenTests()
   runConsentHardeningTests()
