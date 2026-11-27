@@ -1178,10 +1178,9 @@ proc editorCommandFn(editors: EditorRegistry): CommandArgFn =
 
 proc editorApprovalInput(userId: UserId; text: string): Option[string] {.gcsafe, raises: [].} =
   ## An approval answered in the editor (E10.4): the channels' handler.
-  ## effect boundary: callee raises are unannotated
   try:
     tryHandleApprovalInput(userId, text)
-  except Exception as e:
+  except Exception as e:  ## effect boundary: callee raises are unannotated
     some("Erro: " & e.msg)
 
 proc apiChatNap(ms: int) {.gcsafe, raises: [].} =
