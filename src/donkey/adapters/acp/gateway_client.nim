@@ -115,3 +115,14 @@ proc turn*(c: GatewayClient; token, text: string; onLine: LineSink): Future[Turn
   let body = $(%* {"user": "editor", "stream": true,
                    "messages": [{"role": "user", "content": text}]})
   return await c.exchange("/v1/acp/chat/completions", body, token, onLine)
+
+proc approve*(c: GatewayClient; token, callback: string): Future[Result[string, string]] {.
+    async: (raises: []).} =
+  ## The person's answer to an approval asked in the editor (E10.4).
+  let reply = await noCancel c.exchange("/v1/acp/approve", $(%* {"callback": callback}),
+                                        token, nil)
+  if reply.status != 200: return err(reply.failure)
+  try:
+    return ok(parseJson(reply.body){"result"}.getStr)
+  except CatchableError:
+    return ok("")

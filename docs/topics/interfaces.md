@@ -22,6 +22,7 @@ wire formats in `domain/gateway/`.
 | `/v1/acp/pair` | POST | none | An editor asks to pair (E10.2) |
 | `/v1/acp/pair/poll` | POST | the pairing secret | The editor collects its credential once confirmed |
 | `/v1/acp/chat/completions` | POST | Bearer: the editor's credential | One streamed turn as the paired person |
+| `/v1/acp/approve` | POST | Bearer: the editor's credential | The person's answer to an approval asked in the editor |
 | `/api/sessions` | GET | Bearer | Paged session list |
 | `/api/providers` | GET | Bearer | Provider health table |
 | `/api/sessions/{userId}/task` | POST | Bearer | `{"action":"new"}` |
@@ -105,10 +106,16 @@ with `donkey ctl editor list|revoke`. A revocation takes effect on the next
 request. A person who is revoked or not allowed by the DM policy is refused
 here too. These routes never take `DONKEY_HTTP_TOKEN`: an editor holds only
 its own credential. An editor's turn does not change the channel the
-person's reminders go to. Messages outside the stream, such as a tool
-approval request, go to the channel the person last wrote from, where they
-have buttons; approving from the editor itself is planned
-(`session/request_permission`).
+person's reminders go to.
+
+**Approvals (E10.4).** A tool that asks for approval during an editor's turn
+asks in the stream: a chunk whose delta is `donkey_approval` (`text`, and
+`options` with each button's `label` and `callback`; an OpenAI client
+ignores it). The editor answers with `POST /v1/acp/approve`, `{"callback":
+"approval:<id>:allow|deny|always"}` and its credential, decided by the same
+handler as a channel's button, as the paired person; anything that is not an
+approval's callback is a 400. A token-less message of an editor's turn still
+goes to the channel the person last wrote from.
 
 ## `POST /v1/chat/completions`
 

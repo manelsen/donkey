@@ -83,7 +83,7 @@ type
 func isEditorAction*(action: string): bool =
   ## The editor routes never take the operator's token: an editor holds only
   ## its own credential.
-  action in ["acp_pair", "acp_pair_poll", "acp_chat"]
+  action in ["acp_pair", "acp_pair_poll", "acp_chat", "acp_approve"]
 
 func isApiRouteAction*(action: string): bool =
   ## The `/api/*` data surface. A set of route actions, not a prefix test: the

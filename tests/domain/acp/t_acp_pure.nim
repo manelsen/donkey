@@ -90,5 +90,34 @@ proc runTests*() =
       check stopReasonFor("length") == "max_tokens"
       check stopReasonFor("") == "end_turn"
 
+proc runPermissionTests*() =
+  suite "acp — approvals in the editor (E10.4)":
+    test "the stream's donkey_approval becomes an approval event":
+      let e = parseStreamLine("""data: {"choices":[{"index":0,"delta":{"donkey_approval":{"text":"Aprovar bash?","options":[{"label":"✅ Aprovar","callback":"approval:abc:allow"},{"label":"❌ Negar","callback":"approval:abc:deny"}]}}}]}""")
+      check e.kind == sekApproval and e.text == "Aprovar bash?"
+      check e.options == @[("✅ Aprovar", "approval:abc:allow"), ("❌ Negar", "approval:abc:deny")]
+
+    test "session/request_permission: the tool, and one option per button with its kind":
+      let req = parseJson(permissionRequest(%"perm-1", "s1", "c1", "Aprovar bash?",
+        @[("✅ Aprovar", "approval:abc:allow"), ("♾️ Sempre", "approval:abc:always"),
+          ("❌ Negar", "approval:abc:deny")]))
+      check req["method"] == %"session/request_permission" and req["id"] == %"perm-1"
+      check req["params"]["sessionId"] == %"s1"
+      check req["params"]["toolCall"] == %* {"toolCallId": "c1", "title": "Aprovar bash?"}
+      check req["params"]["options"] == %* [
+        {"optionId": "approval:abc:allow", "name": "✅ Aprovar", "kind": "allow_once"},
+        {"optionId": "approval:abc:always", "name": "♾️ Sempre", "kind": "allow_always"},
+        {"optionId": "approval:abc:deny", "name": "❌ Negar", "kind": "reject_once"}]
+
+    test "the editor's answer: the chosen option; cancelled or anything else is a denial":
+      let options = @[("✅", "approval:abc:allow"), ("❌", "approval:abc:deny")]
+      check chosenCallback(%* {"outcome": {"outcome": "selected", "optionId": "approval:abc:allow"}}, options) ==
+        "approval:abc:allow"
+      check chosenCallback(%* {"outcome": {"outcome": "cancelled"}}, options) == "approval:abc:deny"
+      check chosenCallback(%* {"outcome": {"outcome": "selected", "optionId": "approval:zzz:allow"}}, options) ==
+        "approval:abc:deny"   ## not one we offered
+      check chosenCallback(newJNull(), options) == "approval:abc:deny"
+
 when isMainModule:
   runTests()
+  runPermissionTests()

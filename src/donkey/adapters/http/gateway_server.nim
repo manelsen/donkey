@@ -122,6 +122,7 @@ proc startHttpGateway*(port: int;
                        modelName = "";
                        agentTimeoutMs = 0;
                        editors: EditorRegistry = nil;
+                       approvalInput: GatewayApprovalInputFn = nil;
                        log:       Logger = newLogger("http_gateway")
                       ): Result[GatewayServer, string] =
   ## Binds and starts the gateway on the calling thread's Chronos loop; the
@@ -129,7 +130,7 @@ proc startHttpGateway*(port: int;
   let ctx = ?newGatewayContext(
     statusFn, logFn, eventFn, inboundFn, sessionsFn, providersFn,
     sessionActionFn, authToken, agentDispatchFn, authorizeFn, chatBridge,
-    modelName, agentTimeoutMs, editors, log)
+    modelName, agentTimeoutMs, editors, approvalInput, log)
 
   proc onConnection(server: StreamServer; client: StreamTransport)
       {.async: (raises: []).} =

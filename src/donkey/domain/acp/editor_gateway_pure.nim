@@ -5,7 +5,7 @@
 ##   POST /v1/acp/chat/completions (Bearer <editor token>) → the OpenAI stream,
 ##                                 as the person the editor was paired with
 
-import std/json
+import std/[json, strutils]
 import ../../core/pipeops
 import ./editor_pairing_pure
 
@@ -41,3 +41,15 @@ proc pollReply*(state: EditorPairingState; token: string): tuple[status: int, bo
   of epsConfirmed: (status: 200, body: %* {"status": "paired", "token": token})
   of epsUnknown: (status: 404, body: %* {"status": "unknown",
                   "error": "no such pairing, or it expired; pair again"})
+
+proc parseApproveRequest*(body: string): Result[string, string] =
+  ## `POST /v1/acp/approve` (E10.4): the button the person chose in the
+  ## editor, an approval's callback and nothing else (never a command).
+  try:
+    let j = parseJson(body)
+    if j.kind != JObject: return err("expected a JSON object")
+    let callback = j{"callback"}.getStr
+    if not callback.startsWith("approval:"): return err("not an approval's answer")
+    ok(callback)
+  except CatchableError as e:
+    err("invalid JSON: " & e.msg)

@@ -321,7 +321,16 @@ proc react(state: var StreamState; event: ChatBridgeEvent): seq[string] =
         return
       state.plan(result, buildAgentChunk(
         state.chunkId, state.model, state.created, toolCall = event.toolCall))
-  of rkDebug, rkChannel:
+  of rkChannel:
+    if event.keyboard.len > 0:
+      if state.planned >= MaxSseChunksPerTurn:
+        state.finishReason = "length"
+        state.finished = true
+        state.gaveUpForChunks = true
+        return
+      state.plan(result, buildApprovalChunk(
+        state.chunkId, state.model, state.created, event.text, event.keyboard))
+  of rkDebug:
     discard
 
 proc runAgentStream*(body: string;

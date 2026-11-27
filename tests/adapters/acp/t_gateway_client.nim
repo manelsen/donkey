@@ -89,6 +89,16 @@ proc runTests*() =
         check reply.status == 200 and reply.error.len > 0
         check lines.len >= 1
 
+    test "approve: the callback out with the credential, the daemon's answer back (E10.4)":
+      withServer(http("200 OK", """{"result":"✅ Aprovado."}""")) do (base: string):
+        let r = waitFor newGatewayClient(base).approve("tok", "approval:abc:allow")
+        check r.get == "✅ Aprovado."
+        check gRequests[0].startsWith("POST /v1/acp/approve HTTP/1.1")
+        check "Authorization: Bearer tok" in gRequests[0]
+        check gRequests[0].endsWith("""{"callback":"approval:abc:allow"}""")
+      withServer(http("401 Unauthorized", """{"error":"unknown editor"}""")) do (base: string):
+        check (waitFor newGatewayClient(base).approve("bad", "approval:abc:allow")).isErr
+
     test "a refusal keeps its status and body; no server is status 0 with why":
       withServer(http("401 Unauthorized", """{"error":"unknown editor"}""")) do (base: string):
         let reply = waitFor newGatewayClient(base).turn("bad", "x",

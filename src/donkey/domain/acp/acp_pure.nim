@@ -31,13 +31,14 @@ type
     sessionId*, text*: string
 
   StreamEventKind* = enum
-    sekNone, sekText, sekTool, sekFinish, sekDone, sekError
+    sekNone, sekText, sekTool, sekFinish, sekDone, sekError, sekApproval
 
   StreamEvent* = object
     kind*: StreamEventKind
     text*: string
     toolId*, toolName*: string
     finishReason*: string
+    options*: seq[(string, string)]   ## an approval's buttons: (label, callback)
 
 proc parseAcpLine*(line: string): Result[AcpMessage, string] =
   try:
@@ -158,6 +159,12 @@ proc parseStreamLine*(line: string): StreamEvent =
     let choice = j{"choices"}{0}
     if choice.isNil: return StreamEvent(kind: sekNone)
     let delta = choice{"delta"}
+    let approval = delta{"donkey_approval"}
+    if not approval.isNil:
+      var options: seq[(string, string)]
+      for o in approval{"options"}.getElems:
+        options.add((o{"label"}.getStr, o{"callback"}.getStr))
+      return StreamEvent(kind: sekApproval, text: approval{"text"}.getStr, options: options)
     let calls = delta{"tool_calls"}
     if not calls.isNil and calls.len > 0:
       let call = calls[0]
@@ -170,3 +177,34 @@ proc parseStreamLine*(line: string): StreamEvent =
     StreamEvent(kind: sekNone)
   except CatchableError:
     StreamEvent(kind: sekNone)
+
+func permissionKind(callback: string): string =
+  if callback.endsWith(":always"): "allow_always"
+  elif callback.endsWith(":allow"): "allow_once"
+  else: "reject_once"
+
+proc permissionRequest*(id: JsonNode; sessionId, toolCallId, title: string;
+                        options: seq[(string, string)]): string =
+  ## E10.4: Donkey asks the editor (agent → client request); each of the
+  ## approval's buttons is an option, its callback the option's id.
+  var opts = newJArray()
+  for (label, callback) in options:
+    opts.add(%* {"optionId": callback, "name": label, "kind": permissionKind(callback)})
+  rpcRequest(id, "session/request_permission", %* {"sessionId": sessionId,
+    "toolCall": {"toolCallId": toolCallId, "title": title}, "options": opts})
+
+func denial(options: seq[(string, string)]): string =
+  for (_, callback) in options:
+    if permissionKind(callback) == "reject_once": return callback
+  ""
+
+proc chosenCallback*(answer: JsonNode; options: seq[(string, string)]): string =
+  ## The option the person chose. Cancelled, malformed or an option we did
+  ## not offer is a denial: never an approval by accident.
+  if answer.isNil or answer.kind != JObject: return denial(options)
+  let outcome = answer{"outcome"}
+  if outcome.isNil or outcome{"outcome"}.getStr != "selected": return denial(options)
+  let chosen = outcome{"optionId"}.getStr
+  for (_, callback) in options:
+    if callback == chosen: return chosen
+  denial(options)

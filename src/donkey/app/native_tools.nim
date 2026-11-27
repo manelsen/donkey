@@ -127,6 +127,7 @@ type
   NativeCtx* = object
     uid*:          UserId
     channel*:      ChannelKind
+    bridgeToken*:  uint64   ## the turn behind an API stream (an editor's), or 0
     outbox*:       AsyncQueue[OutboundMessage]
     session*:      ptr SessionEntry
     memory*:       MemoryRuntimePort
@@ -1254,7 +1255,8 @@ proc executeNativeTool*(tc:      ToolCallRequest;
     let decision = await requestAndWait(
       ctx.approval, ctx.uid, ctx.channel, ctx.outbox, tc.name,
       summary, ctx.log,
-      shouldStop = proc(): bool {.gcsafe, raises: [].} = sessionStopRequested(ctx))
+      shouldStop = proc(): bool {.gcsafe, raises: [].} = sessionStopRequested(ctx),
+      bridgeToken = ctx.bridgeToken)
     case decision
     of adApproved:
       discard

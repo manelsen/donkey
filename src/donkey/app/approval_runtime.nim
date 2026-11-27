@@ -182,7 +182,8 @@ proc requestAndWait*(service: ApprovalService;
                      outbox: AsyncQueue[OutboundMessage];
                      toolName, summary: string;
                      log: Logger;
-                     shouldStop: proc(): bool {.gcsafe, raises: [].} = nil):
+                     shouldStop: proc(): bool {.gcsafe, raises: [].} = nil;
+                     bridgeToken: uint64 = 0):
                      Future[ApprovalDecision] {.async.} =
   ## Creates a pending request, notifies the user and polls until a decision
   ## or timeout. Only channel adapters and `ctl` can decide; the requester can
@@ -204,6 +205,7 @@ proc requestAndWait*(service: ApprovalService;
     channel: channel,
     text: approvalMessage(request),
     keyboard: approvalKeyboard(request),
+    bridgeToken: bridgeToken,   ## an editor's turn: asked in its stream (E10.4)
   ))
 
   return await awaitDecision(service, request, userId, log, shouldStop)

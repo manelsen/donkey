@@ -79,6 +79,26 @@ func buildAgentChunk*(id, model: string; created: int64;
     root["usage"] = usageJson(inputTokens, outputTokens)
   $root
 
+func buildApprovalChunk*(id, model: string; created: int64; text: string;
+                         keyboard: seq[seq[(string, string)]]): string =
+  ## An approval request in the stream (E10.4): a Donkey extension of the
+  ## delta, `donkey_approval`, with the request's text and its buttons. An
+  ## editor (`donkey acp`) asks the person; an OpenAI client ignores it.
+  var options = newJArray()
+  for row in keyboard:
+    for (label, callback) in row:
+      options.add(%* {"label": label, "callback": callback})
+  var choice = newJObject()
+  choice["index"] = %0
+  choice["delta"] = %* {"donkey_approval": {"text": text, "options": options}}
+  var root = newJObject()
+  root["id"] = %id
+  root["object"] = %"chat.completion.chunk"
+  root["created"] = %created
+  root["model"] = %model
+  root["choices"] = %* [choice]
+  $root
+
 func buildAgentError*(message: string; errorType = "server_error";
                       code = ""): string =
   ## Redacted, OpenAI-shaped error body. The caller owns the HTTP status.
