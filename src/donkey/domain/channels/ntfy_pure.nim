@@ -69,7 +69,9 @@ func ntfyPieces*(text: string): seq[string] =
     var cut = rest.rfind('\n', 0, NtfyMaxMessageBytes - 1)
     if cut <= 0: cut = NtfyMaxMessageBytes
     else: inc cut
-    ## never split a UTF-8 sequence
+    ## never split a UTF-8 sequence; bytes that are not UTF-8 are cut anyway
+    let limit = cut
     while cut > 0 and cut < rest.len and (ord(rest[cut]) and 0xC0) == 0x80: dec cut
+    if cut == 0: cut = limit
     result.add rest[0 ..< cut]
     rest = rest[cut .. ^1]

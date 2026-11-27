@@ -3,6 +3,7 @@
 
 import std/[os, strutils, unittest]
 import donkey/core/pipeops
+import donkey/core/log
 import donkey/core/types
 import donkey/domain/message
 import donkey/ports/http
@@ -56,6 +57,9 @@ proc runTests*() =
       check s.gets == @["https://ntfy.example/ana-donkey/json?poll=1&since=m0"]
       check round.messages == @[NtfyMessage(id: "m1", text: "oi")]
       check round.since == "m2"
+
+    test "the poller is refused a server that is not http(s)":
+      check startNtfy(NtfySettings(url: "ntfy.example", topic: "ana"), newLogger("t", lvlError)).isErr
 
     test "a bad topic is refused at start":
       let s = Sent()

@@ -39,5 +39,12 @@ not json
       for p in pieces: check p.len <= NtfyMaxMessageBytes
       check ntfyPieces("").len == 0
 
+    test "bytes that are not UTF-8 still end in pieces, never in a loop":
+      let junk = newString(NtfyMaxMessageBytes * 2)
+      var bytes = junk
+      for i in 0 ..< bytes.len: bytes[i] = char(0x80)   ## continuation bytes only
+      let pieces = ntfyPieces(bytes)
+      check pieces.len == 2 and pieces[0].len == NtfyMaxMessageBytes
+
 when isMainModule:
   runTests()

@@ -120,6 +120,8 @@ proc runNtfy(args: NtfyArgs) {.thread, nimcall.} =
 proc startNtfy*(settings: NtfySettings; logger: Logger): Result[void, string] =
   if not validNtfyTopic(settings.topic):
     return err("NTFY_TOPIC is required: letters, digits, _ and -, at most 64")
+  if not settings.url.startsWith("https://") and not settings.url.startsWith("http://"):
+    return err("NTFY_URL must be http(s)")
   if gNtfyPoller.control != nil:
     return err("ntfy is already started")
   let control = cast[ptr NtfyControl](allocShared0(sizeof(NtfyControl)))
