@@ -32,6 +32,7 @@ This matrix reflects the capability registry (`ports/channel_capability`) the ru
 | [IRC](#irc) | no | no | no | no | no | no |
 | [SMS (Twilio)](#sms-twilio) | no | no | no | no | yes | no |
 | Email | no | no | no | no | no | no |
+| [ntfy](#ntfy) | no | no | no | no | no | no |
 | CLI | yes | no | no | no | no | no |
 
 Every channel sends text. "Files in" is the port's `downloadFile` (an attachment reaches the turn); "Files out" is `cfSendFile` (the adapter reads a paddock file and uploads it). The table is generated from `ports/channel_capability`, which a test keeps in line with the ports.
@@ -474,6 +475,27 @@ password and every message cross it).
 - The connection answers `PING`, pings a silent server after 2 minutes,
   reconnects after 4 minutes of silence or any drop, with backoff.
 - Text only; CTCP and notices are ignored.
+
+---
+
+## ntfy
+
+[ntfy](https://ntfy.sh) as a channel (E13.1): talk to Donkey from the ntfy
+app or `curl`, and get its answers as notifications, on a topic of yours.
+
+- **Settings:** `NTFY_TOPIC` (letters, digits, `_` and `-`, at most 64)
+  turns it on; `NTFY_URL` is the server (`https://ntfy.sh` by default, or
+  your own); `NTFY_TOKEN` for a protected topic (Bearer).
+- **In:** a thread polls the topic every 3 seconds (`/json?poll=1&since=…`,
+  starting from the last ten seconds) and backs off when the server fails.
+- **Out:** answers are published on the same topic, titled "Donkey", in
+  markdown, tagged `donkey` so the poll never reads them back; in pieces of
+  4 KB. Text only: buttons are dropped (an approval's text says
+  `/approve <id>`), and a file becomes a note.
+- **Who:** ntfy does not say who wrote, so the topic is the identity and the
+  secret: pick a name nobody guesses (or a protected topic on your server),
+  and link it to yourself with `/continue <code>` from another channel, or
+  through pairing.
 
 ---
 

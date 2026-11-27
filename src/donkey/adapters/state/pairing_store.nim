@@ -54,6 +54,7 @@ func parseChannelName(name: string; kind: var ChannelKind): bool =
   of "sms":      kind = ckSms
   of "irc":      kind = ckIrc
   of "google-chat": kind = ckGoogleChat
+  of "ntfy":     kind = ckNtfy
   else: return false
   true
 

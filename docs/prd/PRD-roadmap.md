@@ -658,6 +658,11 @@ relevantes para equipes pequenas.
 - **E13.1 ntfy.** Publicar notificações num tópico (agendamentos, alertas,
   respostas longas) e, opcionalmente, ouvir um tópico de entrada. HTTP
   simples, servidor próprio ou ntfy.sh.
+  *Feito (27/11):* canal completo num tópico (`NTFY_TOPIC`, `NTFY_URL`,
+  `NTFY_TOKEN`): uma thread consulta o tópico a cada 3 s, as respostas saem
+  no mesmo tópico com a tag `donkey` (para não serem lidas de volta), em
+  pedaços de 4 KB; só texto. O tópico é a identidade e o segredo, ligado à
+  pessoa pelo pareamento ou por `/continue`.
 - **E13.2 SimpleX.** Pelo `simplex-chat` em modo servidor (API WebSocket
   local). Sem identificador global de usuário: o pareamento é pelo contato.
 - **E13.3 BlueBubbles (iMessage).** API REST e webhooks de um servidor

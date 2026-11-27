@@ -24,6 +24,7 @@ import teams
 import mattermost
 import sms
 import irc
+import ntfy
 import google_chat
 import cli_repl
 import whatsapp
@@ -215,6 +216,22 @@ proc ircOutboundPort*(a: ptr IrcAdapter): OutboundChannelPort =
     downloadFile: unsupportedDownloadFile,
   )
 
+proc ntfyOutboundPort*(a: ptr NtfyAdapter): OutboundChannelPort =
+  ## Send only (E13.1), or unsupported without an adapter.
+  OutboundChannelPort(
+    send: if a != nil:
+            proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
+              a[].send(msg)
+          else:
+            unsupportedSend,
+    sendReturnId: unsupportedSendReturnId,
+    editMessage: unsupportedEditMessage,
+    sendKeyboard: unsupportedSendKeyboard,
+    editKeyboard: unsupportedEditKeyboard,
+    setMessageReaction: unsupportedSetMessageReaction,
+    downloadFile: unsupportedDownloadFile,
+  )
+
 proc googleChatOutboundPort*(a: ptr GoogleChatAdapter): OutboundChannelPort =
   ## Text out, attachments in (E9.2), or unsupported without an adapter.
   OutboundChannelPort(
@@ -279,6 +296,7 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
                          smsAdapter: ptr SmsAdapter = nil;
                          ircAdapter: ptr IrcAdapter = nil;
                          googleChatAdapter: ptr GoogleChatAdapter = nil;
+                         ntfyAdapter: ptr NtfyAdapter = nil;
                          tgPick: TelegramPick = nil;
                          dcPick: DiscordPick = nil;
                          waPick: WhatsAppPick = nil;
@@ -408,6 +426,7 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
   result.sms = smsOutboundPort(smsAdapter)
   result.irc = ircOutboundPort(ircAdapter)
   result.googleChat = googleChatOutboundPort(googleChatAdapter)
+  result.ntfy = ntfyOutboundPort(ntfyAdapter)
 
   # ── LINE — capability descriptor says: send only ──────────────────────────
   result.line = OutboundChannelPort(

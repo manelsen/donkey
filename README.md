@@ -18,7 +18,7 @@ app_port: 8080
 [![TDD](https://img.shields.io/badge/tests-421%20files%2C%20TDD-brightgreen)](#-development)
 [![Code size](https://img.shields.io/badge/Nim-86k%20lines%20%C2%B7%20404%20modules-informational)](src/)
 
-[![Channels](https://img.shields.io/badge/channels-19-0088cc)](docs/topics/channels.md)
+[![Channels](https://img.shields.io/badge/channels-20-0088cc)](docs/topics/channels.md)
 [![Providers](https://img.shields.io/badge/providers-17-orange)](docs/topics/providers.md)
 [![MCP](https://img.shields.io/badge/MCP-stdio%20%C2%B7%20HTTP%20%C2%B7%20OAuth-black)](#tools-and-what-keeps-them-safe)
 [![Memory](https://img.shields.io/badge/memory-MAGMA%20graph%20(SQLite%20%7C%20pgvector)-8A2BE2)](docs/topics/memory.md)
@@ -112,10 +112,10 @@ flowchart LR
 
 ### Channels: where people talk to it
 
-19 channels, each with its own adapter: **Telegram, Discord, Slack, WhatsApp
+20 channels, each with its own adapter: **Telegram, Discord, Slack, WhatsApp
 (Cloud API), Microsoft Teams, Google Chat, Mattermost, WeCom, WeChat, QQ
 (OneBot and official), Feishu, DingTalk, LINE, Matrix, Signal, IRC, SMS
-(Twilio), Email and CLI**. Telegram, Discord, WhatsApp and Teams can run
+(Twilio), Email, ntfy and CLI**. Telegram, Discord, WhatsApp and Teams can run
 several bots with their own persona (`[[bots]]`), sharing the instance's
 people and memory.
 

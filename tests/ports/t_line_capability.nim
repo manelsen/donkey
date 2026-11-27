@@ -32,7 +32,8 @@ proc runTests*() =
       check ckMattermost == succ(ckTeams)
       check ckSms == succ(ckMattermost)
       check ckIrc == succ(ckSms)
-      check ckGoogleChat == high(ChannelKind) and ckGoogleChat == succ(ckIrc)
+      check ckGoogleChat == succ(ckIrc)
+      check ckNtfy == high(ChannelKind) and ckNtfy == succ(ckGoogleChat)
 
   suite "capability — LINE":
 

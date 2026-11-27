@@ -158,6 +158,7 @@ proc channelCapabilityRegistry*(): ChannelCapabilityRegistry =
   result[ckSms]        = MediaInCapability   ## text out, media in (E9.3: MMS)
   result[ckIrc]        = TextOnlyCapability
   result[ckGoogleChat] = MediaInCapability
+  result[ckNtfy]       = TextOnlyCapability   ## E13.1: text on a topic
   for kind in [ckWeCom, ckWeChat, ckFeishu, ckSlack, ckWhatsApp]:
     result[kind].repliesToRequester = true
   ## What each port really does (drift found on 26/11): WeChat and Feishu
