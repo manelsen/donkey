@@ -880,6 +880,8 @@ func discordWorkerSpec*(binary: string): ChannelProcessSpec =
 proc startDiscordProcess*(binary: string; logger: Logger): Result[void, string] =
   ## Every bot's gateway in one child (`donkey channel-worker discord`),
   ## restarted by the supervisor when it ends: a Defect there spares the daemon.
+  if gDiscordProcess.running:
+    return err("the Discord process is already started")
   gDiscordProcess = ? startChannelProcess(discordWorkerSpec(binary),
     discordProcessSink, discordProcessSource, logger)
   ok()

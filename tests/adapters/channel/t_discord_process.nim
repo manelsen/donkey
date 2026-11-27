@@ -4,6 +4,7 @@ import std/unittest
 import donkey/adapters/channel/discord
 import donkey/core/pipeops
 import donkey/core/types
+import donkey/core/log
 import donkey/infra/event_queue
 
 proc runTests*() =
@@ -38,6 +39,12 @@ proc runTests*() =
     test "the command is this binary's channel-worker":
       let spec = discordWorkerSpec("/usr/bin/donkey")
       check spec.args == @["channel-worker", "discord"] and spec.channel == ckDiscord
+
+    test "a second start is refused":
+      let log = newLogger("t", lvlError)
+      check startDiscordProcess("/bin/sleep", log).isOk
+      check startDiscordProcess("/bin/sleep", log).isErr
+      stopDiscordProcess()
 
 when isMainModule:
   runTests()
