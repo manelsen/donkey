@@ -652,12 +652,19 @@ const
     ## Waits between asking again for a task still running; then every 5 s.
   DelegateDeadlineMs = 180_000
 
-proc postA2a(agent: A2aAgent; token, body: string): Future[Result[string, string]] {.async.} =
+proc postA2a(agent: A2aAgent; token, body: string;
+             unknownMethod: ptr bool = nil): Future[Result[string, string]] {.async.} =
+  ## `unknownMethod`, when given, is set when the answer may mean "this
+  ## method is not known": JSON-RPC's -32601, or HTTP 404, 405 or 400 (how
+  ## some servers refuse a method they do not have).
   let resp = await offLoopIo().httpPost(agent.url, body,
     @[("Authorization", "Bearer " & token), ("Content-Type", "application/json"),
       ("A2A-Version", "1.0")], @[agent.host])
   if resp.isErr: return err("o agente " & agent.name & " não respondeu: " & resp.error)
-  if resp.get.status div 100 != 2 and not isMethodNotFound(resp.get.body):
+  let notFound = isMethodNotFound(resp.get.body)
+  if unknownMethod != nil:
+    unknownMethod[] = notFound or resp.get.status in [400, 404, 405]
+  if resp.get.status div 100 != 2 and not notFound:
     return err("o agente " & agent.name & " respondeu HTTP " & $resp.get.status)
   return ok(resp.get.body)
 
@@ -698,21 +705,31 @@ proc delegateToAgent(ctx: NativeCtx; j: JsonNode): Future[NativeToolResult] {.as
   of adDenied: return handledError("O envio ao agente foi negado; nada foi enviado.")
   of adTimeout: return handledError("A aprovação expirou; nada foi enviado.")
   var legacy = false
-  var body = await postA2a(agent, token, sendRequest(taskText, "donkey-" & $ctx.uid & "-" &
-                                                     $epochTime().int64, legacy = false))
-  if body.isOk and isMethodNotFound(body.get):
-    legacy = true   ## a v0.3 agent
-    body = await postA2a(agent, token, sendRequest(taskText, "donkey-" & $ctx.uid & "-" &
-                                                   $epochTime().int64, legacy = true))
+  var unknownMethod = false
+  let messageId = "donkey-" & $ctx.uid & "-" & $epochTime().int64
+  var body = await postA2a(agent, token, sendRequest(taskText, messageId, legacy = false),
+                           addr unknownMethod)
+  if unknownMethod:
+    ## Maybe a v0.3 agent. If it refuses this too, the first refusal is what
+    ## is told: a 404 may as well be a wrong URL.
+    let first = body
+    legacy = true
+    body = await postA2a(agent, token, sendRequest(taskText, messageId, legacy = true))
+    if body.isErr or isMethodNotFound(body.get):
+      body = if first.isErr: first
+             else: Result[string, string].err("o agente " & agent.name &
+                                              " não conhece SendMessage nem message/send")
   if body.isErr: return handledError(body.error)
   var outcome = parseOutcome(body.get)
   var waited = 0
   var poll = 0
   while outcome.isOk and not outcome.get.done:
-    if outcome.get.taskId.len == 0 or waited >= DelegateDeadlineMs or sessionStopRequested(ctx):
+    let pause = DelegatePollsMs[min(poll, DelegatePollsMs.high)]
+    ## The deadline checked before the wait: no request goes out past it.
+    if outcome.get.taskId.len == 0 or waited + pause > DelegateDeadlineMs or
+       sessionStopRequested(ctx):
       return handledError("O agente " & agent.name & " não terminou a tarefa a tempo" &
                           (if outcome.get.taskId.len > 0: " (tarefa " & outcome.get.taskId & ")" else: "") & ".")
-    let pause = DelegatePollsMs[min(poll, DelegatePollsMs.high)]
     await sleepAsync(chronos.milliseconds(pause))
     waited += pause
     inc poll

@@ -31,9 +31,14 @@ proc fakePost(url, body: string; headers: seq[HttpHeader]; allowHosts: seq[strin
   for (k, v) in headers:
     if k == "Authorization": auth = v
   gSent.add((url, body, auth, allowHosts))
-  let answer = if gAnswers.len > 0: gAnswers[0] else: "{}"
+  var answer = if gAnswers.len > 0: gAnswers[0] else: "{}"
   if gAnswers.len > 1: gAnswers.delete(0)
-  return ok(HttpResponse(status: 200, body: answer))
+  var status = 200
+  if answer.len > 4 and answer[3] == '|':   ## "404|body": another status
+    status = (ord(answer[0]) - ord('0')) * 100 + (ord(answer[1]) - ord('0')) * 10 +
+             (ord(answer[2]) - ord('0'))
+    answer = answer[4 .. ^1]
+  return ok(HttpResponse(status: status, body: answer))
 
 const Planner = A2aAgent(name: "planner", url: "https://p.example/a2a", tokenEnv: "A2A_PLANNER_TOKEN",
                          host: "p.example", description: "Planeja viagens")
@@ -108,6 +113,19 @@ proc runTests*() =
       check r.text.contains("ok") and gSent.len == 2
       check parseJson(gSent[1][1])["method"].getStr == "message/send"
       check gSummaries.len == 1   ## one approval for the one task
+
+    test "a v0.3 agent that refuses SendMessage with HTTP 404: message/send then":
+      prepare(["404|Not Found",
+               $(%*{"jsonrpc": "2.0", "id": 1, "result": {"kind": "task", "id": "t9",
+                    "status": {"state": "completed", "message": {"parts": [{"kind": "text", "text": "ok"}]}}}})])
+      let r = call(ask)
+      check "ok" in r.text and gSent.len == 2
+      check parseJson(gSent[1][1])["method"].getStr == "message/send"
+
+    test "a wrong URL: both tries fail, and the first refusal is what is told":
+      prepare(["404|Not Found", "404|Not Found"])
+      let r = call(ask)
+      check gSent.len == 2 and "404" in r.text
 
     test "still working: asked again until it finishes":
       prepare([task("TASK_STATE_WORKING"), task("TASK_STATE_COMPLETED", "pronto")])
