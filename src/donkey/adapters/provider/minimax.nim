@@ -25,7 +25,7 @@ import ../../domain/providers/openai_pure
 
 const
   MiniMaxEndpoint*     = "https://api.minimax.io/v1/chat/completions"
-  MiniMaxDefaultModel* = "MiniMax-M2.7"
+  MiniMaxDefaultModel* = "MiniMax-M3.1-Flash"
 
 type
   MiniMaxAdapter* = object

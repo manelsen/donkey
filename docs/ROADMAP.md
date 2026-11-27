@@ -72,7 +72,7 @@ O que cada frente deixou de fora ao ser implementada. Nenhum está agendado.
 
 | Item | Frente | Limite atual |
 |---|---|---|
-| Teams: certificado dos bots extras e edição | E2 | arquivos entram e saem, com token de certificado (`MICROSOFT_APP_CERT`); cartões com botões (aprovações, onboarding); faltam o certificado dos apps de `[[bots]]` e a edição de mensagens |
+| Teams: edição de mensagens | E2 | arquivos entram e saem (com certificado, também nos apps de `[[bots]]`), cartões com botões; falta editar mensagens |
 | MCP sampling por HTTP | E5 | só servidores stdio podem pedir sampling |
 | Skill novo de usuário | E5 | as ferramentas aparecem a partir da mensagem seguinte (listagem em segundo plano) |
 | Escrita no GitHub (abrir issue, comentar) | 2ª rodada, frente 2 | fora de propósito: o agente lê texto de terceiros; pede decisão sobre aprovação |
@@ -145,7 +145,7 @@ tomadas; no E13, o A2A entra, e o Donkey também chama agentes A2A.
 | Épico | Frente | O que entrega | Decisões pendentes |
 |---|---|---|---|
 | E8 | Cache de prompt | **Feito** (#232–#236; #237 e #238 completam: raciocínio devolvido intacto e histórico só de acréscimo): prefixo estável (o que muda a cada turno vai com a mensagem da pessoa), marcadores `cache_control` para Claude (Anthropic, Bedrock, OpenRouter), tokens do cache no uso, nos traços, nas métricas e no `/insights`, aviso de cache que nunca acerta, compactação de verdade (40% do contexto em modelos de 1M, 60% nos menores; `/compact` funciona) | Decididas em 26/11 |
-| E9 | Mídia nos canais novos | **Em andamento:** Mattermost nos dois sentidos (#242), Google Chat de entrada (#243), `send_file` (#247), SMS com MMS de entrada (#248), Teams de entrada (#249), IRC só com links (sem código). Teams completo: imagens embutidas e arquivos pelo cartão de consentimento (feitos); faltam o token de arquivos com certificado (exigido a partir de 1º/3/2027) e os cartões de aprovação | Decidida: MMS só de entrada |
+| E9 | Mídia nos canais novos | **Feito** (#242, #243, #247–#249, #251–#253 e o PR de uploads): anexos entram em quase todos os canais; `send_file` sobe arquivo do paddock no Telegram, Mattermost, Teams, Discord, Slack e WhatsApp; o Teams completo (imagens, cartão de consentimento, token de certificado, cartões com botões) | Decididas em 26/11 |
 | E10 | Interface para editores (ACP) | `donkey acp`: sessões, streaming, ferramentas e aprovações no Zed e afins, pela rota de streaming do gateway; o editor entra por pareamento. **Em andamento:** pareamento e turno como a pessoa (lado do daemon) | Decididas: pareamento; memória compartilhada com os outros canais |
 | E11 | Escrita no GitHub | Abrir e fechar issues, comentar, rotular, com o token de cada pessoa; política por repositório (`allow`, `ask`, `deny` por ação) | Decididas: política por repositório; token da pessoa |
 | E12 | Supervisão de adapters | À maneira do OTP: árvore de supervisão, `one_for_one`, tipos de filho, intensidade de reinícios e escalada; fontes de `Defect` viram erro como valor; canais de socket como processo filho | Decidida: inspirar-se no OTP |

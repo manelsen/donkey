@@ -28,7 +28,7 @@ export gp.geminiRole, gp.textPart, gp.functionCallPart, gp.functionResponsePart,
 
 const
   GeminiBaseUrl*     = "https://generativelanguage.googleapis.com/v1beta/models"
-  GeminiDefaultModel* = "gemini-3.8-flash"
+  GeminiDefaultModel* = "gemini-4-hydrogen"
 
 type
   GeminiAdapter* = object

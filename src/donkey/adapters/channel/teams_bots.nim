@@ -39,7 +39,8 @@ proc buildTeamsBots*(specs: openArray[BotSpec]; env: Environment;
       continue
     var adapter = newTeamsAdapter(spec.appId, password, primary.tenantId, "",
       stateDir / ("teams_conversations_" & spec.name & ".json"),
-      serviceHosts = primary.serviceHosts)
+      serviceHosts = primary.serviceHosts,
+      certPath = (if spec.certEnv.len > 0: env.get(spec.certEnv).strip else: ""))
     adapter.resolver = primary.resolver
     adapter.linkCodes = primary.linkCodes
     bots.slots.add TeamsBotSlot(name: spec.name, adapter: adapter)

@@ -76,13 +76,13 @@ const
   DiscordCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: true, editMessage: true,
     sendKeyboard: true, editKeyboard: true, setMessageReaction: true,
-    downloadFile: true, sendMedia: true,
+    downloadFile: true, sendMedia: true, sendFile: true,
     configUi: true, interactiveMenus: true)
 
   SlackCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: true, editMessage: true,
     sendKeyboard: true, editKeyboard: true, setMessageReaction: false,
-    downloadFile: false, sendMedia: true,
+    downloadFile: false, sendMedia: true, sendFile: true,
     configUi: true, interactiveMenus: true)
 
   ## LINE: send-only. Reply/push accept plain text chunks; no ids, edits,
@@ -165,6 +165,9 @@ proc channelCapabilityRegistry*(): ChannelCapabilityRegistry =
   result[ckWeChat].downloadFile = true
   result[ckFeishu].downloadFile = true
   result[ckSignal].downloadFile = false
+  ## WhatsApp uploads a paddock file to its media API (E9, send_file); Signal
+  ## shares the same descriptor and does not.
+  result[ckWhatsApp].sendFile = true
 
 # ── lookup helpers ────────────────────────────────────────────────────────────
 

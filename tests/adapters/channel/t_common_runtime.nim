@@ -155,12 +155,12 @@ proc runTests*() =
           initiative: "proativo",
         ), "Ostervalt").isOk
 
-        let text = preferenceCommandDeps(memory).runModelsCommand(userId, "minimax MiniMax-M2").get()
-        check text.contains("minimax / MiniMax-M2")
+        let text = preferenceCommandDeps(memory).runModelsCommand(userId, "minimax MiniMax-M3").get()
+        check text.contains("minimax / MiniMax-M3")
 
         let prefsMd = memory.loadContext(userId).preferencesMd
         check prefsMd.contains("agent_name = \"Ostervalt\"")
-        check prefsMd.contains("model = \"MiniMax-M2\"")
+        check prefsMd.contains("model = \"MiniMax-M3\"")
 
     test "applyModelsTextCommand shows provider catalog with single arg":
       let tmpDir = getTempDir() / "donkey_common_runtime_provider_catalog"
