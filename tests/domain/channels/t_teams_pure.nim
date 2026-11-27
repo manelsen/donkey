@@ -173,6 +173,9 @@ proc runMediaTests*() =
       check teamsDownload("image:https://evil.example/a.png", @["smba.trafficmanager.net"]).isErr
       check teamsDownload("file:http://contoso.sharepoint.com/a.pdf", @["smba.trafficmanager.net"]).isErr
       check teamsDownload("other", @["smba.trafficmanager.net"]).isErr
+      check teamsDownload("file:", @["smba.trafficmanager.net"]).isErr
+      check teamsDownload("image:https:", @["smba.trafficmanager.net"]).isErr
+      check hostOfUrl("") == "" and hostOfUrl("ht") == ""   ## never a crash on short input
 
 when isMainModule:
   runTests()
