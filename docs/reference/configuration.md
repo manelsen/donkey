@@ -82,6 +82,30 @@ Security notes:
 - `read_only_rootfs = false` is dev-only
 - startup validates the policy and aborts on invalid production settings
 
+## `[github]` - Write Policy (E11.3)
+
+What the `github` tool may write, per repository. Each write action
+(`create_issue`, `comment`, `add_labels`, `close_issue`) is `allow` (runs),
+`ask` (the person approves the exact text first) or `deny`. Without
+`[github]`, every write asks. A repository's rule wins over `default`; `*`
+covers a repository's every action. Writes go out with the token of the
+person who asked (`/github token`), never the instance's.
+
+```toml
+[github]
+default = "ask"
+
+[github.repos."acme/site"]
+comment = "allow"
+add_labels = "allow"
+close_issue = "deny"
+
+[github.repos."acme/infra"]
+"*" = "deny"
+```
+
+A policy that cannot be read is logged at startup, and every write then asks.
+
 ## Storage Model
 
 ### SQLite-first default

@@ -5,6 +5,8 @@ import ../core/security/dm_policy
 import ../core/app_meta
 import ./environment
 import ../domain/bots_pure
+import ../domain/tools/github_pure   # GithubPolicy
+export github_pure.GithubPolicy
 
 export bots_pure
 
@@ -49,6 +51,8 @@ type
     wiring*:        bool         ## Enable advanced session wiring; default: false
     env*:           Environment  ## The environment snapshot the config was loaded with
     bots*:          seq[BotSpec] ## `[[bots]]` entries that are well formed (E3)
+    githubPolicy*:  GithubPolicy ## `[github]`: what writes may do per repository (E11.3)
+    githubPolicyError*: string   ## why `[github]` was not read; every write then asks
     botProblems*:   seq[string]  ## why the other entries were left out
 
 func defaultConfig*(home: string): DonkeyConfig =

@@ -23,6 +23,8 @@ type
   AsyncHttpPost* = proc(url, body: string; headers: seq[HttpHeader]; allowHosts: seq[string]):
       Future[Result[HttpResponse, string]] {.async: (raises: []), gcsafe.}
     ## A POST that may only reach `allowHosts`.
+  AsyncHttpPatch* = AsyncHttpPost
+    ## A PATCH that may only reach `allowHosts` (closing a GitHub issue).
   AsyncProcessRun* = proc(spec: ProcessSpec): Future[Result[ProcessOutput, string]]
       {.async: (raises: []), gcsafe.}
 
@@ -35,6 +37,7 @@ type
   OffLoopIo* = object
     httpGet*:    AsyncHttpGet
     httpPost*:   AsyncHttpPost
+    httpPatch*:  AsyncHttpPatch
     processRun*: AsyncProcessRun
     webTool*:    AsyncWebTool
     speechTool*: AsyncSpeechTool

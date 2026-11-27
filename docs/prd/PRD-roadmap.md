@@ -591,6 +591,13 @@ registra quem agiu, e cada um só escreve onde já pode).
   `ask` usa o mecanismo de aprovação que já existe, mostrando o texto exato
   e onde será publicado.
 
+*Feito (27/11), E11.1 e E11.3:* as quatro escritas, a política em
+`[github]` (padrão `ask`; regra do repositório vence o `default`; `*`), o
+texto exato na aprovação (recusado se longo demais para mostrar inteiro), o
+token da pessoa. Uma política ilegível vai para o log e tudo pergunta. A
+aprovação de uma escrita pergunta mesmo que `DONKEY_APPROVAL_TOOLS` não liste
+o `github` (o teste pegou o caso em que ela seria pulada).
+
 *Aceite geral:* nada é publicado fora da política; o que pede aprovação só
 sai aprovado, com o texto aprovado byte a byte; cada escrita sai com o token
 de quem pediu.

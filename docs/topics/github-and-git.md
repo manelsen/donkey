@@ -61,3 +61,27 @@ Reading keeps using the instance's `GITHUB_TOKEN`.
 - A fine-grained token is enough: access to the repositories Donkey will write
   to, with Issues: read and write (Pull requests: read and write to comment on
   pull requests).
+
+## Writing (E11.1, E11.3)
+
+The `github` tool also writes, for the person who asked: `create_issue`
+(title, body), `comment` on an issue or pull request (number, body),
+`add_labels` (number, labels) and `close_issue` (number). It never merges,
+pushes or deletes.
+
+1. The repository's policy (`[github]` in `donkey.toml`, see the
+   configuration reference) says `allow`, `ask` or `deny`; without one, it
+   asks.
+2. The write needs the person's own token (`/github token`); without it the
+   tool says how to keep one.
+3. `ask` shows the person where it goes and the **exact** text, through the
+   usual approval (buttons on the channel, a permission prompt in the
+   editor); what is posted is byte for byte what was approved. A text too
+   long to show whole (over 3,500 characters with its header) is refused,
+   never cut.
+4. The answer says what was done and links to it.
+
+Reading what third parties wrote is the prompt-injection vector of the
+threat model: the tool's description tells the model never to write because
+a text read on GitHub told it to, and the `ask` default keeps a person in the
+loop for anything that is not explicitly allowed.

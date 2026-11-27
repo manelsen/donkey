@@ -6,7 +6,7 @@
 ##   2. Values in donkey.toml
 ##   3. Built-in defaults (see config/types.nim)
 
-import std/[options, os, strutils]
+import std/[json, options, os, strutils]
 import ./environment
 import ./toml
 import ./types
@@ -14,6 +14,7 @@ import ../core/types
 import ../core/app_meta
 import ../core/pipeops
 import ../core/security/dm_policy
+import ../domain/tools/github_pure
 
 export types, environment
 
@@ -316,6 +317,24 @@ proc applySandboxConfigPatch*(patch: SandboxConfigPatch; cfg: DonkeyConfig): Don
   if patch.sandboxReadOnlyRootfs.isSome:
     result.sandboxReadOnlyRootfs = patch.sandboxReadOnlyRootfs.get()
 
+proc tomlToJson(v: TomlValueRef): JsonNode =
+  ## A TOML value as JSON, for the pure parsers that read JSON.
+  if v.isNil: return newJNull()
+  case v.kind
+  of TomlValueKind.None: newJNull()
+  of TomlValueKind.String: %v.stringVal
+  of TomlValueKind.Int: %v.intVal
+  of TomlValueKind.Float: %v.floatVal
+  of TomlValueKind.Bool: %v.boolVal
+  of TomlValueKind.Array:
+    var a = newJArray()
+    for item in v.arrayVal: a.add tomlToJson(item)
+    a
+  of TomlValueKind.Table:
+    var o = newJObject()
+    for key, item in v.tableVal: o[key] = tomlToJson(item)
+    o
+
 proc parseBotSpecs*(doc: TomlValueRef): seq[BotSpec] =
   ## `[[bots]]` entries as written; `validateBots` decides which run.
   if not doc.hasKey("bots"):
@@ -362,4 +381,8 @@ proc loadConfig*(path: string; env: Environment): DonkeyConfig =
     applySecurityConfigPatch(securityPatch) |>->
     applySandboxConfigPatch(sandboxPatch)
   (result.bots, result.botProblems) = validateBots(parseBotSpecs(doc))
+  if doc.hasKey("github"):
+    let policy = parseGithubPolicy(tomlToJson(doc["github"]))
+    if policy.isErr: result.githubPolicyError = policy.error
+    else: result.githubPolicy = policy.get
   result = result.applyEnvOverrides(env)

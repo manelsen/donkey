@@ -18,6 +18,7 @@ type
     timeoutSec*: int
 
   HttpPostJob* = object
+    patch*: bool          ## PATCH instead of POST
     url*, body*: string
     headers*:    seq[HttpHeader]
     allowHosts*: seq[string]
@@ -43,9 +44,10 @@ proc httpPostJob*(job: HttpPostJob): Result[HttpResponse, string] {.nimcall, gcs
   if job.allowHosts.len == 0:
     return err("no host allowed")
   try:
-    newStdHttpAdapter(timeout = max(1, job.timeoutSec), allowlist = job.allowHosts,
-                      retryNonIdempotent = false)
-      .toRuntimePort().post(job.url, job.body, job.headers)
+    let port = newStdHttpAdapter(timeout = max(1, job.timeoutSec), allowlist = job.allowHosts,
+                                 retryNonIdempotent = false).toRuntimePort()
+    if job.patch: port.patch(job.url, job.body, job.headers)
+    else: port.post(job.url, job.body, job.headers)
   except CatchableError as e:
     err(e.msg)
   except Exception as e:  ## effect boundary: callee raises are unannotated
