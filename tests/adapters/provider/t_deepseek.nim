@@ -194,7 +194,7 @@ proc runTests*() =
   suite "deepseek newDeepSeekAdapter":
     test "defaults to deepseek-4.1-flash":
       let a = newDeepSeekAdapter("key123")
-      check a.model == "deepseek-4.1-flash"
+      check a.model == "deepseek-flash"
       check a.apiKey == "key123"
       check a.endpoint == ""
 

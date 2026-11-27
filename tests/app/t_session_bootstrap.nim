@@ -51,12 +51,12 @@ model = "gemini-2.5-pro"
     test "buildProviderSpec supports openai defaults":
       let spec = buildProviderSpec(ProviderPrefs(providerName: "openai", modelName: ""))
       check spec.providerName == "openai"
-      check spec.modelName == "gpt-6.1-sol"
+      check spec.modelName == "gpt-6.2-sol"
 
     test "buildProviderSpec supports deepseek defaults":
       let spec = buildProviderSpec(ProviderPrefs(providerName: "deepseek", modelName: ""))
       check spec.providerName == "deepseek"
-      check spec.modelName == "deepseek-4.1-flash"
+      check spec.modelName == "deepseek-flash"
 
     test "buildProviderSpec supports ollama defaults":
       let spec = buildProviderSpec(ProviderPrefs(providerName: "ollama", modelName: ""))
@@ -66,7 +66,7 @@ model = "gemini-2.5-pro"
     test "buildProviderSpec supports groq defaults":
       let spec = buildProviderSpec(ProviderPrefs(providerName: "groq", modelName: ""))
       check spec.providerName == "groq"
-      check spec.modelName == "llama-3.3-70b-versatile"
+      check spec.modelName == "openai/gpt-oss-120b"
 
     test "buildProviderSpec supports opencode-go defaults":
       let spec = buildProviderSpec(ProviderPrefs(providerName: "opencode-go", modelName: ""))
@@ -100,8 +100,8 @@ model = "claude-opus"
 
     test "providerLabelFromPrefs uses installation defaults when prefs are empty":
       let label = providerLabelFromPrefs(
-        "", ProviderDefaults(providerName: "minimax", modelName: "MiniMax-M2"))
-      check label == "minimax/MiniMax-M2"
+        "", ProviderDefaults(providerName: "minimax", modelName: "MiniMax-M3"))
+      check label == "minimax/MiniMax-M3"
 
     test "applyProviderDefaults leaves explicit user prefs untouched":
       let effective = applyProviderDefaults("""

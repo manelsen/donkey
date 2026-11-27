@@ -6,16 +6,16 @@
 
 const
   DefaultModelOpenRouter*  = "openai/gpt-6.1-sol"
-  DefaultModelOpenAI*      = "gpt-6.1-sol"
-  DefaultModelDeepSeek*    = "deepseek-4.1-flash"
+  DefaultModelOpenAI*      = "gpt-6.2-sol"
+  DefaultModelDeepSeek*    = "deepseek-flash"   ## V4.1 Flash; `deepseek-4.1-flash` is not an API id
   DefaultModelOllama*      = "llama3.3"
-  DefaultModelGroq*        = "llama-3.3-70b-versatile"
+  DefaultModelGroq*        = "openai/gpt-oss-120b"   ## Llama 3.x shut down for free and developer tiers on 2026-08-16
   DefaultModelOpenCodeGo*  = "opencode/deepseek-4.1-flash"
   DefaultModelZen*         = "zen/deepseek-4.1-flash"
   DefaultModelAnthropic*   = "claude-sonnet-5-5"
   DefaultModelZai*         = "glm-4.7"
   DefaultModelGemini*      = "gemini-3.8-flash"
-  DefaultModelMiniMax*     = "MiniMax-M2"
+  DefaultModelMiniMax*     = "MiniMax-M3"
   DefaultModelNvidia*      = "nvidia/nemotron-3.5-super-vl-120b-a12b"
   DefaultModelMistral*     = "mistral-large-latest"
   DefaultModelBedrock*     = "amazon.nova-pro-v1:0"

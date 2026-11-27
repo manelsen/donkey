@@ -23,7 +23,7 @@ import ./sse
 
 const
   DeepSeekEndpoint*    = "https://api.deepseek.com/v1/chat/completions"
-  DeepSeekDefaultModel* = "deepseek-4.1-flash"
+  DeepSeekDefaultModel* = "deepseek-flash"
 
 type
   DeepSeekAdapter* = object

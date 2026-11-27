@@ -65,20 +65,20 @@ func staticCatalog(providerName: string): seq[ModelCatalogEntry] =
     ]
   of "openai":
     @[
-      ModelCatalogEntry(providerName: providerName, modelName: "gpt-6.1-sol", label: "gpt-6.1-sol", isFree: false, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "gpt-6-astra", label: "gpt-6-astra", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "gpt-6.2-sol", label: "gpt-6.2-sol", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "gpt-6.2-astra", label: "gpt-6.2-astra", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "gpt-6.1-terra", label: "gpt-6.1-terra", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "gpt-6-luna", label: "gpt-6-luna", isFree: false, available: true),
     ]
   of "deepseek":
     @[
-      ModelCatalogEntry(providerName: providerName, modelName: "deepseek-4.1-flash", label: "deepseek-4.1-flash", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "deepseek-flash", label: "deepseek-flash", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "deepseek-v4-pro", label: "deepseek-v4-pro", isFree: false, available: true),
     ]
   of "groq":
     @[
-      ModelCatalogEntry(providerName: providerName, modelName: "llama-3.3-70b-versatile", label: "llama-3.3-70b-versatile", isFree: true, available: true, hasPricing: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "llama-3.1-8b-instant", label: "llama-3.1-8b-instant", isFree: true, available: true, hasPricing: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "openai/gpt-oss-120b", label: "openai/gpt-oss-120b", isFree: false, available: true, hasPricing: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "openai/gpt-oss-20b", label: "openai/gpt-oss-20b", isFree: false, available: true, hasPricing: true),
     ]
   of "opencode-go", "opencode":
     @[
@@ -108,19 +108,20 @@ func staticCatalog(providerName: string): seq[ModelCatalogEntry] =
   of "gemini":
     @[
       ModelCatalogEntry(providerName: providerName, modelName: "gemini-3.8-flash", label: "gemini-3.8-flash", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "gemini-4-hydrogen", label: "gemini-4-hydrogen", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "gemini-4-argon", label: "gemini-4-argon", isFree: false, available: true),
-      ModelCatalogEntry(providerName: providerName, modelName: "gemini-3.1-pro", label: "gemini-3.1-pro", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "gemini-3.5-flash-lite", label: "gemini-3.5-flash-lite", isFree: true, available: true),
     ]
   of "minimax":
     @[
-      ModelCatalogEntry(providerName: providerName, modelName: "MiniMax-M2", label: "MiniMax-M2", isFree: false, available: true),
+      ModelCatalogEntry(providerName: providerName, modelName: "MiniMax-M3", label: "MiniMax-M3", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "MiniMax-M2.5", label: "MiniMax-M2.5", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "MiniMax-M2.7", label: "MiniMax-M2.7", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "MiniMax-M2.7-highspeed", label: "MiniMax-M2.7-highspeed", isFree: false, available: true),
     ]
   of "zai", "zai-coding":
     @[
+      ModelCatalogEntry(providerName: providerName, modelName: "glm-5.3", label: "glm-5.3", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "glm-5.1", label: "glm-5.1", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "glm-5", label: "glm-5", isFree: false, available: true),
       ModelCatalogEntry(providerName: providerName, modelName: "glm-4.7", label: "glm-4.7", isFree: false, available: true),
