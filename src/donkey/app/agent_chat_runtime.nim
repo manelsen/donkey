@@ -142,14 +142,16 @@ proc runAgentChat*(body: string;
                    now: AgentNowFn;
                    timeoutMs = DefaultAgentTurnTimeoutMs;
                    model = "";
-                   nap: AgentNapFn = nil): Future[AgentChatReply] {.async.} =
+                   nap: AgentNapFn = nil;
+                   asUser = UserId("")): Future[AgentChatReply] {.async.} =
+  ## `asUser`: the person a paired client (an A2A agent, E13.4) acts as.
   ## Maps the endpoint contract to a status/body pair:
   ## 503 without a token, 400 parser errors, 403 before dispatch, 413 for an
   ## oversized body, 429 when the user already has a turn in flight, 504 on the
   ## deadline, 502 for a terminal turn error and 200 with usage otherwise.
   ## Only the terminal event is content; partials and tool notices are ignored.
   let prepared = prepareTurn(body, bridge, dispatch, authorize,
-                             tokenConfigured, timeoutMs)
+                             tokenConfigured, timeoutMs, asUser = asUser)
   if prepared.isErr:
     return prepared.error
   let request = prepared.get().request
@@ -170,7 +172,7 @@ proc runAgentChat*(body: string;
     dispatch(InboundMessage(
       userId:    request.userId,
       channel:   ckCli,
-      channelId: $request.userId,
+      channelId: (if ($asUser).len > 0: "a2a" else: $request.userId),
       text:      request.text,
       bridgeToken: turnToken,
     ))

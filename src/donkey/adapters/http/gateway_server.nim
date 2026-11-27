@@ -3,7 +3,7 @@
 ## Chronos stream. Runs on the loop of the thread that starts it (the daemon's
 ## main loop); every read is bounded by the request deadline.
 
-import std/strutils
+import std/[json, monotimes, strutils, sysrand, times]
 import chronos
 import chronos/transports/stream
 import ../../core/pipeops
@@ -14,6 +14,10 @@ import ../../app/chat_bridge
 import ../../app/http_gateway
 import ../../app/editor_registry
 import ../../app/editor_files
+import ../../app/a2a_server
+import ../../app/agent_chat_runtime
+import ../../domain/a2a/a2a_pure
+import ../../core/app_meta
 
 export http_gateway
 
@@ -107,6 +111,17 @@ proc gatewayBindAddress*(bindAddr: string; port: int):
   except CatchableError as e:
     err("cannot resolve " & host & ": " & e.msg)
 
+proc a2aTaskId(): string {.gcsafe, raises: [].} =
+  ## A task's id: 16 random bytes, hex.
+  var bytes: array[16, byte]
+  if not urandom(bytes):
+    return "t" & $getMonoTime().ticks
+  for b in bytes: result.add b.toHex(2).toLowerAscii
+
+proc a2aTimestamp(): string {.gcsafe, raises: [].} =
+  try: now().utc.format("yyyy-MM-dd'T'HH:mm:ss'Z'")
+  except CatchableError: ""
+
 proc startHttpGateway*(port: int;
                        statusFn: GatewayStatusFn;
                        logFn:    GatewayLogFn;
@@ -125,14 +140,32 @@ proc startHttpGateway*(port: int;
                        editors: EditorRegistry = nil;
                        approvalInput: GatewayApprovalInputFn = nil;
                        editorFiles: EditorFileRequests = nil;
+                       a2aUrl = "";
                        log:       Logger = newLogger("http_gateway")
                       ): Result[GatewayServer, string] =
   ## Binds and starts the gateway on the calling thread's Chronos loop; the
   ## connections are served while that loop runs (the daemon's main loop).
+  ## `a2aUrl` (checked by the caller): A2A on, its card naming that URL
+  ## (E13.4); it needs the editors' registry (agents pair the same way) and
+  ## the agent endpoint.
+  var a2a: A2aServer = nil
+  var a2aCard = ""
+  if a2aUrl.len > 0 and editors != nil and agentDispatchFn != nil and chatBridge != nil:
+    a2aCard = $agentCard(CardInfo(name: "Donkey",
+      description: "A team's assistant: answers and carries out requests in writing, " &
+                   "as the person who paired the calling agent.",
+      url: a2aUrl, version: AppVersion))
+    a2a = newA2aServer(
+      a2aTurnVia(chatBridge, agentDispatchFn, authorizeFn,
+                 (if agentTimeoutMs > 0: agentTimeoutMs else: resolveAgentTimeoutMs("")),
+                 modelName),
+      a2aTaskId, a2aTimestamp)
+  elif a2aUrl.len > 0:
+    log.warn("A2A off: it needs the editors' registry and the agent endpoint")
   let ctx = ?newGatewayContext(
     statusFn, logFn, eventFn, inboundFn, sessionsFn, providersFn,
     sessionActionFn, authToken, agentDispatchFn, authorizeFn, chatBridge,
-    modelName, agentTimeoutMs, editors, approvalInput, editorFiles, log)
+    modelName, agentTimeoutMs, editors, approvalInput, editorFiles, a2a, a2aCard, log)
 
   proc onConnection(server: StreamServer; client: StreamTransport)
       {.async: (raises: []).} =

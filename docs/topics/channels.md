@@ -572,6 +572,35 @@ Server running on the operator's Mac.
 
 ---
 
+## A2A (other agents)
+
+Other agents reach Donkey through the [Agent2Agent protocol](https://a2a-protocol.org)
+(E13.4), v1.0, JSON-RPC binding, on the HTTP gateway.
+
+- **Settings:** `A2A_PUBLIC_URL`, where other agents reach the JSON-RPC
+  endpoint, ending at `/a2a` (https; plain http only on loopback). It goes
+  in the agent card. The gateway must be on (`DONKEY_HTTP_PORT`), behind a
+  TLS proxy when other machines call it.
+- **The card:** `GET /.well-known/agent-card.json`, public by design: name,
+  the JSON-RPC interface and that a bearer token is required, nothing about
+  the people Donkey serves.
+- **Pairing:** an agent acts as the person who paired it, like an editor.
+  It calls `POST /a2a/pair` with `{"name": "…"}` and gets a code; the person
+  confirms it in any channel with `/editor <code>`; the agent polls
+  `POST /a2a/pair/poll` with `{"pairing": "…"}` and gets its token, once.
+  It appears as "agente <name>" in `/editor` and `donkey ctl editor list`,
+  and is revoked the same way.
+- **Tasks:** `POST /a2a` with `Authorization: Bearer <token>`.
+  `SendMessage` runs one turn as that person (memory, tools and approvals
+  are theirs) and answers the finished task (`TASK_STATE_COMPLETED` with the
+  reply as an artifact, or `TASK_STATE_FAILED` with why); `GetTask` returns
+  one of that person's recent tasks; `CancelTask` answers "not cancelable",
+  since a task is finished before `SendMessage` returns. Text only; no
+  streaming (`SendStreamingMessage` is not offered). v0.3's method names are
+  refused.
+
+---
+
 ## Google Chat
 
 Google Chat reaches Donkey as a Chat app with an HTTP endpoint. In the Google

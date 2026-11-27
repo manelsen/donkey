@@ -703,6 +703,15 @@ relevantes para equipes pequenas.
 - **E13.4 A2A.** O protocolo Agent2Agent: o Donkey publica um agent card e
   recebe tarefas de outros agentes por JSON-RPC; o agente remoto vira uma
   identidade como qualquer canal, com pareamento.
+  *Servidor feito (27/11):* A2A v1.0, binding JSON-RPC, no gateway HTTP
+  (`A2A_PUBLIC_URL`). O agente se pareia como um editor (`/a2a/pair`,
+  confirmado com `/editor <código>`) e age como a pessoa que o pareou;
+  `SendMessage` roda um turno pelo caminho do `/v1` e devolve a tarefa
+  pronta. **Desvio:** o agente não é uma identidade nova com onboarding,
+  e sim uma credencial da pessoa, como o editor (E10.2): o PRD pedia
+  "identidade com pareamento", e o pareamento existente já dá isso sem um
+  segundo caminho de identidade. Falta o cliente (a ferramenta de
+  delegação).
 
 *Aceite geral:* cada canal com servidor falso nos testes, documentação em
 `docs/topics/channels.md` e estado de conexão no status.

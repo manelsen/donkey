@@ -280,6 +280,19 @@ proc runTests*() =
       check dispatched[0].text == "oi"
       check fakeBridge.pendingCount == 0
 
+    test "a paired agent's turn runs as the person it was paired with (E13.4)":
+      resetFakes()
+      dispatchMode = dmFinal
+      finalText = "feito"
+      let reply = waitFor runAgentChat(
+        body = bodyFor("a2a", "oi"), bridge = fakeBridge, dispatch = fakeDispatch,
+        authorize = fakeAuthorize, tokenConfigured = true, now = fakeEpochSec,
+        timeoutMs = 5_000, model = "donkey/test", nap = fakeAsyncNap,
+        asUser = UserId("u-ana"))
+      check reply.status == 200 and contentOf(reply.body) == "feito"
+      check dispatched.len == 1 and dispatched[0].userId == UserId("u-ana")
+      check dispatched[0].channelId == "a2a"   ## not the person's id as a channel
+
     test "two users dispatch distinct UserIds":
       resetFakes()
       dispatchMode = dmFinal

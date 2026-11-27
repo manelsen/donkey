@@ -83,6 +83,10 @@ func routeGatewayRequest*(req: GatewayRequest): string =
   of "/v1/acp/chat/completions": "acp_chat"
   of "/v1/acp/approve": "acp_approve"
   of "/v1/acp/editor_result": "acp_editor_result"
+  of "/.well-known/agent-card.json": "a2a_card"   ## E13.4
+  of "/a2a":           "a2a_rpc"
+  of "/a2a/pair":      "a2a_pair"
+  of "/a2a/pair/poll": "a2a_pair_poll"
   of "/dashboard":     "dashboard"
   else:                "notfound"
 
