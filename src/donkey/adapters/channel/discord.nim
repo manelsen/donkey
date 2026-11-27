@@ -15,7 +15,7 @@
 ##   Provider LLM calls (max ~10 s) block the event loop but not this thread.
 ##   Discord heartbeat interval is ~41 s; occasional missed beats are tolerated.
 
-import std/[json, net, options, os, random, strutils, sysrand, tables, times, uri]
+import std/[json, jsonutils, net, options, os, random, strutils, sysrand, tables, times, uri]
 import ../../core/log
 import ../../core/app_meta
 import ../../core/commands/command_catalog
@@ -28,6 +28,8 @@ import ../../config/environment
 import ../../core/security/dm_policy  # parseChatIdList
 import ../../ports/http
 import ../../core/media_download
+import ../../infra/channel_process
+import ../../infra/channel_worker
 import ../../domain/media/audio_pure   # buildMultipartBody
 import ../filesystem/confined_read
 import ../filesystem/paths
@@ -839,6 +841,55 @@ proc stopGateway*() =
     gDiscordGateways[i].stop()
   gDiscordGatewayCount = 0
 
+# ── The gateways as their own process (E12.3) ─────────────────────────────────
+
+var gDiscordProcess: ChannelProcess
+
+proc rawEventToWire*(e: DiscordRawEvent): string = $toJson(e)
+
+proc rawEventFromWire*(payload: string): Result[DiscordRawEvent, string] =
+  try:
+    let node = parseJson(payload)
+    if node.kind != JObject:
+      return err("discord wire: not an object")
+    ok(node.jsonTo(DiscordRawEvent))
+  except CatchableError as e:
+    err("discord wire: " & e.msg)
+
+proc discordProcessSink*(payload: string) {.nimcall, gcsafe, raises: [].} =
+  ## The daemon's side: an event from the child, into the queue.
+  let e = rawEventFromWire(payload)
+  if e.isOk: gDiscordEvents.push(e.get)
+
+proc discordProcessSource*(): (bool, string) {.nimcall, gcsafe, raises: [].} =
+  ## The daemon's side: nothing for the child; replies go out by REST, here.
+  (false, "")
+
+proc discordWorkerEvent*(): (bool, string) {.nimcall, gcsafe, raises: [].} =
+  ## The child's side: an event the gateways queued, for the daemon.
+  let (has, e) = gDiscordEvents.tryTake()
+  if has: (true, rawEventToWire(e)) else: (false, "")
+
+proc discordWorkerOut(line: string) {.nimcall, gcsafe, raises: [].} =
+  discard   ## the daemon sends nothing over the wire
+
+func discordWorkerSpec*(binary: string): ChannelProcessSpec =
+  ChannelProcessSpec(name: "discord", channel: ckDiscord, command: binary,
+                     args: @["channel-worker", "discord"])
+
+proc startDiscordProcess*(binary: string; logger: Logger): Result[void, string] =
+  ## Every bot's gateway in one child (`donkey channel-worker discord`),
+  ## restarted by the supervisor when it ends: a Defect there spares the daemon.
+  if gDiscordProcess.running:
+    return err("the Discord process is already started")
+  gDiscordProcess = ? startChannelProcess(discordWorkerSpec(binary),
+    discordProcessSink, discordProcessSource, logger)
+  ok()
+
+proc stopDiscordProcess*() =
+  ## Ends the child that runs the gateways. Safe when it never started.
+  gDiscordProcess.stop()
+
 proc tryRecvEvent*(a: DiscordAdapter): (bool, DiscordRawEvent) =
   ## Non-blocking poll for gateway events. Returns (false, default) when empty.
   gDiscordEvents.tryTake()
@@ -940,3 +991,14 @@ proc newDiscordAdapter*(token:        string;
     cursor: cursor,
     http:       newStdHttpAdapter(),
   )
+
+proc runDiscordWorker*(gateways: openArray[(string, string)]; logger: Logger): int =
+  ## The child: one gateway per (token, bot), as the daemon would run them,
+  ## their events carried over stdout until the daemon goes away.
+  if gateways.len == 0:
+    logger.error("discord: no bot token")
+    return 1
+  for (token, bot) in gateways:
+    newDiscordAdapter(token, "").startGateway(logger, bot)
+  result = runChannelWorker(ckDiscord, discordWorkerEvent, discordWorkerOut)
+  stopGateway()

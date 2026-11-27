@@ -663,7 +663,9 @@ thread), então a árvore tem dois níveis de filho: a tarefa dentro do daemon
   daemon, sob o supervisor) e `infra/channel_worker` (lado do filho) são
   genéricos. *Mattermost feito (27/11):* o socket roda em `donkey
   channel-worker mattermost`, só a entrada atravessa o pipe (as respostas
-  saem por REST no daemon). Falta o Discord.
+  saem por REST no daemon). *Discord feito (27/11):* um filho roda os
+  gateways do bot padrão e dos `[[bots]]`; o registro dos comandos de barra
+  continua no daemon. Com isso o E12 está completo.
 
 *Aceite geral:* um adapter que falha repetidamente não interrompe os outros
 canais nem os turnos em curso; um `Defect` num canal que roda como processo
