@@ -13,6 +13,7 @@ type Fake = ref object
   pollAnswers: seq[GatewayPoll]
   turnLines: seq[string]
   turnStatus: int
+  turnError: string
   turnTexts: seq[string]
   turnTokens: seq[string]
   hangTurn: bool
@@ -38,7 +39,7 @@ proc fakeTurn(token, text: string; onLine: LineSink): Future[TurnReply] {.async:
   if gF.hangTurn:
     await sleepAsync(chronos.hours(1))
   for line in gF.turnLines: onLine(line)
-  return TurnReply(status: gF.turnStatus)
+  return TurnReply(status: gF.turnStatus, error: gF.turnError)
 proc fakeNap(ms: int): Future[void] {.async: (raises: [CancelledError]).} =
   inc gF.naps
 
@@ -120,6 +121,27 @@ proc runTests*() =
       rt.feed(Prompt % f.sent[1]["result"]["sessionId"].getStr)
       waitFor rt.idle()
       check "429" in f.written[^2] or "ocupad" in f.written[^2]
+
+    test "a tool chunk without a name or id, or repeating the open tool, starts nothing":
+      let f = Fake(token: "tok", turnStatus: 200, turnLines: @[
+        """data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"bash"}}]}}]}""",
+        """data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"bash"}}]}}]}""",
+        """data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"type":"function","function":{"name":""}}]}}]}"""])
+      let rt = started(f)
+      rt.feed(Prompt % f.sent[1]["result"]["sessionId"].getStr)
+      waitFor rt.idle()
+      var starts = 0
+      for m in f.sent:
+        if m{"params"}{"update"}{"sessionUpdate"}.getStr == "tool_call": inc starts
+      check starts == 1
+
+    test "a stream cut after it began is said as an interruption, not as unreachable":
+      let f = Fake(token: "tok", turnStatus: 200, turnError: "line too long",
+                   turnLines: @["""data: {"choices":[{"index":0,"delta":{"content":"Começo"}}]}"""])
+      let rt = started(f)
+      rt.feed(Prompt % f.sent[1]["result"]["sessionId"].getStr)
+      waitFor rt.idle()
+      check "interrompida" in f.written[^2] and "Não consegui falar" notin f.written[^2]
 
     test "session/cancel stops the turn and the prompt answers cancelled":
       let f = Fake(token: "tok", turnStatus: 200, hangTurn: true)

@@ -122,7 +122,10 @@ proc sinkFor(rt: AcpRuntime; st: TurnState; sessionId: string): LineSink =
       rt.ports.write(messageChunk(sessionId, event.text))
     of sekTool:
       ## The stream says when a tool starts; the next text, tool or the end
-      ## says it finished.
+      ## says it finished. A chunk naming nothing, or the tool already open,
+      ## starts nothing.
+      if event.toolName.len == 0 and event.toolId.len == 0: return
+      if event.toolId.len > 0 and event.toolId == st.openTool: return
       rt.closeTool(st, sessionId)
       inc st.tools
       st.openTool = if event.toolId.len > 0: event.toolId else: "tool-" & $st.tools
@@ -158,6 +161,9 @@ proc streamTurn(rt: AcpRuntime; token: string; prompt: AcpPrompt): Future[string
     rt.closeTool(st, prompt.sessionId)
   case reply.status
   of 200:
+    if reply.error.len > 0:
+      rt.say(prompt.sessionId, "\n\n⚠️ A resposta foi interrompida: " & reply.error)
+      return "end_turn"
     return stopReasonFor(st.finish)
   of 401:
     discard rt.ports.saveToken("")

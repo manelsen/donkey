@@ -79,6 +79,16 @@ proc runTests*() =
         check gRequests[0].startsWith("POST /v1/acp/chat/completions HTTP/1.1")
         check "\"stream\":true" in gRequests[0] and "\"content\":\"revise\"" in gRequests[0]
 
+    test "a line too long cuts the stream: status 200 with why, not unreachable":
+      let big = "data: " & "x".repeat(1024 * 1024 + 10) & "\n\n"
+      withServer(http("200 OK", "data: {}\n\n" & big, "text/event-stream")) do (base: string):
+        var lines: seq[string]
+        let reply = waitFor newGatewayClient(base).turn("tok", "x",
+          proc(line: string) {.gcsafe, raises: [].} =
+            {.cast(gcsafe).}: lines.add line)
+        check reply.status == 200 and reply.error.len > 0
+        check lines.len >= 1
+
     test "a refusal keeps its status and body; no server is status 0 with why":
       withServer(http("401 Unauthorized", """{"error":"unknown editor"}""")) do (base: string):
         let reply = waitFor newGatewayClient(base).turn("bad", "x",

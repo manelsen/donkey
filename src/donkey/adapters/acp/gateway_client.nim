@@ -42,14 +42,26 @@ proc exchange(c: GatewayClient; path, body, token: string;
                                        body = body.toOpenArrayByte(0, body.high))
     response = await request.send()
     if response.status == 200 and onLine != nil:
+      ## Once the stream began, a failure cuts it: still a 200, with why, so
+      ## the editor is not told the daemon was unreachable.
       let reader = response.getBodyReader()
+      var cut = ""
       try:
         while not reader.atEof():
           let line = await reader.readLine(limit = MaxLineBytes, sep = "\n")
+          if line.len >= MaxLineBytes:
+            ## readLine hands over the first `limit` bytes of a longer line
+            ## and goes on: the event would arrive broken, so stop and say so.
+            cut = "a line of the stream is longer than " & $(MaxLineBytes div 1024) & " KiB"
+            break
           onLine(line.strip(leading = false, chars = {'\r'}))
+      except CancelledError as e:
+        raise e
+      except CatchableError as e:
+        cut = e.msg
       finally:
         await reader.closeWait()
-      return TurnReply(status: 200)
+      return TurnReply(status: 200, error: cut)
     let bytes = await response.getBodyBytes(MaxReplyBytes)
     var text = newString(bytes.len)
     for i, b in bytes: text[i] = char(b)
