@@ -5,11 +5,19 @@
 
 import std/atomics
 import ../core/types
+import ../domain/supervision_pure
 
 var
   gRunning: array[ChannelKind, Atomic[int]]
   gConnected: array[ChannelKind, Atomic[int]]
   gLastInbound: array[ChannelKind, Atomic[int64]]   ## epoch ms of the last message
+  gSupervision: array[ChannelKind, Atomic[int]]     ## ChildState's ordinal (E12.2)
+
+proc superviseState*(k: ChannelKind; state: ChildState) =
+  ## What the supervisor last decided for a channel (E12.2).
+  gSupervision[k].store(ord(state))
+
+proc supervisionOf*(k: ChannelKind): ChildState = ChildState(gSupervision[k].load())
 
 proc noteInbound*(k: ChannelKind; nowMs: int64) =
   ## A message from `k` reached a turn: for the channels whose connection is
@@ -45,6 +53,7 @@ proc connectionCounts*(k: ChannelKind): tuple[running, connected: int] =
 proc resetConnections*() =
   ## For tests.
   for k in ChannelKind:
+    gSupervision[k].store(ord(csRunning))
     gRunning[k].store(0)
     gConnected[k].store(0)
     gLastInbound[k].store(0)

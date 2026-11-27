@@ -17,6 +17,8 @@ import ../../domain/channels/irc_pure
 import ../../infra/event_queue
 import ../../infra/thread_handle
 import ../../infra/connection_state
+import ../../infra/supervisor
+import ../../domain/supervision_pure
 import ../../ports/link_codes
 import ../identity/identity_resolver
 import ../state/durable_file
@@ -173,23 +175,28 @@ proc runIrc(args: IrcArgs) {.thread, nimcall.} =
   socketStarted(ckIrc)
   defer: socketEnded(ckIrc)
   randomize()
-  var backoff = IrcReconnectMinMs
+  ## E12.2: a permanent child, under the supervisor's waits and escalation.
+  var restart = DefaultPolicy
+  restart.baseBackoffMs = IrcReconnectMinMs
+  restart.maxBackoffMs = IrcReconnectMaxMs
+  var sup = newSupervised(ckIrc, "irc", restart)
   while not control.stop.load():
     var registered = false
+    var why = "the connection ended"
+    let began = epochTime()
     try:
       runSession(args, log, registered)
     except CatchableError as e:
+      why = e.msg
       if not control.stop.load():
         log.warn("irc: " & e.msg)
     if registered:
       socketDisconnected(ckIrc)
     if control.stop.load():
       return
-    if registered:
-      backoff = IrcReconnectMinMs
-    if not sleepOrStop(control, backoff + rand(max(0, backoff div 4))):
+    let wait = sup.ended(why, ranMs = int64((epochTime() - began) * 1000), log)
+    if not sleepOrStop(control, wait + rand(max(0, wait div 4))):
       return
-    backoff = min(backoff * 2, IrcReconnectMaxMs)
 
 proc startIrc*(settings: IrcSettings; logger: Logger): Result[void, string] =
   if settings.host.len == 0 or settings.nick.len == 0:

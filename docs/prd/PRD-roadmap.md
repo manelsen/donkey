@@ -638,6 +638,20 @@ thread), então a árvore tem dois níveis de filho: a tarefa dentro do daemon
 - **E12.2 Supervisor no daemon.** A especificação de cada filho (tipo,
   intensidade, espera crescente entre reinícios), a estratégia
   `one_for_one` e a escalada; estado `restarting`/`down` no status e na TUI.
+  *E12.1 e E12.2 feitos (27/11):* a auditoria dos canais (indexação de dados
+  externos, pedaços de `split`, arrays de JSON, `get` de `Option` e
+  `Result`) achou todos os pontos protegidos, e um teste de arquitetura
+  mantém em zero os padrões mais perigosos. O supervisor
+  (`domain/supervision_pure`, `infra/supervisor`) cuida das threads de
+  canal (`persistent_socket`: Discord, Slack em Socket Mode, Mattermost, QQ
+  oficial; IRC, ntfy, SimpleX, BlueBubbles) e dos drenos do laço principal;
+  antes, uma exceção no dreno de um canal saía do laço e encerrava o daemon
+  inteiro. **Desvio do PRD:** a intensidade é 5 reinícios em 5 minutos, não
+  em 60 s, porque aqui os reinícios esperam (2 s dobrando até 1 min) e 5 em
+  60 s nunca aconteceria; e `down` é uma pausa de 5 minutos, depois da qual
+  o canal tenta de novo, para que uma queda longa da rede não deixe um canal
+  parado até o daemon reiniciar. O operador é avisado no log uma vez por
+  episódio, e o status mostra `restarting` e `down`.
 - **E12.3 Filho como processo.** Para os canais de socket (Discord,
   Mattermost, IRC), o filho pode ser um processo do sistema que fala com o
   daemon pela fila de eventos; o supervisor reinicia o processo pelas mesmas

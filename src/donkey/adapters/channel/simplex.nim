@@ -9,7 +9,7 @@
 ## approval's text says how to answer), a file becomes a note. The bot's
 ## address and auto-accept are set up by the operator in the CLI.
 
-import std/[atomics, json, net, os, random, strutils]
+import std/[atomics, json, net, os, random, strutils, times]
 import ../../core/log
 import ../../core/pipeops
 import ../../core/types
@@ -18,6 +18,8 @@ import ../../domain/channels/simplex_pure
 import ../../infra/event_queue
 import ../../infra/thread_handle
 import ../../infra/connection_state
+import ../../infra/supervisor
+import ../../domain/supervision_pure
 import ../../ports/link_codes
 import ../identity/identity_resolver
 import ./ws_client
@@ -121,20 +123,28 @@ proc runSimplex(args: SimplexArgs) {.thread, nimcall.} =
   socketStarted(ckSimplex)
   defer: socketEnded(ckSimplex)
   randomize()
-  var backoff = SimplexReconnectMinMs
+  ## E12.2: a permanent child, under the supervisor's waits and escalation.
+  var restart = DefaultPolicy
+  restart.baseBackoffMs = SimplexReconnectMinMs
+  restart.maxBackoffMs = SimplexReconnectMaxMs
+  var sup = newSupervised(ckSimplex, "simplex", restart)
   while not control.stop.load():
     var connected = false
+    var why = "the connection ended"
+    let began = epochTime()
     try:
       runSession(args, log, connected)
     except CatchableError as e:
+      why = e.msg
       if not control.stop.load():
         log.warn("simplex: " & e.msg)
     if connected:
       socketDisconnected(ckSimplex)
-      backoff = SimplexReconnectMinMs
-    if control.stop.load() or not sleepOrStop(control, backoff + rand(max(0, backoff div 4))):
+    if control.stop.load():
       return
-    backoff = min(backoff * 2, SimplexReconnectMaxMs)
+    let wait = sup.ended(why, ranMs = int64((epochTime() - began) * 1000), log)
+    if not sleepOrStop(control, wait + rand(max(0, wait div 4))):
+      return
 
 proc startSimplex*(settings: SimplexSettings; logger: Logger): Result[void, string] =
   if settings.host.len == 0 or settings.port <= 0:

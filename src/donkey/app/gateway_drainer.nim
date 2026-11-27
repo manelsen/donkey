@@ -6,17 +6,30 @@
 ## Strict hexagonal architecture: no direct imports from adapters/.
 ## Coordination occurs via functional ports and callbacks.
 
-import std/strutils
+import std/[strutils, tables, times]
 import ../core/types
 import ../core/log
 import ../domain/message
+import ../infra/supervisor
 
 type
   GatewayDrainProc* = proc(): bool {.gcsafe.}
 
   GatewayFallbackHandler* = proc(msg: InboundMessage) {.gcsafe.}
 
+  DrainGuard = object
+    sup: Supervised
+    pausedUntil: int64
+    failing: bool
+
+  DrainGuards* = ref object
+    ## E12.2: each channel's drain under the supervisor: one that raises is
+    ## paused for the supervisor's wait, and the other channels go on.
+    guards: Table[ChannelKind, DrainGuard]
+    log: Logger
+
   GatewayDrainer* = object
+    guards*:         DrainGuards
     drainDiscord*:   GatewayDrainProc
     drainWeCom*:     GatewayDrainProc
     drainWeChat*:    GatewayDrainProc
@@ -64,6 +77,7 @@ func initGatewayDrainer*(
 ): GatewayDrainer =
   ## Initializes a GatewayDrainer with channel drain callbacks.
   GatewayDrainer(
+    guards:         DrainGuards(log: newLogger("gateway.drain")),
     drainDiscord:   drainDiscord,
     drainWeCom:     drainWeCom,
     drainWeChat:    drainWeChat,
@@ -176,6 +190,36 @@ proc drainTelegramGateway*(
     return 0
   drainBatchGateway(ckTelegram, pollBatch, dispatchHandler, fallbackHandler, log)
 
+proc guarded(drainer: GatewayDrainer; kind: ChannelKind; fn: GatewayDrainProc): bool {.raises: [].} =
+  ## One channel's drain under the supervisor (E12.2): an exception pauses
+  ## that channel for the supervisor's wait instead of leaving the daemon's
+  ## loop and taking every channel down with it.
+  if fn == nil: return false
+  if drainer.guards == nil:
+    ## A drainer built without guards (a test's literal): still never let a
+    ## channel's exception out.
+    try: return fn()
+    except Exception: return false  ## effect boundary: callee raises are unannotated
+  let now = int64(epochTime() * 1000)
+  var g = drainer.guards.guards.getOrDefault(kind,
+            DrainGuard(sup: newSupervised(kind, $kind & " drain")))
+  if now < g.pausedUntil:
+    return false
+  try:
+    result = fn()
+    if g.failing:
+      g.failing = false
+      g.sup.started(now)
+  except CatchableError as e:
+    drainer.guards.log.warn($kind & ": its drain failed: " & e.msg)
+    g.failing = true
+    g.pausedUntil = now + g.sup.ended(e.msg, ranMs = 0, drainer.guards.log, now = now)
+  except Exception as e:  ## effect boundary: callee raises are unannotated
+    drainer.guards.log.warn($kind & ": its drain failed: " & e.msg)
+    g.failing = true
+    g.pausedUntil = now + g.sup.ended(e.msg, ranMs = 0, drainer.guards.log, now = now)
+  drainer.guards.guards[kind] = g
+
 proc drainDiscordGateway*(
   configured: bool;
   drainFn: proc(): bool {.gcsafe.}
@@ -244,105 +288,105 @@ proc drainWhatsAppGateway*(
 proc drainDiscordGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains Discord gateway from drainer callback.
   if drainer.drainDiscord != nil:
-    result = drainer.drainDiscord()
+    result = guarded(drainer, ckDiscord, drainer.drainDiscord)
 
 proc drainWeComGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains WeCom gateway from drainer callback.
   if drainer.drainWeCom != nil:
-    result = drainer.drainWeCom()
+    result = guarded(drainer, ckWeCom, drainer.drainWeCom)
 
 proc drainWeChatGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains WeChat gateway from drainer callback.
   if drainer.drainWeChat != nil:
-    result = drainer.drainWeChat()
+    result = guarded(drainer, ckWeChat, drainer.drainWeChat)
 
 proc drainQQGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains QQ gateway from drainer callback.
   if drainer.drainQQ != nil:
-    result = drainer.drainQQ()
+    result = guarded(drainer, ckQQ, drainer.drainQQ)
 
 proc drainFeishuGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains Feishu gateway from drainer callback.
   if drainer.drainFeishu != nil:
-    result = drainer.drainFeishu()
+    result = guarded(drainer, ckFeishu, drainer.drainFeishu)
 
 proc drainSlackGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains the Slack gateway from the drainer callback.
   if drainer.drainSlack != nil:
-    result = drainer.drainSlack()
+    result = guarded(drainer, ckSlack, drainer.drainSlack)
 
 proc drainDingTalkGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains DingTalk gateway from drainer callback.
   if drainer.drainDingTalk != nil:
-    result = drainer.drainDingTalk()
+    result = guarded(drainer, ckDingTalk, drainer.drainDingTalk)
 
 proc drainLineGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains the LINE webhook event queue if configured.
   if drainer.drainLine != nil:
-    result = drainer.drainLine()
+    result = guarded(drainer, ckLine, drainer.drainLine)
 
 proc drainMatrixGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains Matrix gateway from drainer callback.
   if drainer.drainMatrix != nil:
-    result = drainer.drainMatrix()
+    result = guarded(drainer, ckMatrix, drainer.drainMatrix)
 
 proc drainTelegramGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains Telegram gateway from drainer callback.
   if drainer.drainTelegram != nil:
-    result = drainer.drainTelegram()
+    result = guarded(drainer, ckTelegram, drainer.drainTelegram)
 
 proc drainWhatsAppGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains WhatsApp gateway from drainer callback.
   if drainer.drainWhatsApp != nil:
-    result = drainer.drainWhatsApp()
+    result = guarded(drainer, ckWhatsApp, drainer.drainWhatsApp)
 
 proc drainEmailGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   if drainer.drainEmail != nil:
-    result = drainer.drainEmail()
+    result = guarded(drainer, ckEmail, drainer.drainEmail)
 
 proc drainSignalGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   if drainer.drainSignal != nil:
-    result = drainer.drainSignal()
+    result = guarded(drainer, ckSignal, drainer.drainSignal)
 
 proc drainMattermostGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains the Mattermost socket queue if configured.
   if drainer.drainMattermost != nil:
-    result = drainer.drainMattermost()
+    result = guarded(drainer, ckMattermost, drainer.drainMattermost)
 
 proc drainSmsGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains the SMS webhook queue if configured.
   if drainer.drainSms != nil:
-    result = drainer.drainSms()
+    result = guarded(drainer, ckSms, drainer.drainSms)
 
 proc drainIrcGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains the IRC connection's queue if configured.
   if drainer.drainIrc != nil:
-    result = drainer.drainIrc()
+    result = guarded(drainer, ckIrc, drainer.drainIrc)
 
 proc drainNtfyGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains the ntfy poller's queue if configured (E13.1).
   if drainer.drainNtfy != nil:
-    result = drainer.drainNtfy()
+    result = guarded(drainer, ckNtfy, drainer.drainNtfy)
 
 proc drainSimplexGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains the SimpleX connection's queue if configured (E13.2).
   if drainer.drainSimplex != nil:
-    result = drainer.drainSimplex()
+    result = guarded(drainer, ckSimplex, drainer.drainSimplex)
 
 proc drainBlueBubblesGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains the BlueBubbles poller's queue if configured (E13.3).
   if drainer.drainBlueBubbles != nil:
-    result = drainer.drainBlueBubbles()
+    result = guarded(drainer, ckBlueBubbles, drainer.drainBlueBubbles)
 
 proc drainGoogleChatGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains the Google Chat webhook queue if configured.
   if drainer.drainGoogleChat != nil:
-    result = drainer.drainGoogleChat()
+    result = guarded(drainer, ckGoogleChat, drainer.drainGoogleChat)
 
 proc drainTeamsGateway*(drainer: GatewayDrainer): bool {.discardable, gcsafe.} =
   ## Drains the Teams webhook queue if configured.
   if drainer.drainTeams != nil:
-    result = drainer.drainTeams()
+    result = guarded(drainer, ckTeams, drainer.drainTeams)
 
 proc drainGatewayEvents*(drainer: GatewayDrainer): int {.discardable, gcsafe.} =
   ## Drains all configured channel gateways in sequence.

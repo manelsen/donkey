@@ -147,7 +147,7 @@ tomadas; no E13, o A2A entra, e o Donkey também chama agentes A2A.
 | E9 | Mídia nos canais novos | **Feito** (#242, #243, #247–#249, #251–#253 e o PR de uploads): anexos entram em quase todos os canais; `send_file` sobe arquivo do paddock no Telegram, Mattermost, Teams, Discord, Slack e WhatsApp; o Teams completo (imagens, cartão de consentimento, token de certificado, cartões com botões) | Decididas em 26/11 |
 | E10 | Interface para editores (ACP) | **Feito** (#256, #258, #260 e o PR de leitura): `donkey acp` no Zed e afins, pareado pela pessoa, com streaming, ferramentas, aprovações no editor e leitura de arquivos do projeto | Decididas: pareamento; memória compartilhada com os outros canais |
 | E11 | Escrita no GitHub | **Feito** (#262 e o PR de escrita): abrir e fechar issues, comentar, rotular, com o token de cada pessoa (`/github token`, só em conversa privada) e política por repositório (`allow`, `ask`, `deny`; padrão `ask`) | Decididas: política por repositório; token da pessoa |
-| E12 | Supervisão de adapters | À maneira do OTP: árvore de supervisão, `one_for_one`, tipos de filho, intensidade de reinícios e escalada; fontes de `Defect` viram erro como valor; canais de socket como processo filho | Decidida: inspirar-se no OTP |
+| E12 | Supervisão de adapters | **Em andamento:** E12.1 (auditoria e trava de padrões perigosos) e E12.2 (supervisor nas threads de canal e nos drenos, com `restarting` e `down` no status) feitos; falta o E12.3, canais de socket como processo filho, o que isola um `Defect` | Decidida: inspirar-se no OTP |
 | E13 | Canais restantes | ntfy, SimpleX, BlueBubbles (iMessage), A2A (atende e chama) | Decididas: A2A entra, também como cliente |
 
 ## 7. Decidido não fazer

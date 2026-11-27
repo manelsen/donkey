@@ -23,6 +23,8 @@ import ../../core/pipeops
 import ../channel/ws_client
 import ../../infra/thread_handle
 import ../../infra/connection_state
+import ../../infra/supervisor
+import ../../domain/supervision_pure
 import ../../core/types
 
 export ws_client.WsClient, ws_client.WsFrame, ws_client.sendFrame
@@ -188,13 +190,22 @@ proc runSocket[C, S](args: SocketArgs[C, S]) {.thread, nimcall.} =
     if args.channel.isSome: socketEnded(args.channel.get)
   randomize()
   var state: S
-  var backoff = args.policy.reconnectMinMs
+  ## E12.2: a permanent child; the waits and the escalation are the
+  ## supervisor's, with this socket's own reconnection bounds.
+  var restart = DefaultPolicy
+  restart.baseBackoffMs = args.policy.reconnectMinMs
+  restart.maxBackoffMs = args.policy.reconnectMaxMs
+  var sup = if args.channel.isSome: newSupervised(args.channel.get, args.name, restart)
+            else: newSupervised(args.name, restart)
   while not control.stop.load():
     var opened = false
     var step = ssReconnect
+    var why = "the session ended"
+    let began = epochTime()
     try:
       step = runSession(args, state, log, opened)
     except CatchableError as e:
+      why = e.msg
       if not control.stop.load():
         log.warn(args.name & ": " & e.msg)
     if opened and args.channel.isSome:
@@ -204,13 +215,9 @@ proc runSocket[C, S](args: SocketArgs[C, S]) {.thread, nimcall.} =
       return
     if control.stop.load():
       return
-    if opened:
-      backoff = args.policy.reconnectMinMs   ## a session worked: start over
-    let pause = backoff + rand(max(0, backoff div 4))
-    if not sleepOrStop(control, pause):
+    let wait = sup.ended(why, ranMs = int64((epochTime() - began) * 1000), log)
+    if not sleepOrStop(control, wait + rand(max(0, wait div 4))):
       return
-    if not opened:
-      backoff = min(backoff * 2, args.policy.reconnectMaxMs)
 
 proc startPersistentSocket*[C, S](name: string; protocol: SocketProtocol[C, S];
                                   cfg: C; policy: SocketPolicy;
