@@ -47,8 +47,17 @@ past 5 restarts in 5 minutes the channel is **down** for 5 minutes (the
 operator is told once in the log, `donkey ctl status` and the TUI say
 `down`), then tried again. An exception in one channel's drain pauses that
 channel only; the daemon and the other channels go on. A Defect (an index
-out of range, a nil) still stops the daemon; running a socket channel as its
-own process (E12.3) is what will isolate it.
+out of range, a nil) still stops the daemon, unless the channel runs as its
+own process.
+
+**A channel as its own process (E12.3).** `DONKEY_CHANNEL_PROCESSES=irc`
+runs IRC's connection in a child (`donkey channel-worker irc`, started by
+the daemon with its environment): messages and the connection's state cross
+its stdin and stdout, and its log lines appear in the daemon's. When the
+child ends for any reason, a Defect included, the supervisor restarts it
+under the same rules, and the daemon and the other channels go on. Only IRC
+can run this way for now; naming another channel is reported at start and
+ignored.
 
 ---
 

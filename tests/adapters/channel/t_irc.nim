@@ -118,5 +118,27 @@ proc runTests*() =
       client.close()
       server.close()
 
+  suite "irc — as its own process (E12.3)":
+    test "the daemon's side: the child's events into the inbound queue, outbound lines to the child":
+      let m = IrcPrivmsg(account: "ana", nick: "ana", text: "oi", replyTo: "ana")
+      ircProcessSink(privmsgToWire(m))
+      let (has, got) = tryRecvIrc()
+      check has and got == m
+      ircProcessSink("{not json")              ## dropped, not raised
+      check not tryRecvIrc()[0]
+      check pushOutLine("PRIVMSG ana :olá")
+      check ircProcessSource() == (true, "PRIVMSG ana :olá")
+
+    test "the child's side: the connection's events out, outbound lines into its queue":
+      let m = IrcPrivmsg(account: "bia", nick: "bia", text: "e aí", replyTo: "bia")
+      check pushIrc(m)
+      check ircWorkerEvent() == (true, privmsgToWire(m))
+      ircWorkerOut("PRIVMSG bia :tudo")
+      check tryTakeOutLine() == (true, "PRIVMSG bia :tudo")
+
+    test "IRC as a process: the command is this binary's channel-worker":
+      check ircWorkerSpec("/usr/bin/donkey").args == @["channel-worker", "irc"]
+      check ircWorkerSpec("/usr/bin/donkey").channel == ckIrc
+
 when isMainModule:
   runTests()

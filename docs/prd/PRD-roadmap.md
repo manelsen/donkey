@@ -656,6 +656,13 @@ thread), então a árvore tem dois níveis de filho: a tarefa dentro do daemon
   Mattermost, IRC), o filho pode ser um processo do sistema que fala com o
   daemon pela fila de eventos; o supervisor reinicia o processo pelas mesmas
   regras. Ligado por canal na configuração.
+  *IRC feito (27/11):* `DONKEY_CHANNEL_PROCESSES=irc` roda a conexão em
+  `donkey channel-worker irc`; quadros JSON por linha (`channel_wire`)
+  levam mensagens e o estado da conexão pelo stdin e stdout do filho, e o
+  log do filho passa para o do daemon. `infra/channel_process` (lado do
+  daemon, sob o supervisor) e `infra/channel_worker` (lado do filho) são
+  genéricos; Discord e Mattermost entram quando as filas deles ganharem a
+  codificação, cada um no seu PR.
 
 *Aceite geral:* um adapter que falha repetidamente não interrompe os outros
 canais nem os turnos em curso; um `Defect` num canal que roda como processo
