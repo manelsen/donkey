@@ -1032,9 +1032,16 @@ proc mattermostSocketHttp(): HttpRuntimePort {.nimcall, gcsafe.} =
   newStdHttpAdapter(timeout = 15, maxRetries = 2,
                     circuitBreaker = false).toRuntimePort()
 
-proc startOptionalMattermostGateway(url, token: string; log: Logger) =
+proc startOptionalMattermostGateway(url, token: string; asProcess: bool; log: Logger) =
   if url.len == 0 and token.len == 0:
     log.info("MATTERMOST_URL not set — Mattermost disabled")
+    return
+  if asProcess:
+    ## E12.3: the socket in a child, so a Defect there spares the daemon.
+    startMattermostProcess(getAppFilename(), url, token, log).isOkOr:
+      log.error("mattermost: " & error)
+      return
+    log.info("Mattermost socket started as its own process")
     return
   startMattermostSocket(url, token, mattermostSocketHttp, log).isOkOr:
     log.error("mattermost: " & error)
@@ -1698,7 +1705,8 @@ proc startDaemonIngress(ctx: DaemonContext;
                             ctx.env.slackAppToken, ctx.env.slackSigningSecret,
                             slackSocketHttp, log)
   startOptionalDingTalkGateway(ctx.adapters.dt, ctx.env.dingTalkAppKey, log)
-  startOptionalMattermostGateway(ctx.env.mattermostUrl, ctx.env.mattermostToken, log)
+  startOptionalMattermostGateway(ctx.env.mattermostUrl, ctx.env.mattermostToken,
+                                 ckMattermost in ctx.env.processChannels, log)
   if ctx.env.processProblem.len > 0:
     log.error(ctx.env.processProblem)
   if ctx.env.ircProblem.len > 0:
@@ -1707,7 +1715,7 @@ proc startDaemonIngress(ctx: DaemonContext;
     log.info("IRC_SERVER not set — IRC disabled")
   elif ckIrc in ctx.env.processChannels:
     ## E12.3: the connection in a child, so a Defect there spares the daemon.
-    startIrcProcess(getAppFilename(), log).isOkOr:
+    startIrcProcess(getAppFilename(), ctx.env.irc, log).isOkOr:
       log.error("irc: " & error)
   else:
     startIrc(ctx.env.irc, log).isOkOr:
@@ -2601,6 +2609,9 @@ proc main =
         workerLog.error("irc: " & (if env.ircProblem.len > 0: env.ircProblem else: "IRC_SERVER not set"))
         quit(1)
       quit(runIrcWorker(env.irc, workerLog))
+    of "mattermost":
+      quit(runMattermostWorker(env.mattermostUrl, env.mattermostToken,
+                               mattermostSocketHttp, workerLog))
     else:
       stderr.writeLine "channel-worker: " & args[1] & " cannot run as its own process"
       quit(2)

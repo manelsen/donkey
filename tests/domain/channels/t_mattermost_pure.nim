@@ -178,6 +178,19 @@ proc runTests*() =
       check postsSince(body, "O", me, sinceMs = 15).len == 0          ## p1 is older
       check postsSince("not json", "O", me, 0).len == 0
 
+  suite "mattermost — across a process (E12.3)":
+    test "a post makes the round trip through the wire, attachments included":
+      let p = MattermostPost(id: "p1", userId: "u1", channelId: "c1", rootId: "r1",
+        files: @[MattermostFile(id: "f1", name: "a.png", mimeType: "image/png", size: 42)],
+        text: "oi\nolá", senderName: "ana", isGroup: true, mentioned: true,
+        createdMs: 1_764_000_000_000)
+      let back = postFromWire(postToWire(p))
+      check back.isOk and back.get == p
+
+    test "a payload that is not a post is an error":
+      check postFromWire("{oops").isErr
+      check postFromWire("[1]").isErr
+
 when isMainModule:
   runTests()
   runMediaTests()

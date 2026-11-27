@@ -245,9 +245,16 @@ func ircWorkerSpec*(binary: string): ChannelProcessSpec =
   ChannelProcessSpec(name: "irc", channel: ckIrc, command: binary,
                      args: @["channel-worker", "irc"])
 
-proc startIrcProcess*(binary: string; logger: Logger): Result[void, string] =
+proc startIrcProcess*(binary: string; settings: IrcSettings;
+                      logger: Logger): Result[void, string] =
   ## The connection in a child (`donkey channel-worker irc`), restarted by
   ## the supervisor when it ends: a Defect there does not stop the daemon.
+  ## The settings are checked here, as startIrc does: a child that could
+  ## only fail would be restarted in a loop.
+  if settings.host.len == 0 or settings.nick.len == 0:
+    return err("IRC_SERVER and IRC_NICK are required")
+  if gIrcProcess.running:
+    return err("the IRC process is already started")
   gIrcProcess = ? startChannelProcess(ircWorkerSpec(binary), ircProcessSink,
                                       ircProcessSource, logger)
   ok()

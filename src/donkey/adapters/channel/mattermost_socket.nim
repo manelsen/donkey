@@ -12,6 +12,8 @@ import ../../core/log
 import ../../core/pipeops
 import ../../ports/http
 import ../network/persistent_socket
+import ../../infra/channel_process
+import ../../infra/channel_worker
 import ./mattermost
 
 const
@@ -172,6 +174,58 @@ proc startMattermostSocket*(serverUrl, token: string;
     logger, channel = some(ckMattermost))
   ok()
 
+# ── The socket as its own process (E12.3) ─────────────────────────────────────
+
+var gMattermostProcess: ChannelProcess
+
+proc mattermostProcessSink*(payload: string) {.nimcall, gcsafe, raises: [].} =
+  ## The daemon's side: a post from the child, into the inbound queue.
+  let p = postFromWire(payload)
+  if p.isOk: discard pushPost(p.get)
+
+proc mattermostProcessSource*(): (bool, string) {.nimcall, gcsafe, raises: [].} =
+  ## The daemon's side: nothing for the child; replies go out by REST, here.
+  (false, "")
+
+proc mattermostWorkerEvent*(): (bool, string) {.nimcall, gcsafe, raises: [].} =
+  ## The child's side: a post the socket queued, for the daemon.
+  let (has, p) = tryRecvPost()
+  if has: (true, postToWire(p)) else: (false, "")
+
+proc mattermostWorkerOut(line: string) {.nimcall, gcsafe, raises: [].} =
+  discard   ## the daemon sends nothing over the wire
+
+func mattermostWorkerSpec*(binary: string): ChannelProcessSpec =
+  ChannelProcessSpec(name: "mattermost", channel: ckMattermost, command: binary,
+                     args: @["channel-worker", "mattermost"])
+
+proc startMattermostProcess*(binary, serverUrl, token: string;
+                             logger: Logger): Result[void, string] =
+  ## The socket in a child (`donkey channel-worker mattermost`), restarted by
+  ## the supervisor when it ends: a Defect there does not stop the daemon.
+  ## The settings are checked here, as the thread does: a child that could
+  ## only fail would be restarted in a loop.
+  discard ? websocketUrl(serverUrl)
+  if token.strip.len == 0:
+    return err("MATTERMOST_TOKEN is empty")
+  if gMattermostProcess.running:
+    return err("the Mattermost process is already started")
+  gMattermostProcess = ? startChannelProcess(mattermostWorkerSpec(binary),
+    mattermostProcessSink, mattermostProcessSource, logger)
+  ok()
+
+proc runMattermostWorker*(serverUrl, token: string; httpFactory: MattermostHttpFactory;
+                          logger: Logger): int =
+  ## The child: the socket as the daemon would run it, its posts carried
+  ## over stdout until the daemon goes away.
+  startMattermostSocket(serverUrl, token, httpFactory, logger).isOkOr:
+    logger.error("mattermost: " & error)
+    return 1
+  result = runChannelWorker(ckMattermost, mattermostWorkerEvent, mattermostWorkerOut)
+  gMattermostSocket.stop()
+
 proc stopMattermostSocket*() =
-  ## Safe to call when it was never started.
+  ## Stops the socket, or ends the child that runs it. Safe to call when it
+  ## was never started.
+  gMattermostProcess.stop()
   gMattermostSocket.stop()
