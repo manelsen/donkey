@@ -160,6 +160,7 @@ proc channelCapabilityRegistry*(): ChannelCapabilityRegistry =
   result[ckGoogleChat] = MediaInCapability
   result[ckNtfy]       = TextOnlyCapability   ## E13.1: text on a topic
   result[ckSimplex]    = TextOnlyCapability   ## E13.2: text to a direct contact
+  result[ckBlueBubbles] = TextOnlyCapability  ## E13.3: iMessage text, one to one
   for kind in [ckWeCom, ckWeChat, ckFeishu, ckSlack, ckWhatsApp]:
     result[kind].repliesToRequester = true
   ## What each port really does (drift found on 26/11): WeChat and Feishu

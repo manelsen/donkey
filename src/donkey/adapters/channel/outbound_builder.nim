@@ -26,6 +26,7 @@ import sms
 import irc
 import ntfy
 import simplex
+import bluebubbles
 import google_chat
 import cli_repl
 import whatsapp
@@ -249,6 +250,22 @@ proc simplexOutboundPort*(a: ptr SimplexAdapter): OutboundChannelPort =
     downloadFile: unsupportedDownloadFile,
   )
 
+proc blueBubblesOutboundPort*(a: ptr BlueBubblesAdapter): OutboundChannelPort =
+  ## Send only (E13.3), or unsupported without an adapter.
+  OutboundChannelPort(
+    send: if a != nil:
+            proc(msg: OutboundMessage): Result[void, string] {.gcsafe.} =
+              a[].send(msg)
+          else:
+            unsupportedSend,
+    sendReturnId: unsupportedSendReturnId,
+    editMessage: unsupportedEditMessage,
+    sendKeyboard: unsupportedSendKeyboard,
+    editKeyboard: unsupportedEditKeyboard,
+    setMessageReaction: unsupportedSetMessageReaction,
+    downloadFile: unsupportedDownloadFile,
+  )
+
 proc googleChatOutboundPort*(a: ptr GoogleChatAdapter): OutboundChannelPort =
   ## Text out, attachments in (E9.2), or unsupported without an adapter.
   OutboundChannelPort(
@@ -315,6 +332,7 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
                          googleChatAdapter: ptr GoogleChatAdapter = nil;
                          ntfyAdapter: ptr NtfyAdapter = nil;
                          simplexAdapter: ptr SimplexAdapter = nil;
+                         blueBubblesAdapter: ptr BlueBubblesAdapter = nil;
                          tgPick: TelegramPick = nil;
                          dcPick: DiscordPick = nil;
                          waPick: WhatsAppPick = nil;
@@ -446,6 +464,7 @@ proc buildOutboundPorts*(tgAdapter: ptr TelegramAdapter;
   result.googleChat = googleChatOutboundPort(googleChatAdapter)
   result.ntfy = ntfyOutboundPort(ntfyAdapter)
   result.simplex = simplexOutboundPort(simplexAdapter)
+  result.bluebubbles = blueBubblesOutboundPort(blueBubblesAdapter)
 
   # ── LINE — capability descriptor says: send only ──────────────────────────
   result.line = OutboundChannelPort(

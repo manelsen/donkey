@@ -82,6 +82,7 @@ proc channelPortFor(ports: OutboundChannelPorts;
   of ckGoogleChat: ports.googleChat
   of ckNtfy:      ports.ntfy
   of ckSimplex:   ports.simplex
+  of ckBlueBubbles: ports.bluebubbles
 
 proc setOutboundReaction*(channel: ChannelKind;
                           userId: UserId;
@@ -105,7 +106,7 @@ proc setOutboundReaction*(channel: ChannelKind;
   case channel
   of ckTelegram: log.warn("tg setMessageReaction: " & error)
   of ckDiscord:  log.warn("dc setMessageReaction: " & error)
-  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli, ckLine, ckTeams, ckMattermost, ckSms, ckIrc, ckGoogleChat, ckNtfy, ckSimplex:
+  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli, ckLine, ckTeams, ckMattermost, ckSms, ckIrc, ckGoogleChat, ckNtfy, ckSimplex, ckBlueBubbles:
     discard
   false
 
@@ -154,6 +155,7 @@ proc sendImmediateOutbound*(msg: OutboundMessage;
     of ckGoogleChat: log.error("gchat send: " & error)
     of ckNtfy:      log.error("ntfy send: " & error)
     of ckSimplex:   log.error("simplex send: " & error)
+    of ckBlueBubbles: log.error("bluebubbles send: " & error)
     finishDeliveryFailed(ledger, delivery.id, error, log)
     ## Kept for a retry when it qualifies (plain text); a channel that is
     ## not configured, above, is not: retrying cannot help.
@@ -179,7 +181,7 @@ proc editImmediateOutbound*(msg: OutboundMessage;
   case msg.channel
   of ckTelegram: log.warn("tg editImmediate: " & error)
   of ckDiscord:  log.warn("dc editImmediate: " & error)
-  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli, ckLine, ckTeams, ckMattermost, ckSms, ckIrc, ckGoogleChat, ckNtfy, ckSimplex:
+  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli, ckLine, ckTeams, ckMattermost, ckSms, ckIrc, ckGoogleChat, ckNtfy, ckSimplex, ckBlueBubbles:
     discard
   false
 
@@ -197,7 +199,7 @@ proc editStreamOutbound*(msg: OutboundMessage;
   case msg.channel
   of ckTelegram: log.warn("tg editMessage: " & error)
   of ckDiscord:  log.warn("dc editMessage: " & error)
-  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli, ckLine, ckTeams, ckMattermost, ckSms, ckIrc, ckGoogleChat, ckNtfy, ckSimplex: discard
+  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli, ckLine, ckTeams, ckMattermost, ckSms, ckIrc, ckGoogleChat, ckNtfy, ckSimplex, ckBlueBubbles: discard
   false
 
 proc createStreamOutbound*(msg: OutboundMessage;
@@ -218,7 +220,7 @@ proc createStreamOutbound*(msg: OutboundMessage;
   case msg.channel
   of ckTelegram: log.error("tg sendReturnId: " & error)
   of ckDiscord:  log.error("dc sendReturnId: " & error)
-  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli, ckLine, ckTeams, ckMattermost, ckSms, ckIrc, ckGoogleChat, ckNtfy, ckSimplex: discard
+  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli, ckLine, ckTeams, ckMattermost, ckSms, ckIrc, ckGoogleChat, ckNtfy, ckSimplex, ckBlueBubbles: discard
   finishDeliveryFailed(ledger, delivery.id, error, log)
   ""
 
@@ -240,7 +242,7 @@ proc createReplacementOutbound*(msg: OutboundMessage;
   case msg.channel
   of ckTelegram: log.error("tg sendReturnId replacement: " & error)
   of ckDiscord:  log.error("dc sendReturnId replacement: " & error)
-  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli, ckLine, ckTeams, ckMattermost, ckSms, ckIrc, ckGoogleChat, ckNtfy, ckSimplex:
+  of ckWeCom, ckWeChat, ckQQ, ckFeishu, ckSlack, ckWhatsApp, ckSignal, ckDingTalk, ckMatrix, ckEmail, ckCli, ckLine, ckTeams, ckMattermost, ckSms, ckIrc, ckGoogleChat, ckNtfy, ckSimplex, ckBlueBubbles:
     discard
   finishDeliveryFailed(ledger, delivery.id, error, log)
   ""

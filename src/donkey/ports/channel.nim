@@ -64,6 +64,7 @@ type
     googleChat*: OutboundChannelPort
     ntfy*:      OutboundChannelPort
     simplex*:   OutboundChannelPort
+    bluebubbles*: OutboundChannelPort
 
 # ── pure helpers ──────────────────────────────────────────────────────────────
 

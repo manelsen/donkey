@@ -671,6 +671,11 @@ relevantes para equipes pequenas.
   não é texto recebe uma nota. Endereço e aceite automático ficam no CLI.
 - **E13.3 BlueBubbles (iMessage).** API REST e webhooks de um servidor
   BlueBubbles num Mac do operador.
+  *Feito (27/11):* os webhooks do BlueBubbles não têm assinatura, então o
+  Donkey consulta a API (`/api/v1/message/query`, a cada 3 s, com a senha)
+  em vez de recebê-los; responde por `/api/v1/message/text`. Só conversas
+  individuais, só texto. `BLUEBUBBLES_URL` em https (ou http nesta máquina)
+  e `BLUEBUBBLES_PASSWORD`.
 - **E13.4 A2A.** O protocolo Agent2Agent: o Donkey publica um agent card e
   recebe tarefas de outros agentes por JSON-RPC; o agente remoto vira uma
   identidade como qualquer canal, com pareamento.
