@@ -24,7 +24,9 @@ proc runTests*() =
                  quoteShell(lock / "owner"))
       check r.exitCode == 0
       let lines = r.output.strip.splitLines
-      check lines[1].split(' ') == @[lines[0], execCmdEx("hostname").output.strip]
+      let fields = lines[1].split(' ')
+      check fields.len == 3 and fields[0] == lines[0] and fields[1] == execCmdEx("hostname").output.strip
+      check fields[2].len > 0 and fields[2].allCharsInSet(Digits)
 
     test "a lock whose owner is dead is taken over":
       let lock = freshLock("dead")
@@ -44,6 +46,16 @@ proc runTests*() =
       p.terminate(); discard p.waitForExit(); p.close()
       check r.exitCode != 0 and "got" notin r.output
       check "Timed out waiting for group build lock" in r.output
+
+    test "a lock whose PID was reused by another process is taken over":
+      let lock = freshLock("reused")
+      createDir(lock)
+      let p = startProcess("sleep", args = ["30"], options = {poUsePath})
+      ## the right PID, alive, but a start time that is not this process's
+      writeFile(lock / "owner", $p.processID & " " & execCmdEx("hostname").output.strip & " 1\n")
+      let r = sh("acquire_group_lock " & quoteShell(lock) & " 3 && echo got")
+      p.terminate(); discard p.waitForExit(); p.close()
+      check r.exitCode == 0 and "got" in r.output
 
     test "a lock without an owner: waited on while young, taken over when old":
       let lock = freshLock("legacy")

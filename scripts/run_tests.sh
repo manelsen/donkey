@@ -240,7 +240,7 @@ export -f group_cache_dir
 # over instead of waited on (scripts/lib/group_lock.sh).
 source "$REPO_ROOT/scripts/lib/group_lock.sh"
 export GROUP_LOCK_LEGACY_AGE_SEC
-export -f group_lock_is_stale reclaim_group_lock acquire_group_lock release_group_lock
+export -f group_lock_start_time group_lock_is_stale reclaim_group_lock acquire_group_lock release_group_lock
 
 # Compile one manifest group. Files are executed later, in parallel, so a slow
 # test cannot serialize the rest of its group.
