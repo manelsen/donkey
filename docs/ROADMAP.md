@@ -88,7 +88,11 @@ O que cada frente deixou de fora ao ser implementada. Nenhum está agendado.
 | Revisão de memória | E7.4 | a revisão cuida só de skills; os fatos ficam com o MAGMA, que já guarda cada turno relevante |
 | Jornada como grafo | E7.7 | só em texto (`ctl` e TUI); o Hermes desenha um grafo no desktop |
 | Custo nos insights | E7.8 | o Donkey não mantém tabela de preços; `/insights` (chat) e `ctl insights` mostram tokens |
-| Limite de tamanho no download | E9 (revisões do #242 e #243) | os anexos de entrada são limitados (25 MB), mas o limite é conferido depois que o corpo inteiro já está na memória; um servidor que mande um corpo enorme ocupa a memória antes da recusa. O certo é um teto no próprio transporte HTTP (`deadline_transport`), que pare de ler ao passar dele, para todos os canais. Onde o canal informa o tamanho antes (Mattermost), o arquivo grande já é recusado sem baixar |
+
+Fechado em 27/11: o limite de tamanho no download. O transporte HTTP lê no
+máximo 64 MiB de qualquer resposta (`DefaultMaxBodyBytes`) e para ali; os
+canais que baixam anexos (Mattermost, SMS, Teams, Google Chat) leem no
+máximo 25 MB, e um corpo maior é recusado sem nova tentativa.
 
 Fechados em 26/11 (PR de itens abertos): promover uma skill para todas as
 pessoas (`ctl skill promote`), `/insights` no chat (ferramenta `insights`), o

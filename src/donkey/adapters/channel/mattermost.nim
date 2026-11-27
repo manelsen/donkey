@@ -192,6 +192,7 @@ proc newMattermostAdapter*(serverUrl, token, identityPath, channelsPath: string;
   var transport = http
   if transport.post.isNil:
     transport = newStdHttpAdapter(timeout = MattermostTimeoutSec,
+      maxResponseBytes = MattermostMaxDownloadBytes,   ## a bigger body stops being read
       allowlist = @[hostOf(url)], retryNonIdempotent = false,
       retryConflict = false).toRuntimePort()
   let urlCheck = websocketUrl(url)

@@ -42,6 +42,21 @@ proc handle(arg: ConnArg) {.thread.} =
       let request = readRequest(client)
       let path = request.split(' ')[1]
       case path
+      of "/big":
+        ## Announces and sends 2 MB: a capped read must stop and refuse it.
+        client.send("HTTP/1.1 200 OK\r\nContent-Length: 2097152\r\nConnection: close\r\n\r\n")
+        let chunk = "x".repeat(65536)
+        for _ in 0 ..< 32:
+          try: client.send(chunk)
+          except CatchableError: break
+      of "/bigchunked":
+        ## The same without a length: the cap must hold on the bytes read.
+        client.send("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n")
+        let chunk = "x".repeat(65536)
+        for _ in 0 ..< 32:
+          try: client.send("10000\r\n" & chunk & "\r\n")
+          except CatchableError: break
+        try: client.send("0\r\n\r\n") except CatchableError: discard
       of "/ok":
         client.send("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n" &
                     "X-Probe: yes\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello")
@@ -159,6 +174,23 @@ proc runTests*() =
       check res.get.status == 200
       check res.get.body == "hello"
       check ("x-probe", "yes") in res.get.headers
+
+    test "a body over the cap is refused, whether its length is announced or not":
+      for path in ["/big", "/bigchunked"]:
+        let res = transportRequest(TransportRequest(meth: "GET", url: url(path),
+          deadlineMs: 10_000, maxBodyBytes: 1024 * 1024))
+        check res.isErr and "larger than" in res.error
+      let fits = transportRequest(TransportRequest(meth: "GET", url: url("/big"),
+        deadlineMs: 10_000, maxBodyBytes: 4 * 1024 * 1024))
+      check fits.isOk and fits.get.body.len == 2097152
+
+    test "the adapter passes its cap to the transport":
+      let small = newStdHttpAdapter(timeout = 10, maxRetries = 3, circuitBreaker = false,
+                                    maxResponseBytes = 1024 * 1024)
+      let started = epochTime()
+      let res = small.get(url("/big"))
+      check res.isErr and res.error.startsWith("response body larger than")
+      check epochTime() - started < 2.0   ## no retry, no backoff
 
     test "a POST body reaches the server":
       let res = transportRequest(TransportRequest(
