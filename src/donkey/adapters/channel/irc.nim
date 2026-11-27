@@ -18,6 +18,8 @@ import ../../infra/event_queue
 import ../../infra/thread_handle
 import ../../infra/connection_state
 import ../../infra/supervisor
+import ../../infra/channel_process
+import ../../infra/channel_worker
 import ../../domain/supervision_pure
 import ../../ports/link_codes
 import ../identity/identity_resolver
@@ -215,9 +217,55 @@ proc startIrc*(settings: IrcSettings; logger: Logger): Result[void, string] =
     return err("irc: cannot start its thread: " & e.msg)
   ok()
 
+# ── IRC as its own process (E12.3) ───────────────────────────────────────────
+
+var gIrcProcess: ChannelProcess
+
+proc stopIrc*()
+
+proc ircProcessSink*(payload: string) {.nimcall, gcsafe, raises: [].} =
+  ## The daemon's side: an event from the child, into the inbound queue.
+  let m = privmsgFromWire(payload)
+  if m.isOk: pushIrc(m.get)
+
+proc ircProcessSource*(): (bool, string) {.nimcall, gcsafe, raises: [].} =
+  ## The daemon's side: an outbound line, for the child.
+  tryTakeOutLine()
+
+proc ircWorkerEvent*(): (bool, string) {.nimcall, gcsafe, raises: [].} =
+  ## The child's side: an inbound PRIVMSG, for the daemon.
+  let (has, m) = tryRecvIrc()
+  if has: (true, privmsgToWire(m)) else: (false, "")
+
+proc ircWorkerOut*(line: string) {.nimcall, gcsafe, raises: [].} =
+  ## The child's side: an outbound line from the daemon, for the connection.
+  pushOutLine(line)
+
+func ircWorkerSpec*(binary: string): ChannelProcessSpec =
+  ChannelProcessSpec(name: "irc", channel: ckIrc, command: binary,
+                     args: @["channel-worker", "irc"])
+
+proc startIrcProcess*(binary: string; logger: Logger): Result[void, string] =
+  ## The connection in a child (`donkey channel-worker irc`), restarted by
+  ## the supervisor when it ends: a Defect there does not stop the daemon.
+  gIrcProcess = ? startChannelProcess(ircWorkerSpec(binary), ircProcessSink,
+                                      ircProcessSource, logger)
+  ok()
+
+proc runIrcWorker*(settings: IrcSettings; logger: Logger): int =
+  ## The child: the connection as the daemon would run it, its queues
+  ## carried over stdin and stdout until the daemon goes away.
+  startIrc(settings, logger).isOkOr:
+    logger.error("irc: " & error)
+    return 1
+  result = runChannelWorker(ckIrc, ircWorkerEvent, ircWorkerOut)
+  stopIrc()
+
 proc stopIrc*() =
-  ## Stops the connection (within a read slice) and joins its thread. Safe to
-  ## call when it was never started, and twice.
+  ## Stops the connection (within a read slice) and joins its thread, or
+  ## ends the child that runs it. Safe to call when it was never started,
+  ## and twice.
+  gIrcProcess.stop()
   if gIrcConnection.control == nil:
     return
   gIrcConnection.control.stop.store(true)

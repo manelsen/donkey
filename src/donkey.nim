@@ -79,6 +79,7 @@ import donkey/adapters/channel/mattermost_runtime
 import donkey/adapters/channel/mattermost_socket
 import donkey/adapters/channel/sms
 import donkey/adapters/channel/sms_runtime
+import donkey/domain/channels/channel_wire
 import donkey/adapters/channel/irc
 import donkey/adapters/channel/irc_runtime
 import donkey/adapters/channel/ntfy
@@ -273,6 +274,8 @@ type DaemonEnv = object
   twilioWebhookUrl: string  ## TWILIO_WEBHOOK_URL: the exact URL Twilio calls
   irc: IrcSettings          ## IRC_SERVER, IRC_NICK, IRC_PASSWORD, IRC_CHANNELS, IRC_REALNAME
   ircProblem: string        ## why IRC_SERVER could not be read
+  processChannels: set[ChannelKind]  ## DONKEY_CHANNEL_PROCESSES (E12.3)
+  processProblem: string    ## why DONKEY_CHANNEL_PROCESSES could not be read
   ntfy: NtfySettings        ## NTFY_URL, NTFY_TOPIC, NTFY_TOKEN (E13.1)
   simplexUrl: string        ## SIMPLEX_URL: the local simplex-chat (E13.2); "" = off
   blueBubbles: BlueBubblesSettings  ## BLUEBUBBLES_URL, BLUEBUBBLES_PASSWORD (E13.3)
@@ -803,6 +806,9 @@ proc loadDaemonEnv(cfg: DonkeyConfig; log: Logger): DaemonEnv =
         password: cfg.env.get("IRC_PASSWORD"),
         channels: parseChatIdList(cfg.env.get("IRC_CHANNELS")),
         tls: true)   ## always: the SASL password and every message cross it
+  let asProcess = processChannels(cfg.env.get("DONKEY_CHANNEL_PROCESSES"))
+  if asProcess.isErr: result.processProblem = asProcess.error
+  else: result.processChannels = asProcess.get
   result.matrixWebhookToken = cfg.env.get("MATRIX_WEBHOOK_TOKEN")
   result.whatsappVerifyToken = cfg.env.get("WHATSAPP_VERIFY_TOKEN")
   result.whatsappAppSecret = cfg.env.get("WHATSAPP_APP_SECRET")
@@ -1693,10 +1699,16 @@ proc startDaemonIngress(ctx: DaemonContext;
                             slackSocketHttp, log)
   startOptionalDingTalkGateway(ctx.adapters.dt, ctx.env.dingTalkAppKey, log)
   startOptionalMattermostGateway(ctx.env.mattermostUrl, ctx.env.mattermostToken, log)
+  if ctx.env.processProblem.len > 0:
+    log.error(ctx.env.processProblem)
   if ctx.env.ircProblem.len > 0:
     log.error("irc: " & ctx.env.ircProblem)
   elif ctx.env.irc.host.len == 0:
     log.info("IRC_SERVER not set — IRC disabled")
+  elif ckIrc in ctx.env.processChannels:
+    ## E12.3: the connection in a child, so a Defect there spares the daemon.
+    startIrcProcess(getAppFilename(), log).isOkOr:
+      log.error("irc: " & error)
   else:
     startIrc(ctx.env.irc, log).isOkOr:
       log.error("irc: " & error)
@@ -2577,6 +2589,21 @@ proc main =
       ## Reload env-backed policies (dm_policy, allowlist, ...) after the
       ## vault populated variables that were absent from donkey.env.
       cfg = loadConfig(configPath, readEnvironment())
+  ## E12.3: a channel run as its own process. The daemon started it, with
+  ## its environment (the vault already applied), and stdout is its wire.
+  if args.len >= 2 and args[0] == "channel-worker":
+    let workerLog = newLogger(AppSlug & "." & args[1])
+    ## Quiet: the other channels' "not set" lines are the daemon's to say.
+    let env = loadDaemonEnv(cfg, newLogger(AppSlug, lvlError))
+    case args[1]
+    of "irc":
+      if env.ircProblem.len > 0 or env.irc.host.len == 0:
+        workerLog.error("irc: " & (if env.ircProblem.len > 0: env.ircProblem else: "IRC_SERVER not set"))
+        quit(1)
+      quit(runIrcWorker(env.irc, workerLog))
+    else:
+      stderr.writeLine "channel-worker: " & args[1] & " cannot run as its own process"
+      quit(2)
   ## Provider keys and the presence checks of /about and /doctor read the
   ## snapshot installed here, on the loop thread that uses them.
   useCredentials(cfg.env)

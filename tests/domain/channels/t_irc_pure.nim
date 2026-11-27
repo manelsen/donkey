@@ -5,6 +5,7 @@
 
 import std/[base64, options, strutils, unittest]
 import donkey/domain/channels/irc_pure
+import donkey/core/pipeops
 
 proc runTests*() =
   suite "irc — reading a line":
@@ -116,6 +117,17 @@ proc runTests*() =
       var s = newIrcSession("donkey", "", @[])
       check feed(s, ":srv 433 * donkey :Nickname is already in use") == @["NICK donkey_"]
       check s.nick == "donkey_"
+
+  suite "irc — across a process (E12.3)":
+    test "a PRIVMSG makes the round trip through the wire":
+      let m = IrcPrivmsg(account: "ana", nick: "ana_", text: "oi\nolá", channel: "#d",
+                         isGroup: true, replyTo: "#d")
+      let back = privmsgFromWire(privmsgToWire(m))
+      check back.isOk and back.get == m
+
+    test "a payload that is not one is an error":
+      check privmsgFromWire("{oops").isErr
+      check privmsgFromWire("[]").isErr
 
 when isMainModule:
   runTests()

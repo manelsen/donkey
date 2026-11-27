@@ -7,7 +7,8 @@
 ## SASL PLAIN (sasl-3.1) when it has a password. In a channel it answers only
 ## when addressed by name (`donkey: …` or `donkey, …`).
 
-import std/[base64, options, strutils]
+import std/[base64, json, options, strutils]
+import ../../core/pipeops
 from std/unicode import runes, toUTF8
 
 const
@@ -206,3 +207,19 @@ func react*(s: var IrcSession; line: IrcLine): seq[string] =
     s.nick = s.nick & "_"
     result.add "NICK " & s.nick
   else: discard
+
+# ── Across a process (E12.3) ──────────────────────────────────────────────────
+
+proc privmsgToWire*(m: IrcPrivmsg): string =
+  $(%*{"account": m.account, "nick": m.nick, "text": m.text, "channel": m.channel,
+       "isGroup": m.isGroup, "replyTo": m.replyTo})
+
+proc privmsgFromWire*(payload: string): Result[IrcPrivmsg, string] =
+  let node =
+    try: parseJson(payload)
+    except CatchableError as e: return err("irc wire: " & e.msg)
+  if node.kind != JObject:
+    return err("irc wire: not an object")
+  ok(IrcPrivmsg(account: node{"account"}.getStr, nick: node{"nick"}.getStr,
+                text: node{"text"}.getStr, channel: node{"channel"}.getStr,
+                isGroup: node{"isGroup"}.getBool, replyTo: node{"replyTo"}.getStr))
