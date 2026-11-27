@@ -972,14 +972,18 @@ proc startOptionalDiscordGateway(dcAdapter: var DiscordAdapter;
                                  discordToken: string;
                                  discordGuildId: string;
                                  log: Logger;
-                                 bot = "") =
+                                 bot = "";
+                                 gatewayHere = true) =
+  ## `gatewayHere` false: the gateway runs in the Discord child (E12.3);
+  ## the slash commands are still registered from here, by REST.
   if discordToken.len == 0:
     log.info("DISCORD_BOT_TOKEN not set — Discord disabled")
     return
 
-  log.info("Discord gateway starting" & (if bot.len > 0: " for bot " & bot else: "") &
-           " (token len=" & $discordToken.len & ")")
-  dcAdapter.startGateway(log, bot)
+  if gatewayHere:
+    log.info("Discord gateway starting" & (if bot.len > 0: " for bot " & bot else: "") &
+             " (token len=" & $discordToken.len & ")")
+    dcAdapter.startGateway(log, bot)
   let appId = dcAdapter.getAppId().valueOr:
     log.warn("Discord getAppId failed: " & error); ""
   if appId.len > 0:
@@ -1694,10 +1698,17 @@ proc drainGlobalOutbox(runtime:  var DaemonRuntime;
 
 proc startDaemonIngress(ctx: DaemonContext;
                         log: Logger) =
-  startOptionalDiscordGateway(ctx.adapters.dc, ctx.env.discordToken, ctx.env.discordGuildId, log)
+  ## E12.3: every bot's gateway in one child, when Discord runs as a process.
+  let discordChild = ckDiscord in ctx.env.processChannels and
+    (ctx.env.discordToken.len > 0 or ctx.adapters.dcBots.slots.len > 0)
+  if discordChild:
+    startDiscordProcess(getAppFilename(), log).isOkOr:
+      log.error("discord: " & error)
+  startOptionalDiscordGateway(ctx.adapters.dc, ctx.env.discordToken, ctx.env.discordGuildId, log,
+                              gatewayHere = not discordChild)
   for slot in ctx.adapters.dcBots.slots.mitems:
     startOptionalDiscordGateway(slot.adapter, slot.adapter.token, ctx.env.discordGuildId,
-                                log, bot = slot.name)
+                                log, bot = slot.name, gatewayHere = not discordChild)
   startOptionalWeComGateway(ctx.env.wecomCorpId, log)
   startOptionalWeChatGateway(ctx.env.wechatAppId, log)
   startOptionalFeishuGateway(ctx.adapters.fs, ctx.env.feishuAppId, log)
@@ -2466,6 +2477,7 @@ proc startDaemon(cfg: DonkeyConfig; log: Logger) {.async: (raises: [Exception]).
     stopSimplex()
     stopBlueBubbles()
     discord.stopGateway()
+    stopDiscordProcess()
     stopQQOfficialGateway()
     stopWebhookReceiver()
     ## LINE events were acked with 200 when queued, so LINE will not redeliver
@@ -2609,6 +2621,14 @@ proc main =
         workerLog.error("irc: " & (if env.ircProblem.len > 0: env.ircProblem else: "IRC_SERVER not set"))
         quit(1)
       quit(runIrcWorker(env.irc, workerLog))
+    of "discord":
+      ## The same gateways the daemon would start: the default bot and the
+      ## `[[bots]]` on Discord.
+      var gateways: seq[(string, string)]
+      if env.discordToken.len > 0: gateways.add (env.discordToken, "")
+      let (bots, _) = buildDiscordBots(cfg.bots, cfg.env, newDiscordAdapter(env.discordToken, ""))
+      for slot in bots.slots: gateways.add (slot.adapter.token, slot.name)
+      quit(runDiscordWorker(gateways, workerLog))
     of "mattermost":
       quit(runMattermostWorker(env.mattermostUrl, env.mattermostToken,
                                mattermostSocketHttp, workerLog))
