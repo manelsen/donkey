@@ -12,6 +12,10 @@ import ../domain/acp/editor_pairing_pure
 import ../domain/acp/editor_credentials_pure
 import ../ports/fs
 
+const MaxEditorsPerPerson* = 16
+  ## Each confirmed code mints a credential; past this, the person revokes one
+  ## first, so the file cannot grow without bound.
+
 type
   RandomBytesFn* = proc(n: int): Result[seq[byte], string] {.gcsafe, raises: [].}
   ClockMsFn* = proc(): int64 {.gcsafe, raises: [].}
@@ -69,6 +73,12 @@ proc beginPairing*(r: EditorRegistry; name: string): Result[PairingStarted, stri
   ok(PairingStarted(secret: secret, code: code))
 
 proc confirmPairing*(r: EditorRegistry; code: string; userId: UserId): Result[string, string] =
+  r.refresh()
+  var owned = 0
+  for c in r.creds:
+    if c.userId == userId: inc owned
+  if owned >= MaxEditorsPerPerson:
+    return err("too many editors")
   r.pairings.confirm(code, userId, r.now())
 
 proc collectPairing*(r: EditorRegistry; secret: string): Result[PairingCollected, string] =
@@ -131,6 +141,9 @@ proc editorCommand*(r: EditorRegistry; userId: UserId; value: string): Result[st
       return ok("Editor " & name & " desconectado.")
     return err("Você não tem editor com esse id. Veja a lista com `/editor`.")
   let name = r.confirmPairing(arg, userId)
+  if name.isErr and name.error == "too many editors":
+    return err("Você já tem " & $MaxEditorsPerPerson & " editores conectados. " &
+               "Desconecte um com `/editor revogar <id>` (veja a lista com `/editor`).")
   if name.isErr:
     return err("Nenhum editor espera esse código (ou ele passou de 10 minutos). " & EditorHelpText)
   ok("Pronto: " & name.get & " agora conversa como você, com a sua memória. " &

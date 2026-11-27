@@ -145,15 +145,19 @@ send_file(path, caption)
   -> the adapter reads the file confined to the paddock (confined_read) and
      uploads it: Telegram (sendDocument / sendPhoto), Mattermost (POST /files),
      Teams (an image inline; another file by a consent card in a personal
-     chat, uploaded when accepted)
+     chat, uploaded when accepted), Discord (one multipart message,
+     payload_json + files[0], 10 MB), Slack (files.getUploadURLExternal,
+     the bytes, files.completeUploadExternal; needs files:write), WhatsApp
+     (the media API, then the message by media id, within its limit per kind)
 ```
 
 - On Teams the tool reports "File sent" when the consent card goes out; the
   upload happens when the person accepts it.
 - `cfSendFile` is its own capability: `sendMedia` says a channel shows media,
-  not that its adapter reads a paddock file. Discord drops `mediaUrl` on send
-  and WhatsApp would send the path as a link, so neither is offered the tool
-  until its upload exists.
+  not that its adapter reads a paddock file. Signal, LINE, WeChat, Feishu,
+  DingTalk, Matrix, QQ, WeCom, Email, Google Chat (an app cannot upload),
+  SMS and IRC are not offered the tool: the agent tells the person where the
+  file is.
 
 ## Tests
 

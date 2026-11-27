@@ -483,6 +483,12 @@ arquivo por SMS, responde com texto.
   fazer: `sendMedia` não basta. O Discord ignora o `mediaUrl` no envio e o
   WhatsApp mandaria o caminho local como link; ficam sem a ferramenta até
   ganharem upload (continuação: Discord, Slack e WhatsApp com upload).
+  *Continuação feita (27/11):* Discord (uma mensagem multipart,
+  `payload_json` e `files[0]`, 10 MB), Slack (upload externo em três passos,
+  escopo `files:write`) e WhatsApp (API de mídia, depois a mensagem pelo id
+  da mídia) sobem arquivo do paddock e ganham `cfSendFile`; os apps extras
+  do Teams recebem o certificado por `cert_env`. Achado: o WhatsApp não
+  mandava o caminho como link, como eu tinha dito; devolvia erro.
   *Atendido sem código:* uma URL que a pessoa manda já chega ao agente no
   texto, e a `send_file` no IRC responde com o caminho (o IRC não tem
   `cfSendFile`).

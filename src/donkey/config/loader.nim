@@ -328,7 +328,8 @@ proc parseBotSpecs*(doc: TomlValueRef): seq[BotSpec] =
       tokenEnv: entry.getOrDefault("token_env").getStr().strip(),
       phoneNumberId: entry.getOrDefault("phone_number_id").getStr().strip(),
       appId: entry.getOrDefault("app_id").getStr().strip(),
-      secretEnv: entry.getOrDefault("secret_env").getStr().strip())
+      secretEnv: entry.getOrDefault("secret_env").getStr().strip(),
+      certEnv: entry.getOrDefault("cert_env").getStr().strip())
 
 proc loadTomlConfig*(path: string): Option[TomlValueRef] =
   if not fileExists(path):

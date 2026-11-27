@@ -33,16 +33,16 @@ nimble build
 | ZAI Anthropic | `ZAI_ANTHROPIC_API_KEY` | Anthropic-compatible Claude models | Yes | Yes |
 | ZAI generic | `ZAI_API_KEY` | `glm-4.7` | No (complete only) | Yes |
 | Anthropic | `ANTHROPIC_API_KEY` | `claude-sonnet-5-5` | Yes | Yes |
-| OpenAI | `OPENAI_API_KEY` | `gpt-6.1-sol` | Yes* | Yes |
+| OpenAI | `OPENAI_API_KEY` | `gpt-6.2-sol` | Yes* | Yes |
 | OpenRouter | `OPENROUTER_API_KEY` | `openai/gpt-6.1-sol` | Provider-dependent | Provider-dependent |
 
 \* Tool calling means "over the Chat Completions wire". A model that only
 exposes function calling through the Responses API is not covered by the compat
 path; the table describes the transport, not every model's API surface.
-| Gemini | `GEMINI_API_KEY` | `gemini-3.8-flash` | No (complete only) | Yes |
-| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-4.1-flash` | Yes | Yes |
-| MiniMax | `MINIMAX_API_KEY` | `MiniMax-M2` | No (complete only) | Yes |
-| Groq | `GROQ_API_KEY` | `llama-3.3-70b-versatile` | Yes | Yes |
+| Gemini | `GEMINI_API_KEY` | `gemini-4-hydrogen` | No (complete only) | Yes |
+| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-flash` | Yes | Yes |
+| MiniMax | `MINIMAX_API_KEY` | `MiniMax-M3.1-Flash` | No (complete only) | Yes |
+| Groq | `GROQ_API_KEY` | `openai/gpt-oss-120b` | Yes | Yes |
 | OpenCode Go | `OPENCODE_API_KEY` or `OPENCODE_GO_API_KEY` | `opencode/deepseek-4.1-flash` | Yes | Yes |
 | OpenCode Zen | `OPENCODE_API_KEY` or `ZEN_API_KEY` | `zen/deepseek-4.1-flash` | Yes | Yes |
 | NVIDIA NIM | `NVIDIA_API_KEY` | `nvidia/nemotron-3.5-super-vl-120b-a12b` | Yes | Yes |
@@ -623,8 +623,8 @@ export OPENAI_API_KEY=...
 
 Models in the catalog:
 
-- `gpt-6.1-sol` (default)
-- `gpt-6-astra`
+- `gpt-6.2-sol` (default)
+- `gpt-6.2-astra`
 - `gpt-6.1-terra`
 - `gpt-6-luna`
 
@@ -657,9 +657,9 @@ Gemini remains important for:
 - large context windows (the catalog records `1_048_576` for these models)
 - native Google-side capabilities
 
-Models in the catalog: `gemini-3.8-flash` (default), `gemini-4-argon`,
-`gemini-3.1-pro`, `gemini-2.5-pro`, `gemini-2.5-flash`,
-`gemini-3.5-flash-lite`.
+Models in the catalog: `gemini-4-hydrogen` (default), `gemini-4-neon`,
+`gemini-4-argon`, `gemini-3.5-flash-lite`. Google routes `gemini-2.5-pro` and
+`gemini-2.5-flash` to newer models from 1 December 2026.
 
 ### DeepSeek
 
@@ -668,7 +668,8 @@ export DEEPSEEK_API_KEY=...
 ```
 
 Useful as another compatible fallback path for general chat/coding turns.
-Models in the catalog: `deepseek-4.1-flash` (default), `deepseek-v4-pro`.
+Models in the catalog: `deepseek-flash` (default; the API serves V4.1 Flash, version `DeepSeek-V4.1-Flash-1017`, under this id), `deepseek-v4-pro`.
+DeepSeek announced the end of `deepseek-chat` and `deepseek-reasoner` for 24 July 2026.
 
 ### MiniMax
 
@@ -676,7 +677,7 @@ Models in the catalog: `deepseek-4.1-flash` (default), `deepseek-v4-pro`.
 export MINIMAX_API_KEY=...
 ```
 
-Models in the catalog: `MiniMax-M2` (default), `MiniMax-M2.5`,
+Models in the catalog: `MiniMax-M3.1-Flash` (default), `MiniMax-M3`, `MiniMax-M2.5`,
 `MiniMax-M2.7`, `MiniMax-M2.7-highspeed`.
 
 ### NVIDIA NIM
@@ -728,7 +729,7 @@ Practical recommendations:
 |------|---------------------|
 | Tool-heavy daily use | `zai-coding / glm-4.7` |
 | Broad hosted fallback coverage | `openrouter / <provider/model>` |
-| Google ecosystem and large context | `gemini / gemini-3.8-flash` |
+| Google ecosystem and large context | `gemini / gemini-4-hydrogen` |
 | Verified vision on a hosted endpoint | `nvidia / nvidia/nemotron-3.5-super-vl-120b-a12b` |
 | Local-only setup | `ollama / <local-model>` |
 

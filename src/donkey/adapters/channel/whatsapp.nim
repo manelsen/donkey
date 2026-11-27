@@ -15,7 +15,7 @@
 ## Media: The adapter must resolve a media ID to a URL via the Media API
 ##   (GET /{media-id}) before the InboundMessage mediaUrl is useful.
 
-import std/[json, strutils]
+import std/[json, strutils, sysrand]
 import ../../core/types
 import ../../core/pipeops
 import ../../core/media_download
@@ -23,6 +23,9 @@ import ../../domain/message
 import ../../domain/channels/whatsapp_pure
 import ../../ports/http
 import ../../ports/channel
+import ../../domain/media/audio_pure   # buildMultipartBody
+import ../filesystem/confined_read
+import ../filesystem/paths
 import ../http/std_http
 import ../identity/identity_resolver
 import ../../infra/event_queue
@@ -254,6 +257,31 @@ proc sendMedia*(a: WhatsAppAdapter; toPhone, url, caption: string): Result[void,
   discard ? a.postJson(a.phoneNumberId & "/messages", body)
   ok()
 
+proc sendLocalFile(a: WhatsAppAdapter; toPhone, path, mediaRoot, caption: string): Result[void, string] =
+  ## A paddock file (E9, send_file), read only inside the paddock, uploaded
+  ## to the media API and sent by id, within WhatsApp's limit for its kind.
+  let safePath = ? resolveConfinedMediaPath(mediaRoot, path)
+  var opened = ? openPathComponent(mediaRoot, safePath)
+  let media = waMediaKind(opened.name)
+  let data = opened.readPathComponent(media.limit)
+  opened.closeComponent()
+  let bytes = ? data
+  var raw: array[16, byte]
+  if not urandom(raw): return err("WhatsApp: no randomness for the upload boundary")
+  var boundary = "donkey-"
+  for b in raw: boundary.add b.toHex(2).toLowerAscii
+  let mime = extractMimeType(opened.name)
+  let resp = ? a.http.post(a.base() & "/" & a.phoneNumberId & "/media",
+    buildMultipartBody(boundary, "file", opened.name, mime, bytes,
+                       @[("messaging_product", "whatsapp"), ("type", mime)]),
+    @[a.authHeader(), ("Content-Type", "multipart/form-data; boundary=" & boundary)])
+  if resp.status < 200 or resp.status >= 300:
+    return err("WhatsApp media upload HTTP " & $resp.status)
+  let id = ? parseMediaId(resp.body)
+  discard ? a.postJson(a.phoneNumberId & "/messages",
+                       mediaMessageBody(toPhone, media.kind, id, opened.name, caption))
+  ok()
+
 proc send*(a: WhatsAppAdapter; msg: OutboundMessage): Result[void, string] =
   ## Sends a message to the user's WhatsApp phone number.
   ## Splits messages longer than WaMaxChars into multiple sends.
@@ -262,9 +290,15 @@ proc send*(a: WhatsAppAdapter; msg: OutboundMessage): Result[void, string] =
   if waPhone.len == 0:
     return err("WhatsAppAdapter.send: no WhatsApp ID for user " & $msg.userId)
   
-  # Send media if URL is provided
+  # Send media if URL is provided: a link as is, a paddock file uploaded
   if msg.mediaUrl.len > 0:
-    return a.sendMedia(waPhone, msg.mediaUrl, msg.text)
+    if msg.mediaUrl.startsWith("http://") or msg.mediaUrl.startsWith("https://"):
+      return a.sendMedia(waPhone, msg.mediaUrl, msg.text)
+    if a.sendLocalFile(waPhone, msg.mediaUrl, msg.mediaRoot, msg.text).isOk:
+      return ok()
+    ## Never the path: a neutral note instead of the file.
+    return a.sendChunk(waPhone, (if msg.text.len > 0: msg.text & "\n\n" else: "") &
+                                "(o arquivo não pôde ser enviado)")
   
   for chunk in splitChunks(msg.text, WaMaxChars):
     ? a.sendChunk(waPhone, chunk)

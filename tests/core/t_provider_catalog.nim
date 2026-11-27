@@ -38,7 +38,7 @@ proc runTests*() =
       let catalog = buildDefaultCatalog()
       let result = catalog.lookup("gpt-6-sol")
       check result.isSome
-      check result.get().canonicalName == "gpt-6.1-sol"
+      check result.get().canonicalName == "gpt-6.2-sol"
       check result.get().providerName == "openai"
 
       let opusAlias = catalog.lookup("opus-5.5")
@@ -54,7 +54,7 @@ proc runTests*() =
       # "gpt-4o" is uniquely registered as an alias under openai direct
       let result = catalog.lookup("gpt-4o")
       check result.isSome
-      check result.get().canonicalName == "gpt-6.1-sol"
+      check result.get().canonicalName == "gpt-6.2-sol"
       check result.get().providerName == "openai"
 
     test "lookup returns none for unknown model":
@@ -181,19 +181,23 @@ proc runTests*() =
       let modernModels = @[
         "claude-opus-5-5",
         "claude-sonnet-5-5",
-        "gpt-6.1-sol",
-        "gpt-6-astra",
+        "gpt-6.2-sol",
+        "gpt-6.2-astra",
         "gpt-6.1-terra",
         "gpt-6-luna",
-        "deepseek-4.1-flash",
+        "deepseek-flash",
         "deepseek-v4-pro",
-        "gemini-3.8-flash",
+        "gemini-4-hydrogen",
+        "gemini-4-neon",
         "gemini-4-argon",
+        "gemini-3.8-flash",
         "llama3.3",
         "llama4:scout",
         "glm-4.7",
         "glm-5.1",
-        "MiniMax-M2",
+        "glm-5.3",
+        "MiniMax-M3.1-Flash",
+        "MiniMax-M3",
         "MiniMax-M2.5",
         "MiniMax-M2.7",
       ]
@@ -249,5 +253,16 @@ proc runTests*() =
         check entry.supportsImage
         check entry.supportsThinking
 
+proc runMigrationTests*() =
+  suite "provider catalog — old names reach the current models":
+    test "a preference saved with a retired or wrong id resolves to the current one":
+      let catalog = buildDefaultCatalog()
+      for (old, current) in [("gpt-6.1-sol", "gpt-6.2-sol"), ("gpt-6-astra", "gpt-6.2-astra"),
+                             ("deepseek-4.1-flash", "deepseek-flash"),
+                             ("llama-3.3-70b-versatile", "openai/gpt-oss-120b"),
+                             ("MiniMax-M2", "MiniMax-M3"), ("gemini-3.1-pro", "gemini-3.1-pro-preview")]:
+        check catalog.lookup(old).get().canonicalName == current
+
 when isMainModule:
   runTests()
+  runMigrationTests()

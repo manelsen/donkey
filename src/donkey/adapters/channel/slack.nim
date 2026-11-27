@@ -19,6 +19,8 @@ import ../../core/pipeops
 import ../../domain/message
 import ../../domain/channels/slack_pure
 import ../../ports/http
+import ../filesystem/confined_read
+import ../filesystem/paths
 import ../http/std_http
 import ../identity/identity_resolver
 import ../../infra/event_queue
@@ -168,6 +170,32 @@ proc sendKeyboard*(a: SlackAdapter; userId: UserId;
                    text: string;
                    buttons: seq[seq[(string, string)]]): Result[void, string] {.gcsafe.}
 
+const
+  SlackMaxUploadBytes* = 50 * 1024 * 1024
+  SlackFileUnavailable = "(o arquivo não pôde ser enviado)"
+
+proc uploadFile(a: SlackAdapter; channelId, text, path, mediaRoot: string): Result[void, string] =
+  ## A paddock file (E9, send_file), read only inside the paddock, through
+  ## Slack's external upload: ask for a URL, send the bytes, share the file in
+  ## the channel with the text as its comment. Needs `files:write`.
+  let safePath = ? resolveConfinedMediaPath(mediaRoot, path)
+  var opened = ? openPathComponent(mediaRoot, safePath)
+  let data = opened.readPathComponent(SlackMaxUploadBytes)
+  opened.closeComponent()
+  let bytes = ? data
+  let asked = ? (a.http.post(a.base() & "/files.getUploadURLExternal",
+                  uploadUrlForm(opened.name, bytes.len),
+                  @[a.authHeader(), ("Content-Type", "application/x-www-form-urlencoded")]))
+  if asked.status < 200 or asked.status >= 300:
+    return err("Slack HTTP " & $asked.status)
+  let target = ? parseUploadUrl(asked.body)
+  let sent = ? a.http.post(target.uploadUrl, bytes, @[("Content-Type", "application/octet-stream")])
+  if sent.status < 200 or sent.status >= 300:
+    return err("Slack upload HTTP " & $sent.status)
+  discard ? a.postJson("files.completeUploadExternal",
+                       completeUploadBody(target.fileId, opened.name, channelId, text))
+  ok()
+
 proc send*(a: SlackAdapter; msg: OutboundMessage): Result[void, string] =
   ## Sends a message to the user's Slack DM channel.
   ## Opens the DM channel on first send (conversations.open); caches the id.
@@ -182,7 +210,14 @@ proc send*(a: SlackAdapter; msg: OutboundMessage): Result[void, string] =
     for i in 0 ..< chunks.len - 1:
       ? a.sendChunk(chId, chunks[i])
     return a.sendKeyboard(msg.userId, chunks[^1], msg.keyboard)
-  for chunk in splitChunks(msg.text, SlackMaxChars):
+  var pieces = splitChunks(msg.text, SlackMaxChars)
+  if msg.mediaUrl.len > 0:
+    let first = if pieces.len > 0: pieces[0] else: ""
+    if a.uploadFile(chId, first, msg.mediaUrl, msg.mediaRoot).isOk:
+      if pieces.len > 0: pieces.delete(0)
+    else:
+      pieces.add SlackFileUnavailable   ## never the path
+  for chunk in pieces:
     ? a.sendChunk(chId, chunk)
   ok()
 

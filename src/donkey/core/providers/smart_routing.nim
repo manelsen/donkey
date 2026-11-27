@@ -200,11 +200,11 @@ func defaultModelForProvider*(providerName: string;
     case providerName
     of "openrouter": "openai/gpt-6.1-sol"
     of "anthropic": "claude-sonnet-5-5"
-    of "openai": "gpt-6.1-sol"
-    of "deepseek": "deepseek-4.1-flash"
-    of "gemini": "gemini-3.8-flash"
+    of "openai": DefaultModelOpenAI
+    of "deepseek": DefaultModelDeepSeek
+    of "gemini": DefaultModelGemini
     of "zai-anthropic": "glm-4.7"
-    of "minimax": "MiniMax-M2"
+    of "minimax": DefaultModelMiniMax
     of "zai": "glm-4.7"
     of "groq": GroqDefaultModel
     of "ollama": "llama3.3"

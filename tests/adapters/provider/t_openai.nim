@@ -18,9 +18,9 @@ proc runTests*() =
       check a.displayName == "OpenAI"
 
     test "supports custom providerName such as Groq":
-      let a = newOpenAIAdapter("test-key", model = "llama-3.3-70b-versatile", providerName = "Groq")
+      let a = newOpenAIAdapter("test-key", model = "openai/gpt-oss-120b", providerName = "Groq")
       let c = caps(a)
-      check c.name == "groq/llama-3.3-70b-versatile"
+      check c.name == "groq/openai/gpt-oss-120b"
       check a.displayName == "Groq"
 
     test "advertises streaming and tool calling":
@@ -77,7 +77,7 @@ proc runTests*() =
   suite "openai newOpenAIAdapter":
     test "defaults to gpt-6.1-sol":
       let a = newOpenAIAdapter("key123")
-      check a.model == "gpt-6.1-sol"
+      check a.model == "gpt-6.2-sol"
       check a.apiKey == "key123"
       check a.endpoint == ""
 

@@ -105,6 +105,19 @@ proc runCommandTests*() =
       check lines[0] == "id\tuser\tname"
       check lines[1] == r.editors()[0].id & "\tu-ana\tZed"
 
+    test "a person has at most MaxEditorsPerPerson editors; revoking one makes room":
+      let (r, _) = registry("cap")
+      for i in 0 ..< MaxEditorsPerPerson:
+        let s = r.beginPairing("Zed " & $i).get
+        check r.editorCommand(UserId("u-ana"), s.code).isOk
+        discard r.collectPairing(s.secret)
+      let extra = r.beginPairing("one more").get
+      let refused = r.editorCommand(UserId("u-ana"), extra.code)
+      check refused.isErr and "revogar" in refused.error
+      check r.collectPairing(extra.secret).get.state == epsPending   ## not confirmed
+      check r.editorCommand(UserId("u-ana"), "revogar " & r.editors()[0].id).isOk
+      check r.editorCommand(UserId("u-ana"), extra.code).isOk
+
     test "an unknown code says so":
       let (r, _) = registry("command-bad")
       check r.editorCommand(UserId("u-ana"), "ZZZZZZ").isErr

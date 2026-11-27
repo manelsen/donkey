@@ -3,6 +3,7 @@
 
 import std/[json, unittest]
 import donkey/domain/channels/whatsapp_pure
+import donkey/core/pipeops
 import donkey/core/types
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -347,5 +348,25 @@ proc runTests*() =
       check msg.mediaUrl  == "MEDIA-ABC"
       check msg.text      == ""
 
+proc runUploadTests*() =
+  suite "whatsapp — sending a file (E9, send_file)":
+    test "the kind of media by name, with WhatsApp's size limits":
+      check waMediaKind("foto.jpg") == (kind: "image", limit: 5 * 1024 * 1024)
+      check waMediaKind("nota.ogg").kind == "audio"
+      check waMediaKind("video.mp4").kind == "video"
+      check waMediaKind("relatorio.pdf") == (kind: "document", limit: 100 * 1024 * 1024)
+
+    test "the uploaded media's id":
+      check parseMediaId("""{"id":"123456"}""").get == "123456"
+      check parseMediaId("""{"error":{"message":"bad"}}""").isErr
+
+    test "the message carries the media by id, a document with its name":
+      let doc = mediaMessageBody("5511999990000", "document", "123", "relatorio.pdf", "segue")
+      check doc == %* {"messaging_product": "whatsapp", "to": "5511999990000", "type": "document",
+                       "document": {"id": "123", "filename": "relatorio.pdf", "caption": "segue"}}
+      let audio = mediaMessageBody("5511999990000", "audio", "9", "nota.ogg", "ignored")
+      check audio["audio"] == %* {"id": "9"}   ## audio takes no caption
+
 when isMainModule:
   runTests()
+  runUploadTests()

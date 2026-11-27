@@ -5,6 +5,7 @@
 import std/[os, strutils, unittest]
 import donkey/adapters/channel/teams
 import donkey/adapters/channel/teams_bots
+import ./teams_cert_vectors
 import donkey/adapters/channel/outbound_builder
 import donkey/adapters/identity/identity_resolver
 import donkey/config/environment
@@ -92,5 +93,21 @@ proc runTests*() =
       let r2 = port.send(OutboundMessage(userId: UserId("u-a"), channel: ckTeams, text: "x"))
       check r2.isErr and "app A" in r2.error
 
+proc runCertTests*() =
+  suite "teams bots — a certificate per app (E9)":
+    test "cert_env names the variable with the app's PEM; its token is that app's":
+      let dir = getTempDir() / "donkey_teams_bots_cert"
+      removeDir(dir); createDir(dir)
+      writeFile(dir / "vendas.pem", TestCombinedPem)
+      let spec = @[BotSpec(name: "vendas", channel: "teams", appId: "app-999",
+                           secretEnv: "TEAMS_VENDAS", certEnv: "TEAMS_VENDAS_CERT")]
+      let primary = newTeamsAdapter("app-123", "pw", "tenant-1", dir / "ids.tsv", dir / "c.json")
+      let (bots, problems) = buildTeamsBots(validateBots(spec)[0],
+        environmentOf({"TEAMS_VENDAS": "pw2", "TEAMS_VENDAS_CERT": dir / "vendas.pem"}),
+        primary, dir)
+      check problems.len == 0
+      check bots.slots[0].adapter.certThumbprintOf == TestCertX5t
+
 when isMainModule:
   runTests()
+  runCertTests()

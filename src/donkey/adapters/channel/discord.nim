@@ -28,6 +28,9 @@ import ../../config/environment
 import ../../core/security/dm_policy  # parseChatIdList
 import ../../ports/http
 import ../../core/media_download
+import ../../domain/media/audio_pure   # buildMultipartBody
+import ../filesystem/confined_read
+import ../filesystem/paths
 import ../http/std_http
 import ../identity/identity_resolver
 import ./ws_client
@@ -530,16 +533,58 @@ proc sendDeferredUpdate*(a: DiscordAdapter;
     return err("Discord deferred update error " & $resp.status)
   ok()
 
+const
+  DiscordMaxUploadBytes* = 10 * 1024 * 1024   ## a bot's default limit
+  DiscordFileUnavailable = "(o arquivo não pôde ser enviado)"
+
+type UploadRequest* = object
+  url*, body*: string
+  headers*: seq[HttpHeader]
+
+proc uploadRequest*(a: DiscordAdapter; chId, text, path, mediaRoot: string): Result[UploadRequest, string] =
+  ## A paddock file as one multipart message (E9, send_file): the text as
+  ## `payload_json` (the same safe mentions as a text message), the file as
+  ## `files[0]`. The file is read only inside the paddock (confined_read).
+  let safePath = ? resolveConfinedMediaPath(mediaRoot, path)
+  var opened = ? openPathComponent(mediaRoot, safePath)
+  let data = opened.readPathComponent(DiscordMaxUploadBytes)
+  opened.closeComponent()
+  let bytes = ? data
+  var raw: array[16, byte]
+  if not urandom(raw): return err("Discord: no randomness for the upload boundary")
+  var boundary = "donkey-"
+  for b in raw: boundary.add b.toHex(2).toLowerAscii
+  let payload = withSafeMentions(%* {"content": text})
+  ok(UploadRequest(
+    url: a.base() & "/channels/" & chId & "/messages",
+    body: buildMultipartBody(boundary, "files[0]", opened.name,
+                             extractMimeType(opened.name), bytes,
+                             @[("payload_json", $payload)]),
+    headers: @[a.authHeader(), ("Content-Type", "multipart/form-data; boundary=" & boundary)]))
+
 proc send*(a: DiscordAdapter; msg: OutboundMessage): Result[void, string] =
   ## Sends a message either to an explicit Discord channel target or to the
   ## user's DM channel when no channel target is provided.
   ## If msg.keyboard is non-empty, sends with component buttons.
   ## Splits messages longer than 2000 characters into multiple sends.
+  ## A paddock file (send_file) goes up with the first piece of text.
   if msg.keyboard.len > 0:
     discard a.sendKeyboard(msg.userId, discordText(msg.text), msg.keyboard)
     return ok()
   let chId = ? a.resolveOutboundChannelId(msg)
-  for chunk in splitChunks(discordText(msg.text), DiscordMaxChars):
+  var pieces = splitChunks(discordText(msg.text), DiscordMaxChars)
+  if msg.mediaUrl.len > 0:
+    let first = if pieces.len > 0: pieces[0] else: ""
+    let upload = a.uploadRequest(chId, first, msg.mediaUrl, msg.mediaRoot)
+    if upload.isErr:
+      ## Never the path: a neutral note instead of the file.
+      pieces.add DiscordFileUnavailable
+    else:
+      let resp = ? a.http.post(upload.get.url, upload.get.body, upload.get.headers)
+      if resp.status < 200 or resp.status >= 300:
+        return err("Discord upload error " & $resp.status & ": " & resp.body)
+      if pieces.len > 0: pieces.delete(0)
+  for chunk in pieces:
     ? a.sendChunk(chId, chunk)
   ok()
 
