@@ -12,7 +12,7 @@
 ##   2. toInbound(r, userId)          → InboundMessage
 ##   3. hasMedia(r)                   → bool
 
-import std/json
+import std/[json, strutils]
 import ../../core/pipeops
 import ../../domain/message
 
@@ -201,3 +201,34 @@ func lookup*(r: RecentWaTexts; id: string): string =
     if r.ids[i] == id:
       return r.texts[i]
   ""
+
+
+# ── Sending a file (E9, send_file) ────────────────────────────────────────────
+## A local file is uploaded first (POST /{phone-number-id}/media) and the
+## message carries the media by id; a link is not a local path.
+
+func waMediaKind*(name: string): tuple[kind: string, limit: int] =
+  ## The message type for a file, with WhatsApp's size limit for it.
+  let n = name.toLowerAscii
+  if n.endsWith(".jpg") or n.endsWith(".jpeg") or n.endsWith(".png"):
+    (kind: "image", limit: 5 * 1024 * 1024)
+  elif n.endsWith(".mp4") or n.endsWith(".3gp"):
+    (kind: "video", limit: 16 * 1024 * 1024)
+  elif n.endsWith(".ogg") or n.endsWith(".mp3") or n.endsWith(".m4a") or n.endsWith(".aac"):
+    (kind: "audio", limit: 16 * 1024 * 1024)
+  else:
+    (kind: "document", limit: 100 * 1024 * 1024)
+
+proc parseMediaId*(body: string): Result[string, string] =
+  try:
+    let id = parseJson(body){"id"}.getStr
+    if id.len > 0: ok(id) else: err("WhatsApp: media upload without an id")
+  except CatchableError as e:
+    err("WhatsApp: media upload answer unreadable: " & e.msg)
+
+proc mediaMessageBody*(to, kind, mediaId, filename, caption: string): JsonNode =
+  var media = %* {"id": mediaId}
+  if kind == "document": media["filename"] = %filename
+  if kind != "audio" and caption.len > 0: media["caption"] = %caption
+  result = %* {"messaging_product": "whatsapp", "to": to, "type": kind}
+  result[kind] = media

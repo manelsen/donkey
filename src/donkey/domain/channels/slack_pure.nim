@@ -12,7 +12,7 @@
 ##   2. toInbound(r, userId)        → InboundMessage
 ##   3. isVerification(r)           → bool             (url_verification challenge)
 
-import std/[json, strutils]
+import std/[json, strutils, uri]
 import ../../core/pipeops
 import ../../domain/message
 
@@ -336,3 +336,30 @@ func withoutBroadcastMentions*(body: JsonNode): JsonNode =
       result.add(withoutBroadcastMentions(item))
   else:
     result = body.copy()
+
+
+# ── Uploading a file (E9, send_file) ──────────────────────────────────────────
+## files.getUploadURLExternal (name and size) → the bytes to the URL it gives
+## → files.completeUploadExternal shares the file in the channel. Needs the
+## `files:write` scope.
+
+func uploadUrlForm*(filename: string; length: int): string =
+  "filename=" & encodeUrl(filename, usePlus = false) & "&length=" & $length
+
+proc parseUploadUrl*(body: string): Result[tuple[uploadUrl, fileId: string], string] =
+  ## The upload URL, only on Slack's file host, and the file id.
+  try:
+    let j = parseJson(body)
+    if not j{"ok"}.getBool(false):
+      return err("Slack files.getUploadURLExternal: " & j{"error"}.getStr("unknown"))
+    let url = j{"upload_url"}.getStr
+    let id = j{"file_id"}.getStr
+    if not url.startsWith("https://files.slack.com/") or id.len == 0:
+      return err("Slack: an upload URL outside files.slack.com")
+    ok((uploadUrl: url, fileId: id))
+  except CatchableError as e:
+    err("Slack: upload answer unreadable: " & e.msg)
+
+proc completeUploadBody*(fileId, title, channelId, text: string): JsonNode =
+  result = %* {"files": [{"id": fileId, "title": title}], "channel_id": channelId}
+  if text.len > 0: result["initial_comment"] = %text
