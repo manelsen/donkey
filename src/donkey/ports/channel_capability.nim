@@ -118,7 +118,7 @@ const
   TeamsCapability = ChannelCapabilityDescriptor(
     send: true, sendReturnId: false, editMessage: false,
     sendKeyboard: false, editKeyboard: false, setMessageReaction: false,
-    downloadFile: false, sendMedia: false, sendVoice: false)
+    downloadFile: true, sendMedia: false, sendVoice: false)
 
   # QQ supports sendKeyboard but not editKeyboard
   QQCapability = ChannelCapabilityDescriptor(

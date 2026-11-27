@@ -64,11 +64,11 @@ O que cada frente deixou de fora ao ser implementada. Nenhum está agendado.
 
 | Item | Frente | Limite atual |
 |---|---|---|
-| Teams com anexos e cartões | E2 | só texto entra e sai |
+| Teams: arquivos de saída e cartões | E2 | anexos entram (E9.4); nada sai como arquivo (pede cartão de consentimento) e não há Adaptive Cards |
 | MCP sampling por HTTP | E5 | só servidores stdio podem pedir sampling |
 | Skill novo de usuário | E5 | as ferramentas aparecem a partir da mensagem seguinte (listagem em segundo plano) |
 | Escrita no GitHub (abrir issue, comentar) | 2ª rodada, frente 2 | fora de propósito: o agente lê texto de terceiros; pede decisão sobre aprovação |
-| IRC e Teams com mídia | 2ª rodada, frente 1 | só texto (Mattermost, Google Chat e SMS ganharam anexos no E9); no IRC, só quem tem conta nos serviços da rede é atendido |
+| IRC sem arquivos | 2ª rodada, frente 1 | o protocolo não carrega arquivos (só links, E9.5); só quem tem conta nos serviços da rede é atendido |
 | Fila de mensagens mortas para ferramentas | 2ª rodada, frente 4 | só envios entram na fila: a falha de uma ferramenta volta ao modelo no mesmo turno, e um reenvio depois não teria quem recebesse o resultado |
 | Resposta longa reenviada pela fila | 2ª rodada, frente 4 | uma resposta dividida que falhou no meio volta inteira, e os primeiros pedaços podem se repetir |
 | Revisão de memória | E7.4 | a revisão cuida só de skills; os fatos ficam com o MAGMA, que já guarda cada turno relevante |

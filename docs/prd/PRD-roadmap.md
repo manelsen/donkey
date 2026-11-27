@@ -441,6 +441,13 @@ arquivo por SMS, responde com texto.
   conferir com uma conta real.
 - **E9.4 Teams.** Entrada: anexos (imagens inline e arquivos do OneDrive por
   `downloadUrl`). Saída: arquivos e Adaptive Cards para aprovações.
+  *Feito (entrada):* um arquivo de conversa pessoal
+  (`file.download.info`, URL pré-autenticada do SharePoint, sem token) ou
+  uma imagem colada (URL do Bot Framework, com o token do bot); o primeiro
+  chega ao turno, os outros são nomeados. O token só vai ao serviço do Bot
+  Framework. *Fica:* mandar arquivo (no Teams pede um cartão de
+  consentimento em conversa pessoal) e os Adaptive Cards de aprovação; com
+  vários apps, a imagem é buscada com o token do app padrão.
 - **E9.5 IRC.** Só links: o protocolo não carrega arquivos (DCC fica fora).
   Na entrada, uma URL de imagem pode ir ao `inspect_image` por decisão do
   agente, como em qualquer canal.
@@ -457,6 +464,9 @@ arquivo por SMS, responde com texto.
   fazer: `sendMedia` não basta. O Discord ignora o `mediaUrl` no envio e o
   WhatsApp mandaria o caminho local como link; ficam sem a ferramenta até
   ganharem upload (continuação: Discord, Slack e WhatsApp com upload).
+  *Atendido sem código:* uma URL que a pessoa manda já chega ao agente no
+  texto, e a `send_file` no IRC responde com o caminho (o IRC não tem
+  `cfSendFile`).
 
 *Aceite geral:* uma foto e um áudio mandados em cada canal chegam ao agente
 como nos canais antigos (teste com servidor falso por canal); limites de

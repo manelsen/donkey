@@ -143,5 +143,40 @@ proc runTests*() =
         check p.len <= TeamsChunkChars
       check splitForTeams("curto") == @["curto"]
 
+proc runMediaTests*() =
+  suite "teams — attachments in (E9.4)":
+    test "a file in a personal chat comes with its pre-authenticated download URL":
+      var p = personal("veja")
+      p["attachments"] = %* [{"contentType": "application/vnd.microsoft.teams.file.download.info",
+        "name": "plano.pdf", "content": {"downloadUrl": "https://contoso.sharepoint.com/x/plano.pdf?tempauth=abc",
+                                          "fileType": "pdf"}}]
+      let a = parseActivity(p).get
+      check a.attachments == @[TeamsAttachment(fileId: "file:https://contoso.sharepoint.com/x/plano.pdf?tempauth=abc",
+                                               name: "plano.pdf", mimeType: "application/pdf")]
+
+    test "an inline image comes with its content URL, fetched with the bot's token":
+      var p = personal("")
+      p["attachments"] = %* [{"contentType": "image/png",
+        "contentUrl": "https://smba.trafficmanager.net/amer/v3/attachments/A1/views/original"},
+        {"contentType": "text/html", "content": "<p>oi</p>"}]
+      let a = parseActivity(p).get
+      check a.attachments == @[TeamsAttachment(
+        fileId: "image:https://smba.trafficmanager.net/amer/v3/attachments/A1/views/original",
+        mimeType: "image/png")]   ## the HTML copy of the message is not an attachment
+
+    test "a file only from SharePoint, an image only from the Bot Framework service":
+      check teamsDownload("file:https://contoso.sharepoint.com/x/a.pdf", @["smba.trafficmanager.net"]).get ==
+        (url: "https://contoso.sharepoint.com/x/a.pdf", withToken: false)
+      check teamsDownload("image:https://smba.trafficmanager.net/amer/v3/attachments/A1", @["smba.trafficmanager.net"]).get ==
+        (url: "https://smba.trafficmanager.net/amer/v3/attachments/A1", withToken: true)
+      check teamsDownload("file:https://evil.example/a.pdf", @["smba.trafficmanager.net"]).isErr
+      check teamsDownload("image:https://evil.example/a.png", @["smba.trafficmanager.net"]).isErr
+      check teamsDownload("file:http://contoso.sharepoint.com/a.pdf", @["smba.trafficmanager.net"]).isErr
+      check teamsDownload("other", @["smba.trafficmanager.net"]).isErr
+      check teamsDownload("file:", @["smba.trafficmanager.net"]).isErr
+      check teamsDownload("image:https:", @["smba.trafficmanager.net"]).isErr
+      check hostOfUrl("") == "" and hostOfUrl("ht") == ""   ## never a crash on short input
+
 when isMainModule:
   runTests()
+  runMediaTests()

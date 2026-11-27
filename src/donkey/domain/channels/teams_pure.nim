@@ -22,6 +22,11 @@ const
   BotFrameworkScope* = "https://api.botframework.com/.default"
 
 type
+  TeamsAttachment* = object
+    fileId*:   string   ## `file:<downloadUrl>` or `image:<contentUrl>` (E9.4)
+    name*:     string
+    mimeType*: string
+
   TeamsActivity* = object
     kind*:             string   ## message, conversationUpdate, typing, …
     id*:               string
@@ -39,6 +44,7 @@ type
     text*:             string   ## the bot's mention taken out
     replyToId*:        string
     bot*:              string   ## the `[[bots]]` app it was sent to; "" = default
+    attachments*:      seq[TeamsAttachment]
 
   ReplyTarget* = object
     serviceUrl*:     string
@@ -86,6 +92,69 @@ func collapseSpaces(s: string): string =
       lastSpace = false
   result = result.strip
 
+func mimeOfFileType(t: string): string =
+  case t.toLowerAscii
+  of "pdf": "application/pdf"
+  of "png": "image/png"
+  of "jpg", "jpeg": "image/jpeg"
+  of "gif": "image/gif"
+  of "txt": "text/plain"
+  of "csv": "text/csv"
+  of "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  of "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  of "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+  else: "application/octet-stream"
+
+proc attachmentsOf(payload: JsonNode): seq[TeamsAttachment] =
+  ## A file sent in a personal chat (a pre-authenticated SharePoint URL) or
+  ## an inline image (a Bot Framework URL, fetched with the bot's token). The
+  ## HTML copy of the message and cards are not attachments to read.
+  for a in payload{"attachments"}.getElems:
+    let ct = a{"contentType"}.getStr
+    if ct == "application/vnd.microsoft.teams.file.download.info":
+      let url = a{"content"}{"downloadUrl"}.getStr
+      if url.len > 0:
+        result.add TeamsAttachment(fileId: "file:" & url, name: a{"name"}.getStr,
+                                   mimeType: mimeOfFileType(a{"content"}{"fileType"}.getStr))
+    elif ct.startsWith("image/"):
+      let url = a{"contentUrl"}.getStr
+      if url.len > 0:
+        result.add TeamsAttachment(fileId: "image:" & url, name: a{"name"}.getStr, mimeType: ct)
+
+func hostOfUrl*(url: string): string =
+  ## The host of an `https://` URL; "" for anything else, never a crash.
+  if not url.startsWith("https://"): return ""
+  let rest = url["https://".len .. ^1]
+  let slash = rest.find('/')
+  result = if slash >= 0: rest[0 ..< slash] else: rest
+  let colon = result.find(':')
+  if colon >= 0: result = result[0 ..< colon]
+
+func underHost(host, base: string): bool =
+  host == base or host.endsWith("." & base)
+
+func teamsDownload*(fileId: string; serviceHosts: seq[string]):
+                    Result[tuple[url: string, withToken: bool], string] =
+  ## Where an attachment is fetched and whether the bot's token goes with it:
+  ## a file only from SharePoint (its URL is pre-authenticated: no token), an
+  ## inline image only from the Bot Framework service (with the token).
+  ## Anything else is refused, so the token never leaves Microsoft's service.
+  let colon = fileId.find(':')
+  if colon <= 0: return err("Teams: not an attachment id")
+  let kind = fileId[0 ..< colon]
+  let url = fileId[colon + 1 .. ^1]
+  if not url.startsWith("https://"): return err("Teams: attachment URL is not HTTPS")
+  let host = hostOfUrl(url).toLowerAscii
+  case kind
+  of "file":
+    if underHost(host, "sharepoint.com"): ok((url: url, withToken: false))
+    else: err("Teams: a file is downloaded only from SharePoint")
+  of "image":
+    for h in serviceHosts:
+      if underHost(host, h.toLowerAscii): return ok((url: url, withToken: true))
+    err("Teams: an image is downloaded only from the Bot Framework service")
+  else: err("Teams: not an attachment id")
+
 proc parseActivity*(payload: JsonNode): Result[TeamsActivity, string] =
   if payload.kind != JObject:
     return err("activity is not an object")
@@ -119,6 +188,7 @@ proc parseActivity*(payload: JsonNode): Result[TeamsActivity, string] =
     .withoutMentions(a.recipientName)
     .unescapeEntities
     .collapseSpaces
+  a.attachments = attachmentsOf(payload)
   ok(a)
 
 # ── Reply target ──────────────────────────────────────────────────────────────

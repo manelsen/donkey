@@ -191,5 +191,44 @@ proc runTests*() =
         replyTo: replyTarget(ServiceUrl, "a:1", ""), text: "  ")).isOk
       check r.posts.len == 0
 
+proc runMediaTests*() =
+  suite "teams — attachments in (E9.4)":
+    proc withGets(r: Recorder; gets: ref seq[(string, seq[HttpHeader])]): HttpRuntimePort =
+      result = fakeHttp(r)
+      result.get = proc(url: string; headers: seq[HttpHeader] = @[]): Result[HttpResponse, string] {.gcsafe.} =
+        {.cast(gcsafe).}: gets[].add (url, headers)
+        ok(HttpResponse(status: 200, body: "FILEDATA"))
+
+    proc mediaAdapter(r: Recorder; gets: ref seq[(string, seq[HttpHeader])]): TeamsAdapter =
+      let dir = tempDir("media")
+      newTeamsAdapter(appId = "app-123", appPassword = "pw", tenantId = "tenant-1",
+                      identityPath = dir / "identities.tsv",
+                      conversationsPath = dir / "teams_conversations.json",
+                      http = withGets(r, gets), clock = proc(): int64 {.gcsafe.} = 1_000)
+
+    test "a SharePoint file is fetched as is: its URL carries the authorization":
+      let r = Recorder()
+      let gets = new seq[(string, seq[HttpHeader])]
+      let d = mediaAdapter(r, gets).downloadFile("file:https://contoso.sharepoint.com/x/a.pdf?tempauth=t")
+      check d.isOk and d.get.data.len == 8
+      check gets[][0][0] == "https://contoso.sharepoint.com/x/a.pdf?tempauth=t"
+      check headerOf(gets[][0][1], "Authorization") == ""
+      check r.tokenCalls == 0
+
+    test "an inline image is fetched with the bot's token":
+      let r = Recorder()
+      let gets = new seq[(string, seq[HttpHeader])]
+      let d = mediaAdapter(r, gets).downloadFile(
+        "image:https://smba.trafficmanager.net/amer/v3/attachments/A1/views/original")
+      check d.isOk
+      check headerOf(gets[][0][1], "Authorization") == "Bearer tok-1"
+
+    test "anything else is refused before a request":
+      let r = Recorder()
+      let gets = new seq[(string, seq[HttpHeader])]
+      check mediaAdapter(r, gets).downloadFile("image:https://evil.example/x.png").isErr
+      check gets[].len == 0 and r.tokenCalls == 0
+
 when isMainModule:
   runTests()
+  runMediaTests()

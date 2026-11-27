@@ -37,7 +37,7 @@ proc drainTeamsEvents*(a: var TeamsAdapter;
   var (has, act) = tryRecvActivity()
   while has:
     block next:
-      if act.kind != "message" or act.text.strip.len == 0:
+      if act.kind != "message" or (act.text.strip.len == 0 and act.attachments.len == 0):
         log.debug("teams: skipped " & act.kind & " activity " & act.id)
         break next
       if not markSeen(seen, act.id):
@@ -66,11 +66,24 @@ proc drainTeamsEvents*(a: var TeamsAdapter;
       picked[].rememberConversation(sender, act.serviceUrl, act.conversationId).isOkOr:
         log.warn("teams: conversation not saved: " & error)
       sm.recordChannel(auth.userId, ckTeams, target, persist = false)
-      let msg = InboundMessage(
+      var msg = InboundMessage(
         userId: auth.userId, channel: ckTeams, channelId: target,
         chatId: groupChatId(act.conversationId), rawChannelId: sender,
         messageId: act.id, text: act.text, isGroup: act.isGroup,
         bot: act.bot)   ## the turn answers with that bot's persona
+      ## E9.4: the first attachment is downloaded for the turn (through the
+      ## port's downloadFile); the others are named.
+      var unread: seq[string]
+      for i, f in act.attachments:
+        if i == 0:
+          msg.mediaUrl = f.fileId
+          msg.mediaFileName = f.name
+          msg.mediaMimeType = f.mimeType
+        else:
+          unread.add(if f.name.len > 0: f.name elif f.mimeType.len > 0: f.mimeType else: "anexo")
+      if unread.len > 0:
+        if msg.text.len > 0: msg.text.add "\n\n"
+        msg.text.add "[Anexos não lidos: " & unread.join(", ") & "]"
       let command = decideCommandRequest(CommandRequest(channel: ckTeams, text: msg.text))
       if command.route == crLocal and
           decideLocalCommandAction(command) == lcaContinueLink:

@@ -6,6 +6,9 @@
 import std/[os, strutils, unittest]
 import donkey/adapters/channel/teams
 import donkey/adapters/channel/teams_runtime
+import donkey/domain/channels/teams_pure
+import donkey/adapters/channel/outbound_builder
+import donkey/ports/channel_capability
 import donkey/app/session_manager
 import donkey/core/log
 import donkey/core/pipeops
@@ -190,5 +193,34 @@ proc runTests*() =
       check not markSeen(seen, $(TeamsSeenCapacity + 49))
       check markSeen(seen, "0")   ## long gone
 
+proc runMediaTests*() =
+  suite "teams runtime — attachments in (E9.4)":
+    setup:
+      while tryRecvActivity()[0]: discard
+
+    test "the first attachment goes to the turn; the others are named; no text is needed":
+      var a = newAdapter()
+      var sm: SessionManager
+      sm.init()
+      var seen: TeamsSeen
+      let s = Sink()
+      var act = message("1800", "")
+      act.attachments = @[
+        TeamsAttachment(fileId: "file:https://contoso.sharepoint.com/x/a.pdf", name: "a.pdf",
+                        mimeType: "application/pdf"),
+        TeamsAttachment(fileId: "image:https://smba.trafficmanager.net/x", mimeType: "image/png")]
+      pushActivity(act)
+      check drainTeamsEvents(a, sm, seen, fallbackFor(s), replyFor(s), rtLog) == 1
+      let m = s.turns[0]
+      check m.mediaUrl == "file:https://contoso.sharepoint.com/x/a.pdf"
+      check m.mediaFileName == "a.pdf" and m.mediaMimeType == "application/pdf"
+      check "image/png" in m.text
+
+    test "the registry and the port: attachments in":
+      check supports(ckTeams, cfDownloadFile)
+      check not supports(ckTeams, cfSendFile)
+      check teamsOutboundPort(nil).downloadFile("file:x").isErr
+
 when isMainModule:
   runTests()
+  runMediaTests()
