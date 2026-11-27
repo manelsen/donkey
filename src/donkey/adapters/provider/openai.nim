@@ -20,7 +20,7 @@ import ./sse
 
 const
   OpenAIEndpoint*    = "https://api.openai.com/v1/chat/completions"
-  OpenAIDefaultModel* = "gpt-6.1-sol"
+  OpenAIDefaultModel* = "gpt-6.2-sol"
 
 type
   OpenAIAdapter* = object

@@ -37,12 +37,12 @@ proc runTests*() =
       type SpecCase = tuple[provider, envName, expectedName, expectedModel: string]
       let cases: seq[SpecCase] = @[
         (provider: "openrouter", envName: "OPENROUTER_API_KEY", expectedName: "openrouter", expectedModel: "openai/gpt-6.1-sol"),
-        (provider: "openai", envName: "OPENAI_API_KEY", expectedName: "openai", expectedModel: "gpt-6.1-sol"),
-        (provider: "deepseek", envName: "DEEPSEEK_API_KEY", expectedName: "deepseek", expectedModel: "deepseek-4.1-flash"),
-        (provider: "groq", envName: "GROQ_API_KEY", expectedName: "groq", expectedModel: "llama-3.3-70b-versatile"),
+        (provider: "openai", envName: "OPENAI_API_KEY", expectedName: "openai", expectedModel: "gpt-6.2-sol"),
+        (provider: "deepseek", envName: "DEEPSEEK_API_KEY", expectedName: "deepseek", expectedModel: "deepseek-flash"),
+        (provider: "groq", envName: "GROQ_API_KEY", expectedName: "groq", expectedModel: "openai/gpt-oss-120b"),
         (provider: "anthropic", envName: "ANTHROPIC_API_KEY", expectedName: "anthropic", expectedModel: "claude-sonnet-5-5"),
-        (provider: "gemini", envName: "GEMINI_API_KEY", expectedName: "gemini", expectedModel: "gemini-3.8-flash"),
-        (provider: "minimax", envName: "MINIMAX_API_KEY", expectedName: "minimax", expectedModel: "MiniMax-M2"),
+        (provider: "gemini", envName: "GEMINI_API_KEY", expectedName: "gemini", expectedModel: "gemini-4-hydrogen"),
+        (provider: "minimax", envName: "MINIMAX_API_KEY", expectedName: "minimax", expectedModel: "MiniMax-M3.1-Flash"),
         (provider: "zai", envName: "ZAI_API_KEY", expectedName: "zai", expectedModel: "glm-4.7"),
         (provider: "zai-coding", envName: "ZAI_CODING_API_KEY", expectedName: "zai-coding", expectedModel: "glm-4.7"),
       ]
