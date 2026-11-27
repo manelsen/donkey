@@ -7,7 +7,7 @@
 ## lenient (v1.0 parts are `{"text": …}`, v0.3 ones carried `"kind":"text"`);
 ## writing follows v1.0: `ROLE_AGENT`, `TASK_STATE_*`, `{"task": …}`.
 
-import std/[json, strutils]
+import std/[json, strutils, uri]
 import ../../core/pipeops
 
 const
@@ -124,9 +124,13 @@ func publicA2aUrl*(value: string): Result[string, string] =
   ## https, or http on loopback only (a token crosses it).
   var url = value.strip
   while url.endsWith("/"): url.setLen(url.len - 1)
-  let loopback = url.startsWith("http://127.0.0.1") or url.startsWith("http://localhost") or
-                 url.startsWith("http://[::1]")
-  if not (url.startsWith("https://") or loopback):
+  let parsed = parseUri(url)
+  if parsed.username.len > 0 or parsed.password.len > 0:
+    return err("A2A_PUBLIC_URL must not carry credentials (it is published in the card): " & value)
+  ## The host compared whole: a prefix would let 127.0.0.1.evil.com pass.
+  let loopback = parsed.hostname in ["127.0.0.1", "localhost", "::1"]
+  if parsed.hostname.len == 0 or
+     not (parsed.scheme == "https" or (parsed.scheme == "http" and loopback)):
     return err("A2A_PUBLIC_URL must be https (http only on loopback): " & value)
   if not url.endsWith("/a2a"):
     return err("A2A_PUBLIC_URL must end at /a2a, the JSON-RPC endpoint: " & value)

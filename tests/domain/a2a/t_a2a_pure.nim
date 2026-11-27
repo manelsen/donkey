@@ -31,6 +31,10 @@ proc runTests*() =
       check publicA2aUrl("http://d.example/a2a").isErr
       check publicA2aUrl("https://d.example/").isErr
       check publicA2aUrl("ftp://d.example/a2a").isErr
+      ## the host is compared whole, not as a prefix; no credentials in the card
+      check publicA2aUrl("http://127.0.0.1.evil.com/a2a").isErr
+      check publicA2aUrl("http://localhostfoo/a2a").isErr
+      check publicA2aUrl("https://user:pass@d.example/a2a").isErr
 
   suite "a2a — reading a request":
     test "a JSON-RPC call: method, id and params":
