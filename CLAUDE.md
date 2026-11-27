@@ -4,18 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## O que é o Donkey
 
-**Donkey** é um sistema de agentes de IA ("Claw") escrito em Nim, self-hosted em VPS, servindo equipes corporativas pequenas. São ~86 mil linhas em 404 módulos Nim, com 419 arquivos de teste, seguindo rigorosamente arquitetura hexagonal e TDD.
+**Donkey** é um sistema de agentes de IA ("Claw") escrito em Nim, self-hosted em VPS, servindo equipes corporativas pequenas. São ~90 mil linhas em 423 módulos Nim, com 443 arquivos de teste, seguindo rigorosamente arquitetura hexagonal e TDD.
 
-**Estado atual (26/11/2026; o planejamento está em [`docs/ROADMAP.md`](docs/ROADMAP.md), o detalhe por épico em [`docs/prd/PRD-roadmap.md`](docs/prd/PRD-roadmap.md)):**
+**Estado atual (27/11/2026; o planejamento está em [`docs/ROADMAP.md`](docs/ROADMAP.md), o detalhe por épico em [`docs/prd/PRD-roadmap.md`](docs/prd/PRD-roadmap.md)):**
 - **Canais (22):** Telegram, Discord, Slack, WhatsApp (Cloud API), Microsoft Teams, Google Chat, Mattermost, WeCom, WeChat, QQ (OneBot e oficial), Feishu, DingTalk, LINE, Matrix, Signal, IRC, SMS (Twilio), Email, ntfy, SimpleX, iMessage (BlueBubbles), CLI; vários bots por canal (Telegram, Discord, WhatsApp, Teams), só a fachada: usuários e memória são os da instância
 - **Providers:** OpenRouter, Anthropic, OpenAI, DeepSeek, Gemini, MiniMax, ZAI, Groq, Ollama, OpenCode Go e Zen, NVIDIA, Alibaba, Fireworks, Mistral, Bedrock, Azure OpenAI; streaming pela rota escolhida
 - **Memória:** MAGMA (grafo em SQLite por padrão; PostgreSQL + pgvector opcional), busca em conversas antigas, Backtrail
 - **Contexto e custo:** o histórico da sessão só cresce (nada sai do começo; o contexto recuperado fica com a mensagem do turno) e é compactado em degrau passado 40% do contexto de um modelo de 1M tokens ou 60% de um menor; cache de prompt (marcadores para Claude, tokens do cache no uso, nos traços e no `/insights`); raciocínio adaptativo na Anthropic com os blocos de raciocínio devolvidos intactos
-- **Mídia:** anexos entram por Telegram, Discord, WhatsApp, Mattermost, Google Chat, SMS (MMS) e Teams; a ferramenta `send_file` manda um arquivo do paddock onde o adapter sobe arquivo local (`cfSendFile`: Telegram, Mattermost)
+- **Mídia:** anexos entram por Telegram, Discord, WhatsApp, Teams, Google Chat, Mattermost, WeChat, Feishu, DingTalk, Matrix e SMS (MMS); a ferramenta `send_file` manda um arquivo do paddock onde o adapter sobe arquivo local (`cfSendFile`: Telegram, Mattermost, Teams, Discord, Slack, WhatsApp); o transporte HTTP lê no máximo 64 MiB de uma resposta (25 MB nos canais que baixam anexos)
 - **Auto-aprimoramento:** skills aprendidas por pessoa (`SKILL.md` com guarda que bloqueia), revisão em segundo plano, curador, `/learn`, `/refine`, `/insights`
-- Orchestrator multi-turn, tool loop, agentes nomeados (provider próprio, estrito por padrão quando local) e salas, sub-agentes, agendamentos (cron, intervalo e disparo único), quadro de tarefas (`manage_tasks`, `/tasks`), onboarding, MCP (stdio e HTTP com OAuth; sampling com aprovação), skills Deno, ferramentas `github` e `git_inspect` (só leitura), métricas e traços por turno (arquivo e OpenTelemetry)
+- Orchestrator multi-turn, tool loop, agentes nomeados (provider próprio, estrito por padrão quando local) e salas, sub-agentes, agendamentos (cron, intervalo e disparo único), quadro de tarefas (`manage_tasks`, `/tasks`), onboarding, MCP (stdio e HTTP com OAuth; sampling com aprovação), skills Deno, ferramentas `github` (lê; abre e fecha issues, comenta e rotula com o token de cada pessoa, sob uma política por repositório) e `git_inspect` (só leitura), métricas e traços por turno (arquivo e OpenTelemetry)
 - Respostas que um canal recusa vão para uma fila de mensagens mortas e são reenviadas (`donkey ctl deliveries`)
 - Retomada de turno após queda (journal em `state/turns/`, sem refazer efeitos); nenhuma chamada de ferramenta segura o laço
+- **Editores:** `donkey acp` põe o Donkey no Zed e em outros editores com Agent Client Protocol, pareado pela pessoa (`/editor <código>`), com streaming, ferramentas, aprovações e leitura de arquivos do projeto no próprio editor
 - Gestão pela TUI: usuários, pareamentos, agendamentos, aprovações, traços, agentes da instância e saúde dos providers
 
 **Princípios inegociáveis:**
@@ -175,7 +176,7 @@ O ambiente é lido uma vez: `config/environment.readEnvironment` tira um snapsho
 `app` não chama `std/os` nem `std/osproc` para arquivo ou processo: usa `ports/fs` (`FsRuntimePort`, adapter `adapters/filesystem/fs_adapter`) e `ports/process` (`ProcessRuntimePort`, adapter `adapters/process/process_adapter`), recebidos como valor (`NativeCtx.fs`, `NativeCtx.process`, parâmetros). Teste passa um fake. Credencial em disco vai por `writePrivate` (0600 desde o primeiro byte). Verificado por `tests/architecture/t_app_raw_io.nim` (orçamento 0).
 
 ### Interface
-**CLI + TUI**. Sem web UI. A TUI (`donkey tui`) faz a gestão pelas mesmas operações do `ctl` (`admin_ops`).
+**CLI + TUI**, mais editores pelo ACP (`donkey acp`, E10). Sem web UI. A TUI (`donkey tui`) faz a gestão pelas mesmas operações do `ctl` (`admin_ops`).
 
 ## Ports implementados
 
