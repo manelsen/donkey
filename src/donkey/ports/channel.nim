@@ -62,6 +62,7 @@ type
     sms*:       OutboundChannelPort
     irc*:       OutboundChannelPort
     googleChat*: OutboundChannelPort
+    ntfy*:      OutboundChannelPort
 
 # ── pure helpers ──────────────────────────────────────────────────────────────
 

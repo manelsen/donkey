@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Donkey** é um sistema de agentes de IA ("Claw") escrito em Nim, self-hosted em VPS, servindo equipes corporativas pequenas. São ~86 mil linhas em 404 módulos Nim, com 419 arquivos de teste, seguindo rigorosamente arquitetura hexagonal e TDD.
 
 **Estado atual (26/11/2026; o planejamento está em [`docs/ROADMAP.md`](docs/ROADMAP.md), o detalhe por épico em [`docs/prd/PRD-roadmap.md`](docs/prd/PRD-roadmap.md)):**
-- **Canais (19):** Telegram, Discord, Slack, WhatsApp (Cloud API), Microsoft Teams, Google Chat, Mattermost, WeCom, WeChat, QQ (OneBot e oficial), Feishu, DingTalk, LINE, Matrix, Signal, IRC, SMS (Twilio), Email, CLI; vários bots por canal (Telegram, Discord, WhatsApp, Teams), só a fachada: usuários e memória são os da instância
+- **Canais (20):** Telegram, Discord, Slack, WhatsApp (Cloud API), Microsoft Teams, Google Chat, Mattermost, WeCom, WeChat, QQ (OneBot e oficial), Feishu, DingTalk, LINE, Matrix, Signal, IRC, SMS (Twilio), Email, ntfy, CLI; vários bots por canal (Telegram, Discord, WhatsApp, Teams), só a fachada: usuários e memória são os da instância
 - **Providers:** OpenRouter, Anthropic, OpenAI, DeepSeek, Gemini, MiniMax, ZAI, Groq, Ollama, OpenCode Go e Zen, NVIDIA, Alibaba, Fireworks, Mistral, Bedrock, Azure OpenAI; streaming pela rota escolhida
 - **Memória:** MAGMA (grafo em SQLite por padrão; PostgreSQL + pgvector opcional), busca em conversas antigas, Backtrail
 - **Contexto e custo:** o histórico da sessão só cresce (nada sai do começo; o contexto recuperado fica com a mensagem do turno) e é compactado em degrau passado 40% do contexto de um modelo de 1M tokens ou 60% de um menor; cache de prompt (marcadores para Claude, tokens do cache no uso, nos traços e no `/insights`); raciocínio adaptativo na Anthropic com os blocos de raciocínio devolvidos intactos
@@ -196,7 +196,7 @@ INBOUND ADAPTERS (adapters/channel/)
   TelegramAdapter ─┐
   DiscordAdapter  ─┼→ IdentityResolver → SessionManager
   WeComAdapter    ─┤
-  [19 canais]     ─┘
+  [20 canais]     ─┘
 
 APPLICATION LAYER (app/ — Chronos, effectful)
   SessionManager → OrchestratorAgent (por sessão, AsyncQueue[AgentMessage] como inbox)
