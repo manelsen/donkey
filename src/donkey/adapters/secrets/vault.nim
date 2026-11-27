@@ -69,7 +69,7 @@ proc newPersonVault*(home, userId: string): Result[SecretVault, string] =
   let dir = home / VaultDirName / "people"
   ok(SecretVault(
     dir:      dir,
-    path:     dir / (userId.replace(':', '_') & ".json"),
+    path:     dir / (userId.replace(":", "%3A") & ".json"),   ## % is not allowed in an id: no two ids share a file
     keyPath:  home / VaultKeyFileName,
     keyStore: newFileKeyStore(home / VaultKeyFileName),
   ))

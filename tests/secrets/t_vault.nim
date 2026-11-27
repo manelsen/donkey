@@ -236,6 +236,15 @@ proc runPersonTests*() =
       check ana.removeSecret("GITHUB_TOKEN").get
       check ana.getSecret("GITHUB_TOKEN").get == ""
 
+    test "ids that differ only by : and _ get different files":
+      let home = getTempDir() / "donkey_person_vault_ids"
+      removeDir(home)
+      let colon = newPersonVault(home, "local:cli").get
+      let under = newPersonVault(home, "local_cli").get
+      check colon.path != under.path
+      check colon.setSecret("GITHUB_TOKEN", "a").isOk
+      check under.getSecret("GITHUB_TOKEN").get == ""
+
     test "a person id that is not a plain id is refused":
       check newPersonVault(getTempDir(), "../etc").isErr
       check newPersonVault(getTempDir(), "").isErr
