@@ -18,7 +18,7 @@ This matrix reflects the capability registry (`ports/channel_capability`) the ru
 | [Discord](#discord) | yes | yes | yes | yes | yes | no |
 | [Slack](#slack) | yes | no | yes | no | no | no |
 | WhatsApp | no | no | no | no | yes | no |
-| [Microsoft Teams](#microsoft-teams) | no | no | no | no | yes | no |
+| [Microsoft Teams](#microsoft-teams) | no | no | no | no | yes | yes |
 | [Google Chat](#google-chat) | no | no | no | no | yes | no |
 | [Mattermost](#mattermost) | no | no | no | no | yes | yes |
 | WeChat Work | no | no | no | no | no | no |
