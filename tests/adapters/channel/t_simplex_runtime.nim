@@ -76,7 +76,8 @@ proc runUnreadTests*() =
       sm.init()
       let s = Sink()
       pushSimplex(SimplexInbound(contactId: 5, name: "ana", unreadKind: "image", itemId: "43"))
-      check drainSimplexEvents(a, sm, fallbackFor(s), replyFor(s), rtLog) == 1
+      pushSimplex(SimplexInbound(contactId: 5, name: "ana", unreadKind: "image", itemId: "43"))
+      check drainSimplexEvents(a, sm, fallbackFor(s), replyFor(s), rtLog) == 1   ## once
       check s.turns.len == 0 and s.replies.len == 1 and "texto" in s.replies[0].text
 
 when isMainModule:

@@ -24,7 +24,7 @@ proc runTests*() =
     test "a direct text message in; the bot's own, groups and non-text out":
       let got = parseSimplexEvent(Incoming)
       check got.messages == @[SimplexMessage(contactId: 5, name: "ana", text: "oi, Donkey", itemId: 41)]
-      check got.unread == @[(contactId: 6'i64, name: "bob", kind: "image")]
+      check got.unread == @[(contactId: 6'i64, name: "bob", kind: "image", itemId: 44'i64)]
 
     test "other events and command answers bring nothing":
       check parseSimplexEvent("""{"resp":{"type":"contactConnected","contact":{"contactId":7}}}""").messages.len == 0

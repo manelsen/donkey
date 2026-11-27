@@ -23,7 +23,7 @@ type
 
   SimplexEvent* = object
     messages*: seq[SimplexMessage]
-    unread*: seq[tuple[contactId: int64, name, kind: string]]
+    unread*: seq[tuple[contactId: int64, name, kind: string, itemId: int64]]
       ## direct messages that are not text (an image, a file): answered with a note
 
 proc parseSimplexEvent*(frame: string): SimplexEvent =
@@ -52,7 +52,8 @@ proc parseSimplexEvent*(frame: string): SimplexEvent =
             itemId: chatItem{"meta"}{"itemId"}.getBiggestInt)
       else:
         result.unread.add((contactId: contact{"contactId"}.getBiggestInt,
-                           name: contact{"localDisplayName"}.getStr, kind: msg{"type"}.getStr))
+                           name: contact{"localDisplayName"}.getStr, kind: msg{"type"}.getStr,
+                           itemId: chatItem{"meta"}{"itemId"}.getBiggestInt))
   except CatchableError:
     discard
 

@@ -88,7 +88,8 @@ proc handleFrame(data: string; log: Logger) =
                                       itemId: $m.itemId)):
       log.warn("simplex: the inbound queue is full; a message was dropped")
   for u in event.unread:
-    discard pushSimplex(SimplexInbound(contactId: u.contactId, name: u.name, unreadKind: u.kind))
+    discard pushSimplex(SimplexInbound(contactId: u.contactId, name: u.name, unreadKind: u.kind,
+                                       itemId: $u.itemId))
 
 proc runSession(args: SimplexArgs; log: Logger; connected: var bool) =
   let ws = wsConnect(args.settings.host, Port(args.settings.port), "/", useTls = false)
