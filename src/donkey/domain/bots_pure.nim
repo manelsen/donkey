@@ -22,6 +22,7 @@ type
     phoneNumberId*: string       ## WhatsApp: the number in the shared account
     appId*:         string       ## Teams: the bot's App ID
     secretEnv*:     string       ## Teams: the variable with its password
+    certEnv*:       string       ## Teams: the variable with the path of its certificate PEM
 
   BotAffinity* = object
     last: Table[string, string]   ## user id → bot name ("" = the default bot)

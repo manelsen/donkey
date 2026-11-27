@@ -22,8 +22,10 @@ proc runTests*() =
   suite "send_file":
     test "only the channels that upload a local file are offered it":
       check supports(ckTelegram, cfSendFile) and supports(ckMattermost, cfSendFile)
-      check not supports(ckDiscord, cfSendFile)   ## its send drops media
-      check not supports(ckWhatsApp, cfSendFile)  ## it would send the path as a link
+      check supports(ckDiscord, cfSendFile)       ## multipart upload since E9
+      check supports(ckSlack, cfSendFile)         ## external upload since E9
+      check supports(ckWhatsApp, cfSendFile)      ## media API upload since E9
+      check not supports(ckSignal, cfSendFile)
       check not supports(ckSms, cfSendFile)
 
     test "on a channel that uploads: the file goes out with the reply's target":

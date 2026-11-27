@@ -239,6 +239,10 @@ proc postActivity(a: TeamsAdapter; serviceUrl, conversationId, activityId: strin
     return err("Teams: send status " & $resp.status)
   ok()
 
+func certThumbprintOf*(a: TeamsAdapter): string =
+  ## The x5t of the app's certificate, "" without one (for the status and tests).
+  a.certX5t
+
 proc fileToken(a: TeamsAdapter; url, tenant: string): Result[string, string] =
   ## The token for a file URL (part 3): from the certificate, through a
   ## client assertion; "" without a certificate (until 1 March 2027 the URLs

@@ -1,8 +1,9 @@
 ## Tests for domain/channels/slack_pure.nim — pure Slack Events API parser.
 ## No I/O or HTTP; all input is constructed directly as JsonNode.
 
-import std/[json, unittest]
+import std/[json, strutils, unittest]
 import donkey/domain/channels/slack_pure
+import donkey/core/pipeops
 import donkey/core/types
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -422,5 +423,23 @@ proc runTests*() =
       check blockActionCommand("personality:pirate") == ""
       check blockActionCommand("") == ""
 
+proc runUploadTests*() =
+  suite "slack — uploading a file (E9, send_file)":
+    test "step 1 asks for an upload URL by name and size":
+      check uploadUrlForm("relatório.pdf", 2048) == "filename=relat%C3%B3rio.pdf&length=2048"
+
+    test "step 1's answer: the URL, only on Slack's file host, and the file id":
+      let r = parseUploadUrl("""{"ok":true,"upload_url":"https://files.slack.com/upload/v1/abc","file_id":"F1"}""").get
+      check r.uploadUrl == "https://files.slack.com/upload/v1/abc" and r.fileId == "F1"
+      check parseUploadUrl("""{"ok":true,"upload_url":"https://evil.example/u","file_id":"F1"}""").isErr
+      check parseUploadUrl("""{"ok":false,"error":"missing_scope"}""").error.find("missing_scope") >= 0
+
+    test "step 3 shares the file in the channel, with the text as its comment":
+      let body = completeUploadBody("F1", "relatorio.pdf", "D123", "segue")
+      check body == %* {"files": [{"id": "F1", "title": "relatorio.pdf"}],
+                        "channel_id": "D123", "initial_comment": "segue"}
+      check not completeUploadBody("F1", "a.pdf", "D123", "").hasKey("initial_comment")
+
 when isMainModule:
   runTests()
+  runUploadTests()

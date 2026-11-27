@@ -15,9 +15,9 @@ This matrix reflects the capability registry (`ports/channel_capability`) the ru
 | Channel | Editable UI | Stream updates | Components | Reactions | Files in | Files out (`send_file`) |
 |---------|-------------|----------------|------------|-----------|----------|-------------------------|
 | [Telegram](#telegram) | yes | yes | yes | yes | yes | yes |
-| [Discord](#discord) | yes | yes | yes | yes | yes | no |
-| [Slack](#slack) | yes | no | yes | no | no | no |
-| WhatsApp | no | no | no | no | yes | no |
+| [Discord](#discord) | yes | yes | yes | yes | yes | yes |
+| [Slack](#slack) | yes | no | yes | no | no | yes |
+| WhatsApp | no | no | no | no | yes | yes |
 | [Microsoft Teams](#microsoft-teams) | no | no | yes | no | yes | yes |
 | [Google Chat](#google-chat) | no | no | no | no | yes | no |
 | [Mattermost](#mattermost) | no | no | no | no | yes | yes |
@@ -351,7 +351,7 @@ nothing is queued.
   it, files keep working only until that day. The app manifest also needs
   the RSC permission `File.ReadWriteSelected.User` (Teams accepts it from
   15 January 2027; publish the updated manifest by 1 March 2027). Apps
-  added with `[[bots]]` do not take a certificate yet.
+  added with `[[bots]]` take theirs with `cert_env`.
 - Buttons go as an Adaptive Card with `Action.Execute` (Teams complete, part
   4): approval requests show Approve/Deny, the onboarding its choices. A
   click comes back as an `invoke` named `adaptiveCard/action`; the webhook
@@ -559,7 +559,9 @@ agent     = "suporte"      # {home}/agents/suporte.toml
   `/webhook/teams` route: the audience of the connector's token says which
   bot an activity is for. The bots use the tenant of the default one
   (`MICROSOFT_APP_TENANT_ID`), and each keeps its conversations in
-  `state/teams_conversations_<bot>.json`.
+  `state/teams_conversations_<bot>.json`. `cert_env = "…"` names the
+  variable with the path of that bot's certificate PEM, for its file token
+  (see `MICROSOFT_APP_CERT`).
 - Available on Telegram, Discord, WhatsApp and Teams.
 
 ---
