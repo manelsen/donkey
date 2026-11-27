@@ -49,6 +49,9 @@ proc runCertTests*() =
     test "the certificate's SHA-1 thumbprint, base64url, as OpenSSL computes it":
       check certThumbprint(TestCombinedPem).get == TestCertX5t
       check certThumbprint(TestKeyPem).isErr   ## no certificate in it
+    test "a file with only a certificate says there is no key":
+      let r = rs256Sign(TestCertPem, "x")
+      check r.isErr and "private key" in r.error
 
 when isMainModule:
   runTests()

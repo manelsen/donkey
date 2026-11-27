@@ -372,6 +372,15 @@ proc runFileTokenTests*() =
       check a.handleFileConsent(consent(pendingOf(w.posts[0][1]), "accept")).isOk
       check headerOf(w.puts[0][2], "Authorization") == "Bearer tok"
 
+    test "without a tenant the file token is refused with why, never a broken audience":
+      let dir = tempDir("cert_notenant")
+      writeFile(dir / "app.pem", TestCombinedPem)
+      let a = newTeamsAdapter(appId = "app-123", appPassword = "pw", tenantId = "",
+        identityPath = dir / "identities.tsv", conversationsPath = dir / "c.json",
+        http = wireHttp(Wire()), clock = proc(): int64 {.gcsafe.} = 1_000, certPath = dir / "app.pem")
+      let r = a.downloadFile("file:https://contoso.sharepoint.com/x/a.pdf")
+      check r.isErr and "MICROSOFT_APP_TENANT_ID" in r.error
+
     test "a certificate file that cannot be read fails the file calls, with why":
       let dir = tempDir("cert_bad")
       writeFile(dir / "app.pem", "not a pem")
