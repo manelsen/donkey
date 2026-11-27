@@ -35,6 +35,10 @@ const
     ## Past the deadline the worker cancels and replies; the caller waits this
     ## much longer for that reply before giving up on its own.
 
+const BodyTooLargeError* = "response body larger than "
+  ## The start of the error for a body over the cap; StdHttpAdapter matches
+  ## it (not retried, not a host failure), so both sides use this constant.
+
 const DefaultMaxBodyBytes* = 64 * 1024 * 1024
   ## Every response is read at most this far: a server that sends a huge body
   ## costs the daemon this much memory at most, never more (E9's open item).
@@ -231,7 +235,7 @@ proc perform(request: TransportRequest; expiresAt: int64): Future[TransportReply
     let limit = if request.maxBodyBytes > 0: request.maxBodyBytes else: DefaultMaxBodyBytes
     let bytes = await response.getBodyBytes(limit + 1)
     if bytes.len > limit:
-      return err("response body larger than " & $limit & " bytes")
+      return err(BodyTooLargeError & $limit & " bytes")
     var reply = TransportResponse(status: response.status,
                                   body: newString(bytes.len))
     for i, b in bytes: reply.body[i] = char(b)

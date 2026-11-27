@@ -178,7 +178,7 @@ proc requestWithRetry(a: StdHttpAdapter; meth: HttpMethod; url, body: string;
         return ok(val)
     else:
       lastError = res.error
-      if res.error.startsWith("response body larger than"):
+      if res.error.startsWith(BodyTooLargeError):
         ## The server answered: too much, not a failure of the host, and
         ## another attempt would read the same excess again.
         return err(res.error)
