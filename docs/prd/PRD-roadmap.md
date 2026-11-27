@@ -550,7 +550,11 @@ memória compartilhada.
   `POST /v1/acp/approve`, ao mesmo tratador dos botões dos canais. Cancelar
   ou responder algo desconhecido nega. O sampling de MCP segue pedindo no
   canal.
-- **E10.5 Contexto do editor.** Arquivos anexados ao prompt pelo editor
+- **E10.5 Contexto do editor.** *Feito (27/11):* anexos do prompt entram
+  como `<file>` (E10.1); `editor_read_file` lê no editor, só num turno do
+  editor, com aprovação, quando o editor oferece `fs.readTextFile`; a
+  ferramenta fica sempre na lista (preserva o cache do prompt) e fora do
+  editor responde que só funciona lá. Arquivos anexados ao prompt pelo editor
   entram como anexos do turno; leitura de arquivos pelo editor
   (`fs/read_text_file`) só se o editor oferecer e com aprovação.
 

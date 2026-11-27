@@ -86,6 +86,8 @@ import ./sandbox
 import ./session_state
 import ./session_manager
 import ./approval_runtime
+import ./editor_files
+import ../domain/gateway/identity_pure   # isApiUserId
 import ./offloop_io
 import ./tools/github_git_tools
 import ./skill_tools
@@ -128,6 +130,7 @@ type
     uid*:          UserId
     channel*:      ChannelKind
     bridgeToken*:  uint64   ## the turn behind an API stream (an editor's), or 0
+    editorFiles*:  EditorFileRequests   ## E10.5: reading in the editor; nil = off
     outbox*:       AsyncQueue[OutboundMessage]
     session*:      ptr SessionEntry
     memory*:       MemoryRuntimePort
@@ -786,6 +789,19 @@ proc executeUtilityNativeTool(tc: ToolCallRequest;
       language: ctxAudio.language, prompt: ctxAudio.prompt,
       settings: speechSettings(ctx.env)), ctx)
     return handledOutcome(heard.text)
+  of EditorReadFileToolName:
+    ## E10.5: a file in the person's editor, through the turn's stream.
+    if ctx.bridgeToken == 0 or ctx.editorFiles.isNil or isApiUserId(ctx.uid):
+      return handledError("editor_read_file only works when the person is talking " &
+                          "from an editor (donkey acp); here, ask them to send the file.")
+    let path = j{"path"}.getStr
+    if path.strip.len == 0:
+      return handledError("editor_read_file needs a path.")
+    let read = await ctx.editorFiles.ask(ctx.uid, ctx.outbox, ctx.bridgeToken, path,
+                                         line = j{"line"}.getInt, limit = j{"limit"}.getInt)
+    if read.isErr:
+      return handledError(read.error)
+    return handledOutcome(read.get)
   of SendFileToolName:
     ## E9.6: a workspace file to the channel of the conversation.
     let fileCtx = parseSendFileContext(j, ctx.paddockDir, ctx.log, ctx.fs).valueOr:

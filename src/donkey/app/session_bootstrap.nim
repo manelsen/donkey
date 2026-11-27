@@ -574,6 +574,7 @@ proc nativeSessionTools*(): seq[ToolDescription] {.gcsafe, raises: [].} =
     (TranscribeAudioToolName, TranscribeAudioToolDescription, TranscribeAudioToolSchema),
     (TextToSpeechToolName,  TextToSpeechToolDescription,  TextToSpeechToolSchema),
     (SendFileToolName,      SendFileToolDescription,      SendFileToolSchema),
+    (EditorReadFileToolName, EditorReadFileToolDescription, EditorReadFileToolSchema),
     (AskToolName,           AskToolDescription,           AskToolSchema),
     (TodoWriteToolName,     TodoWriteToolDescription,     TodoWriteToolSchema),
     (CheckpointToolName,    CheckpointToolDescription,    CheckpointToolSchema),

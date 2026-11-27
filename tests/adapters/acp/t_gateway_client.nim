@@ -99,6 +99,15 @@ proc runTests*() =
       withServer(http("401 Unauthorized", """{"error":"unknown editor"}""")) do (base: string):
         check (waitFor newGatewayClient(base).approve("bad", "approval:abc:allow")).isErr
 
+    test "editorResult: the request id and the content, with the credential (E10.5)":
+      withServer(http("200 OK", "{}")) do (base: string):
+        check (waitFor newGatewayClient(base).editorResult("tok", "ef-1", "echo 1", "")).isOk
+        check gRequests[0].startsWith("POST /v1/acp/editor_result HTTP/1.1")
+        check "Authorization: Bearer tok" in gRequests[0]
+        check gRequests[0].endsWith("""{"id":"ef-1","content":"echo 1","error":""}""")
+      withServer(http("404 Not Found", """{"error":"no such request"}""")) do (base: string):
+        check (waitFor newGatewayClient(base).editorResult("tok", "ef-9", "", "x")).isErr
+
     test "a refusal keeps its status and body; no server is status 0 with why":
       withServer(http("401 Unauthorized", """{"error":"unknown editor"}""")) do (base: string):
         let reply = waitFor newGatewayClient(base).turn("bad", "x",

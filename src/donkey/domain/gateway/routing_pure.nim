@@ -82,6 +82,7 @@ func routeGatewayRequest*(req: GatewayRequest): string =
   of "/v1/acp/pair/poll": "acp_pair_poll"
   of "/v1/acp/chat/completions": "acp_chat"
   of "/v1/acp/approve": "acp_approve"
+  of "/v1/acp/editor_result": "acp_editor_result"
   of "/dashboard":     "dashboard"
   else:                "notfound"
 

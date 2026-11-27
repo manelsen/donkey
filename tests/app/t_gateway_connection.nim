@@ -10,6 +10,8 @@ import donkey/ports/ipc
 import donkey/ports/gateway_connection
 import donkey/app/http_gateway
 import donkey/app/editor_registry
+import donkey/app/editor_files
+import donkey/domain/message
 import donkey/adapters/filesystem/fs_adapter
 import donkey/core/types
 
@@ -129,9 +131,10 @@ proc fakeApprovalInput(userId: UserId; text: string): Option[string] {.gcsafe, r
   gApprovalInputs.add(($userId, text))
   some("✅ Aprovado.")
 
-proc serveEditor(editors: EditorRegistry; request: string): string =
+proc serveEditor(editors: EditorRegistry; request: string;
+                 files: EditorFileRequests = nil): string =
   let ctx = newGatewayContext(statusFn, logFn, authToken = "secret", editors = editors,
-                              approvalInput = fakeApprovalInput,
+                              approvalInput = fakeApprovalInput, editorFiles = files,
                               log = newLogger("t_gateway_connection", lvlError)).get()
   let wire = Wire(input: request)
   waitFor serveGatewayConnection(ctx, fakeConnection(wire))
@@ -187,6 +190,22 @@ proc runEditorTests*() =
       check serveEditor(editors, post("/v1/acp/approve", """{"callback":"approval:abc:allow"}""", "nope"))
         .startsWith("HTTP/1.1 401")
       check gApprovalInputs.len == 1
+
+    test "the editor's answer to a file request reaches the waiting tool, from its person only (E10.5)":
+      let editors = editorRegistry()
+      let started = serveEditor(editors, post("/v1/acp/pair", "{}")).bodyOf
+      check editors.confirmPairing(started["code"].getStr, UserId("u-ana")).isOk
+      let token = serveEditor(editors, post("/v1/acp/pair/poll",
+        $(%* {"pairing": started["pairing"].getStr}))).bodyOf["token"].getStr
+      let files = newEditorFileRequests()
+      let outbox = newAsyncQueue[OutboundMessage](4)
+      let reading = files.ask(UserId("u-ana"), outbox, 3, "a.nim", timeoutMs = 5_000)
+      let id = parseJson(outbox.getNoWait().editorRequest)["id"].getStr
+      check serveEditor(editors, post("/v1/acp/editor_result", $(%* {"id": "ef-999", "content": "x"}), token),
+                        files).startsWith("HTTP/1.1 404")
+      check serveEditor(editors, post("/v1/acp/editor_result", $(%* {"id": id, "content": "echo 1"}), token),
+                        files).startsWith("HTTP/1.1 200")
+      check (waitFor reading).get == "echo 1"
 
     test "without a registry the editor routes are not there":
       check serve(post("/v1/acp/pair", "{}")).startsWith("HTTP/1.1 404")

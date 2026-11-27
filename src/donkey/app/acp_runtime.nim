@@ -55,6 +55,9 @@ type
     approve*: proc(token, callback: string): Future[Result[string, string]] {.
                 async: (raises: []).}
       ## The person's answer to an approval, back to the daemon (E10.4).
+    editorResult*: proc(token, id, content, error: string): Future[Result[void, string]] {.
+                     async: (raises: []).}
+      ## The editor's answer to a request the daemon sent (E10.5).
 
   AcpRuntime* = ref object
     ports: AcpPorts
@@ -67,6 +70,8 @@ type
     answers: Table[string, Future[JsonNode].Raising([CancelledError])]
       ## session/request_permission sent, by request id, waiting for the editor
     asking: seq[Future[void].Raising([])]
+    readsFiles: bool                 ## the editor offered fs/read_text_file (E10.5)
+    cwds: Table[string, string]      ## each session's folder, from session/new
 
   TurnState = ref object
     token: string
@@ -145,6 +150,34 @@ proc askPermission(rt: AcpRuntime; token, sessionId, toolCallId, text: string;
   if sent.isErr:
     rt.say(sessionId, "\n\n⚠️ Não consegui entregar sua resposta ao Donkey: " & sent.error)
 
+proc askEditorFile(rt: AcpRuntime; token, sessionId: string; event: StreamEvent) {.
+    async: (raises: []).} =
+  ## E10.5: the daemon's request for a file, passed to the editor, and its
+  ## answer (or why not) passed back. The tool waits on the daemon side.
+  if not rt.readsFiles or event.requestMethod != "fs/read_text_file":
+    discard await rt.ports.editorResult(token, event.requestId, "",
+      "the editor does not offer file reading (fs.readTextFile)")
+    return
+  inc rt.asked
+  let id = "fs-" & $rt.asked
+  let answer = Future[JsonNode].Raising([CancelledError]).init("acp.fsread")
+  rt.answers[id] = answer
+  rt.ports.write(fsReadRequest(%id, sessionId, rt.cwds.getOrDefault(sessionId),
+                               event.requestParams))
+  var reply: JsonNode = nil
+  try:
+    reply = await answer
+  except CancelledError:
+    rt.answers.del(id)
+    return
+  rt.answers.del(id)
+  let failure = if reply.isNil: "no answer" else: reply{"__error"}.getStr
+  let sent =
+    if failure.len > 0: await rt.ports.editorResult(token, event.requestId, "", failure)
+    else: await rt.ports.editorResult(token, event.requestId, reply{"content"}.getStr, "")
+  if sent.isErr:
+    rt.say(sessionId, "\n\n⚠️ Não consegui entregar o arquivo ao Donkey: " & sent.error)
+
 proc sinkFor(rt: AcpRuntime; st: TurnState; sessionId: string): LineSink =
   result = proc(line: string) {.gcsafe, raises: [].} =
     let event = parseStreamLine(line)
@@ -164,6 +197,8 @@ proc sinkFor(rt: AcpRuntime; st: TurnState; sessionId: string): LineSink =
       rt.ports.write(toolCallStarted(sessionId, st.openTool, event.toolName))
     of sekFinish:
       st.finish = event.finishReason
+    of sekEditorRequest:
+      rt.asking.add rt.askEditorFile(st.token, sessionId, event)
     of sekApproval:
       let toolCallId = if st.openTool.len > 0: st.openTool else: "approval-" & $(rt.asked + 1)
       rt.asking.add rt.askPermission(st.token, sessionId, toolCallId, event.text, event.options)
@@ -239,12 +274,14 @@ proc handleRequest(rt: AcpRuntime; msg: AcpMessage) =
     let info = msg.params{"clientInfo"}
     let name = if info.isNil: "" else: info{"title"}.getStr(info{"name"}.getStr)
     if name.len > 0: rt.editorName = name
+    rt.readsFiles = editorReadsFiles(msg.params)
     rt.ports.write(rpcResult(msg.id, initializeResult(msg.params, rt.version)))
   of "authenticate":
     rt.ports.write(rpcResult(msg.id, newJObject()))
   of "session/new":
     let sessionId = "donkey-" & $(rt.sessions.len + 1)
     rt.sessions.add sessionId
+    rt.cwds[sessionId] = msg.params{"cwd"}.getStr
     rt.ports.write(rpcResult(msg.id, %* {"sessionId": sessionId}))
   of "session/prompt":
     let prompt = parsePrompt(msg.params)
@@ -282,7 +319,9 @@ proc handleLine*(rt: AcpRuntime; line: string): Future[void] {.async: (raises: [
     let waiting = rt.answers.getOrDefault(key)
     if not waiting.isNil:
       if not waiting.finished:
-        waiting.complete(if msg.error.isNil: msg.result else: newJNull())
+        waiting.complete(
+          if msg.error.isNil: msg.result
+          else: %* {"__error": msg.error{"message"}.getStr("error")})
 
 proc idle*(rt: AcpRuntime): Future[void] {.async: (raises: []).} =
   ## Waits for the running prompt, if any (tests, and a clean exit).

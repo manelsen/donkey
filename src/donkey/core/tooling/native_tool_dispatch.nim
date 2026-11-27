@@ -60,6 +60,7 @@ const
     "transcribe_audio",
     "text_to_speech",
     "send_file",
+    "editor_read_file",
   ]
 
   SessionNativeTools* = [

@@ -31,7 +31,7 @@ type
     sessionId*, text*: string
 
   StreamEventKind* = enum
-    sekNone, sekText, sekTool, sekFinish, sekDone, sekError, sekApproval
+    sekNone, sekText, sekTool, sekFinish, sekDone, sekError, sekApproval, sekEditorRequest
 
   StreamEvent* = object
     kind*: StreamEventKind
@@ -39,6 +39,8 @@ type
     toolId*, toolName*: string
     finishReason*: string
     options*: seq[(string, string)]   ## an approval's buttons: (label, callback)
+    requestId*, requestMethod*: string  ## a request for the editor (E10.5)
+    requestParams*: JsonNode
 
 proc parseAcpLine*(line: string): Result[AcpMessage, string] =
   try:
@@ -159,6 +161,12 @@ proc parseStreamLine*(line: string): StreamEvent =
     let choice = j{"choices"}{0}
     if choice.isNil: return StreamEvent(kind: sekNone)
     let delta = choice{"delta"}
+    let editorRequest = delta{"donkey_editor_request"}
+    if not editorRequest.isNil:
+      return StreamEvent(kind: sekEditorRequest, requestId: editorRequest{"id"}.getStr,
+                         requestMethod: editorRequest{"method"}.getStr,
+                         requestParams: (let p = editorRequest{"params"};
+                                         if p.isNil: newJObject() else: p))
     let approval = delta{"donkey_approval"}
     if not approval.isNil:
       var options: seq[(string, string)]
@@ -208,3 +216,20 @@ proc chosenCallback*(answer: JsonNode; options: seq[(string, string)]): string =
   for (_, callback) in options:
     if callback == chosen: return chosen
   denial(options)
+
+proc editorReadsFiles*(initializeParams: JsonNode): bool =
+  ## E10.5: the editor said, in `initialize`, that Donkey may ask it to read
+  ## a text file.
+  if initializeParams.isNil: return false
+  initializeParams{"clientCapabilities"}{"fs"}{"readTextFile"}.getBool(false)
+
+proc fsReadRequest*(id: JsonNode; sessionId, cwd: string; params: JsonNode): string =
+  ## `fs/read_text_file` (agent → client). ACP wants an absolute path: a
+  ## relative one is resolved from the session's folder.
+  var path = params{"path"}.getStr
+  if not path.startsWith("/") and cwd.len > 0:
+    path = cwd.strip(leading = false, chars = {'/'}) & "/" & path
+  var p = %* {"sessionId": sessionId, "path": path}
+  if params{"line"}.getInt > 0: p["line"] = %params{"line"}.getInt
+  if params{"limit"}.getInt > 0: p["limit"] = %params{"limit"}.getInt
+  rpcRequest(id, "fs/read_text_file", p)

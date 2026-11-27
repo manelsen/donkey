@@ -99,6 +99,23 @@ func buildApprovalChunk*(id, model: string; created: int64; text: string;
   root["choices"] = %* [choice]
   $root
 
+proc buildEditorRequestChunk*(id, model: string; created: int64; request: string): string =
+  ## A request for the editor (E10.5), `donkey_editor_request`: the method and
+  ## its params, for `donkey acp` to pass on (`fs/read_text_file`).
+  var body = newJNull()
+  try: body = parseJson(request)
+  except CatchableError: body = %* {"error": "unreadable request"}
+  var choice = newJObject()
+  choice["index"] = %0
+  choice["delta"] = %* {"donkey_editor_request": body}
+  var root = newJObject()
+  root["id"] = %id
+  root["object"] = %"chat.completion.chunk"
+  root["created"] = %created
+  root["model"] = %model
+  root["choices"] = %* [choice]
+  $root
+
 func buildAgentError*(message: string; errorType = "server_error";
                       code = ""): string =
   ## Redacted, OpenAI-shaped error body. The caller owns the HTTP status.

@@ -23,6 +23,7 @@ wire formats in `domain/gateway/`.
 | `/v1/acp/pair/poll` | POST | the pairing secret | The editor collects its credential once confirmed |
 | `/v1/acp/chat/completions` | POST | Bearer: the editor's credential | One streamed turn as the paired person |
 | `/v1/acp/approve` | POST | Bearer: the editor's credential | The person's answer to an approval asked in the editor |
+| `/v1/acp/editor_result` | POST | Bearer: the editor's credential | The editor's answer to a request the daemon sent (a file read) |
 | `/api/sessions` | GET | Bearer | Paged session list |
 | `/api/providers` | GET | Bearer | Provider health table |
 | `/api/sessions/{userId}/task` | POST | Bearer | `{"action":"new"}` |
@@ -116,6 +117,13 @@ ignores it). The editor answers with `POST /v1/acp/approve`, `{"callback":
 handler as a channel's button, as the paired person; anything that is not an
 approval's callback is a 400. A token-less message of an editor's turn still
 goes to the channel the person last wrote from.
+
+**Reading in the editor (E10.5).** The `editor_read_file` tool (approval by
+default) works only in an editor's turn: it sends a `donkey_editor_request`
+chunk (`id`, `method: "fs/read_text_file"`, `params`), and waits up to 60 s
+for `POST /v1/acp/editor_result` (`{"id","content"}` or `{"id","error"}`),
+which only the person whose turn asked can answer, once. Content is cut at
+200 KiB.
 
 ## `POST /v1/chat/completions`
 
