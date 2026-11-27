@@ -333,7 +333,38 @@ proc runFilesTests*() =
         mediaUrl: "/etc/passwd", mediaRoot: dir)).isOk
       check "/etc/passwd" notin w.posts[^1][1] and "file.consent" notin w.posts[^1][1]
 
+proc runConsentHardeningTests*() =
+  suite "teams — consent hardening (review of #251)":
+    let personal = replyTarget(ServiceUrl, "a:1xyz", "act-1")
+
+    test "an answer from another conversation does not upload":
+      let w = Wire()
+      let (a, dir) = filesAdapter(w, "other_conv")
+      check a.send(OutboundMessage(channel: ckTeams, replyTo: personal,
+        mediaUrl: dir / "attachments" / "relatorio.pdf", mediaRoot: dir)).isOk
+      var answer = consent(pendingOf(w.posts[0][1]), "accept")
+      answer.conversationId = "a:someone-else"
+      check a.handleFileConsent(answer).isOk
+      check w.puts.len == 0
+      ## the rightful answer still works
+      check a.handleFileConsent(consent(pendingOf(w.posts[0][1]), "accept")).isOk
+      check w.puts.len == 1
+
+    test "a failed upload is told to the person":
+      let w = Wire(putStatus: 500)
+      let (a, dir) = filesAdapter(w, "fail")
+      check a.send(OutboundMessage(channel: ckTeams, replyTo: personal,
+        mediaUrl: dir / "attachments" / "relatorio.pdf", mediaRoot: dir)).isOk
+      check a.handleFileConsent(consent(pendingOf(w.posts[0][1]), "accept")).isErr
+      check "relatorio.pdf" in parseJson(w.posts[^1][1])["text"].getStr
+
+    test "offers expire after a day and are capped":
+      check pendingExpired(createdMs = 0, nowMs = 86_400_001)
+      check not pendingExpired(createdMs = 0, nowMs = 1_000)
+      check MaxPendingFiles == 256
+
 when isMainModule:
   runTests()
   runMediaTests()
   runFilesTests()
+  runConsentHardeningTests()
