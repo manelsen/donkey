@@ -1,6 +1,6 @@
 ## E12.3: a channel run as its own process, under the supervisor.
 
-import std/[os, strutils, unittest]
+import std/[os, strutils, times, unittest]
 import donkey/core/log
 import donkey/core/pipeops
 import donkey/core/types
@@ -11,7 +11,7 @@ import donkey/infra/event_queue
 import donkey/infra/channel_process
 
 var gGot = initEventQueue[string]("test.got", capacity = 64)
-var gOut = initEventQueue[string]("test.out", capacity = 64)
+var gOut = initEventQueue[string]("test.out", capacity = 1024)
 
 proc sink(payload: string) {.nimcall, gcsafe, raises: [].} = gGot.push(payload)
 proc source(): (bool, string) {.nimcall, gcsafe, raises: [].} = gOut.tryTake()
@@ -70,6 +70,19 @@ proc runTests*() =
       check waitUntil(proc(): bool = supervisionOf(ckIrc) == csDown)
       check readFile(path).countLines >= 4   ## the first run and three restarts
       p.stop()
+
+    test "a child that stops reading its stdin cannot hold the daemon's stop":
+      let line = "PRIVMSG #a :" & repeat('x', 400)
+      for _ in 0 ..< 60: gOut.push(line)   ## more than a pipe's buffer
+      var p = startChannelProcess(shSpec("sleep 30"), sink, source,
+                                  newLogger("t", lvlError), Fast).get
+      sleep(500)
+      for _ in 0 ..< 400: gOut.push(line)
+      sleep(500)
+      let began = epochTime()
+      p.stop()
+      check epochTime() - began < 5.0
+      while gOut.tryTake()[0]: discard
 
 when isMainModule:
   runTests()

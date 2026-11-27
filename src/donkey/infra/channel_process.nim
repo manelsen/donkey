@@ -57,13 +57,19 @@ proc sleepOrStop(control: ptr ProcessControl; ms: int): bool =
     waited += slice
   not control.stop.load()
 
-proc writeAll(fd: cint; data: string): bool =
-  var sent = 0
-  while sent < data.len:
-    let n = posix.write(fd, unsafeAddr data[sent], data.len - sent)
-    if n <= 0: return false
-    sent += n
-  true
+proc writeSome(fd: cint; pending: var seq[string]; offset: var int) =
+  ## Writes what the child's stdin takes now, without blocking: a child that
+  ## stops reading must not hold this thread (and the daemon's stop). The
+  ## line being written stays first in `pending`, `offset` bytes into its
+  ## frame; a new child gets a new pipe, so it starts the frame again.
+  while pending.len > 0:
+    let frame = encodeFrame(WireFrame(kind: wfOut, payload: pending[0])) & "\n"
+    let n = posix.write(fd, unsafeAddr frame[offset], frame.len - offset)
+    if n <= 0: return   ## full (EAGAIN) or closed: the next slice, or the next child
+    offset += n
+    if offset < frame.len: return
+    pending = pending[1 .. ^1]
+    offset = 0
 
 proc endChild(p: Process; stopping: bool): string =
   ## Ends the child (asked to stop: terminate, then kill) and says why it ended.
@@ -88,6 +94,8 @@ proc runChild(args: ProcessArgs; log: Logger; pending: var seq[string];
     except CatchableError as e: return "cannot start " & spec.command & ": " & e.msg
   let outFd = p.outputHandle.cint
   let inFd = p.inputHandle.cint
+  discard fcntl(inFd, F_SETFL, fcntl(inFd, F_GETFL) or O_NONBLOCK)
+  var offset = 0
   var buf = ""
   var chunk: array[4096, char]
   while not control.stop.load():
@@ -97,12 +105,7 @@ proc runChild(args: ProcessArgs; log: Logger; pending: var seq[string];
       let (got, line) = args.source()
       if not got: break
       pending.add line
-    var written = 0
-    for line in pending:
-      if not writeAll(inFd, encodeFrame(WireFrame(kind: wfOut, payload: line)) & "\n"):
-        break
-      inc written
-    if written > 0: pending = pending[written .. ^1]
+    writeSome(inFd, pending, offset)
     var pfd = TPollfd(fd: outFd, events: POLLIN)
     let ready = poll(addr pfd, 1, PollSliceMs)
     if ready < 0: continue
