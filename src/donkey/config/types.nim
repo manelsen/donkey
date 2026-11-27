@@ -7,6 +7,8 @@ import ./environment
 import ../domain/bots_pure
 import ../domain/tools/github_pure   # GithubPolicy
 export github_pure.GithubPolicy
+import ../domain/a2a/a2a_client_pure   # A2aAgent
+export a2a_client_pure.A2aAgent
 
 export bots_pure
 
@@ -53,6 +55,8 @@ type
     bots*:          seq[BotSpec] ## `[[bots]]` entries that are well formed (E3)
     githubPolicy*:  GithubPolicy ## `[github]`: what writes may do per repository (E11.3)
     githubPolicyError*: string   ## why `[github]` was not read; every write then asks
+    a2aAgents*:     seq[A2aAgent] ## `[[a2a.agents]]`: whom delegate_to_agent may call (E13.4)
+    a2aAgentsError*: string       ## why `[a2a]` was not read; no agent is then callable
     botProblems*:   seq[string]  ## why the other entries were left out
 
 func defaultConfig*(home: string): DonkeyConfig =

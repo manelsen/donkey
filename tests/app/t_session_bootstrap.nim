@@ -1,3 +1,4 @@
+import donkey/domain/a2a/a2a_client_pure
 import std/[json, os, sequtils, strutils, unittest]
 import donkey/adapters/memory/md_file
 import donkey/adapters/provider/runtime_builder
@@ -259,6 +260,14 @@ model = "gemini-2.5-flash"
 
       setCredentialForTest("BRAVE_API_KEY", "test-brave-key")
       check nativeSessionTools().anyIt(it.name == WebSearchToolName)
+
+    test "delegate_to_agent is there only when [[a2a.agents]] lists some (E13.4)":
+      defer: useA2aAgents(@[])
+      useA2aAgents(@[])
+      check not nativeSessionTools().anyIt(it.name == DelegateToolName)
+      useA2aAgents(@[A2aAgent(name: "planner", url: "https://p/a2a", tokenEnv: "T", host: "p")])
+      let tool = nativeSessionTools().filterIt(it.name == DelegateToolName)
+      check tool.len == 1 and "planner" in tool[0].schemaJson
 
     test "loadSessionBootstrapPlan maps context fields":
       let plan = loadSessionBootstrapPlan(SessionContext(

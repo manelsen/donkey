@@ -51,6 +51,7 @@ const
     "fetch",
     "web_search",
     "github",
+    "delegate_to_agent",
   ]
 
   UtilityNativeTools* = [

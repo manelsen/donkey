@@ -710,8 +710,11 @@ relevantes para equipes pequenas.
   pronta. **Desvio:** o agente não é uma identidade nova com onboarding,
   e sim uma credencial da pessoa, como o editor (E10.2): o PRD pedia
   "identidade com pareamento", e o pareamento existente já dá isso sem um
-  segundo caminho de identidade. Falta o cliente (a ferramenta de
-  delegação).
+  segundo caminho de identidade. *Cliente feito (27/11):*
+  `delegate_to_agent`, só para os agentes de `[[a2a.agents]]` no
+  `donkey.toml`, com aprovação a cada chamada (o pedido inteiro à vista) e
+  o token de cada um no cofre; fala v1.0 e cai para v0.3 quando o agente
+  não conhece `SendMessage`. Com isso o E13 está completo.
 
 *Aceite geral:* cada canal com servidor falso nos testes, documentação em
 `docs/topics/channels.md` e estado de conexão no status.

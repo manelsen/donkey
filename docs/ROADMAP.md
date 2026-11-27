@@ -159,7 +159,7 @@ tomadas; no E13, o A2A entra, e o Donkey também chama agentes A2A.
 | E10 | Interface para editores (ACP) | **Feito** (#256, #258, #260 e o PR de leitura): `donkey acp` no Zed e afins, pareado pela pessoa, com streaming, ferramentas, aprovações no editor e leitura de arquivos do projeto | Decididas: pareamento; memória compartilhada com os outros canais |
 | E11 | Escrita no GitHub | **Feito** (#262 e o PR de escrita): abrir e fechar issues, comentar, rotular, com o token de cada pessoa (`/github token`, só em conversa privada) e política por repositório (`allow`, `ask`, `deny`; padrão `ask`) | Decididas: política por repositório; token da pessoa |
 | E12 | Supervisão de adapters | **Feito:** E12.1 (auditoria e trava de padrões perigosos) e E12.2 (supervisor nas threads de canal e nos drenos, com `restarting` e `down` no status) feitos; E12.3, IRC, Mattermost e Discord como processo filho (`DONKEY_CHANNEL_PROCESSES`), que isola um `Defect` | Decidida: inspirar-se no OTP |
-| E13 | Canais restantes | **Em andamento:** ntfy (#264), SimpleX (#265) e BlueBubbles/iMessage (#266) feitos; o servidor A2A (v1.0, pareado como um editor) feito; falta o cliente, a ferramenta de delegação | Decididas: A2A entra, também como cliente |
+| E13 | Canais restantes | **Feito:** ntfy (#264), SimpleX (#265) e BlueBubbles/iMessage (#266) feitos; A2A feito: o servidor (v1.0, pareado como um editor) e o cliente (`delegate_to_agent`, com lista de agentes e aprovação) | Decididas: A2A entra, também como cliente |
 
 ## 7. Decidido não fazer
 

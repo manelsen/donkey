@@ -83,6 +83,25 @@ create_issue = "ask"
       check cfg.githubPolicy.decide("acme/site", "close_issue") == gpDeny
       check cfg.githubPolicy.decide("other/x", "comment") == gpDeny
 
+    test "[[a2a.agents]]: the agents Donkey may delegate to (E13.4)":
+      let tmp = getTempDir() / "t_loader_a2a_agents.toml"
+      writeFile(tmp, """
+[[a2a.agents]]
+name = "planner"
+url = "https://planner.example/a2a"
+token_env = "A2A_PLANNER_TOKEN"
+description = "Planeja viagens"
+""")
+      defer: removeFile(tmp)
+      let cfg = loadConfig(tmp, Environment())
+      check cfg.a2aAgentsError == ""
+      check cfg.a2aAgents.len == 1 and cfg.a2aAgents[0].name == "planner"
+      let bad = getTempDir() / "t_loader_a2a_bad.toml"
+      writeFile(bad, "[[a2a.agents]]\nname = \"x\"\nurl = \"http://far.example/a2a\"\ntoken_env = \"T\"\n")
+      defer: removeFile(bad)
+      let badCfg = loadConfig(bad, Environment())
+      check badCfg.a2aAgentsError.len > 0 and badCfg.a2aAgents.len == 0
+
     test "no [github]: every write asks; a bad policy asks too, and says why":
       check loadConfig("/tmp/donkey_nonexistent_12345.toml", Environment())
         .githubPolicy.decide("o/r", "comment") == gpAsk
