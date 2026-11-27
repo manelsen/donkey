@@ -185,5 +185,7 @@ Every HTTP response is read at most 64 MiB (`DefaultMaxBodyBytes` in
 `deadline_transport`): past that the read stops and the response is refused,
 so a server sending a huge body costs the daemon that much memory at most.
 Channels that download attachments cap it at 25 MB in the transport itself
-(Mattermost, SMS, Teams, Google Chat; Discord and Telegram refuse by the size
-the platform announces); a body over the cap is not retried.
+(Mattermost, SMS, Teams, Google Chat). Discord refuses an attachment by the
+size it announces, before downloading; Telegram's Bot API itself serves files
+of at most 20 MB; the other channels are bounded by the 64 MiB transport cap.
+A body over the cap is not retried.
