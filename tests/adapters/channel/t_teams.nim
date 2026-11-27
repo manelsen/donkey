@@ -432,6 +432,16 @@ proc runCardSendTests*() =
       check card["contentType"].getStr == "application/vnd.microsoft.card.adaptive"
       check card["content"]["actions"].len == 2
 
+    test "buttons and a file together: the card, then the file":
+      let w = Wire()
+      let (a, dir) = filesAdapter(w, "card_media")
+      check a.send(OutboundMessage(channel: ckTeams, text: "Aprovar?",
+        replyTo: replyTarget(ServiceUrl, "a:1xyz", "act-1"),
+        keyboard: @[@[("✅", "apr:abc:y")]],
+        mediaUrl: dir / "attachments" / "grafico.png", mediaRoot: dir)).isOk
+      check w.posts.len == 2
+      check "card.adaptive" in w.posts[0][1] and "data:image/png" in w.posts[1][1]
+
 when isMainModule:
   runTests()
   runMediaTests()
