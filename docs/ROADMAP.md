@@ -186,10 +186,10 @@ aberto** voltam ao mantenedor antes da execução.
 | Ordem | PRD | Épicos | O que entrega | Decisões em aberto |
 |---:|---|---|---|---|
 | 1 | [Rede e interoperabilidade](prd/PRD-rede-e-interop.md) | E14–E16 | A conexão vai ao endereço conferido (fecha o *DNS rebinding* do HTTP); A2A provado contra o SDK oficial, com fixtures gravadas, prazo por agente e confirmação pelo operador; IRC contra um servidor real | Nenhuma (só propostas) |
-| 2 | [Mídia acessível](prd/PRD-midia-acessivel.md) | E17–E19 | Nada que a pessoa manda some; voz transcrita antes do turno e na memória; documento pelo essencial; `/voz`, `/transcricao`, `/curto`, `/longo`, `/cego` | M3: quem lê vídeo e documento escaneado |
-| 3 | [Aprovação acessível](prd/PRD-aprovacao-acessivel.md) | E20–E21 | Responder por botão, texto ou voz, reconhecido pelo código; só a pessoa decide; o pedido começa pelo essencial; do grupo para o privado; permissões com prazo e `/permissoes` | A5: o turno espera ou o pedido fica pendente até 24 h |
-| 4 | [Proatividade](prd/PRD-proatividade.md) | E22–E24 | O Donkey puxa assunto: prazos, tarefas, o que a pessoa pediu para acompanhar; tetos, horário de trabalho, nunca duas sem resposta | P2: ligada ou desligada por padrão |
-| 5 | [Computador por pessoa](prd/PRD-computador-por-pessoa.md) | E25–E29 | O navegador fora do daemon (E25, proposto já); depois, se decidido, computador persistente, despachante sem o socket do Docker no daemon, portão de rede, cofre de senhas, tela | C2 a C7: escopo, isolamento, despachante, portão, cofre, tela |
+| 2 | [Mídia acessível](prd/PRD-midia-acessivel.md) | E17–E19 | Nada que a pessoa manda some; voz transcrita antes do turno e na memória; documento pelo essencial; `/voz`, `/transcricao`, `/curto`, `/longo`, `/cego` | M3 decidida: um provider com visão que já temos |
+| 3 | [Aprovação acessível](prd/PRD-aprovacao-acessivel.md) | E20–E21 | Responder por botão, texto ou voz, reconhecido pelo código; só a pessoa decide; o pedido começa pelo essencial; do grupo para o privado; permissões com prazo e `/permissoes` | A5 decidida: o pedido fica pendente até 24 h |
+| 4 | [Proatividade](prd/PRD-proatividade.md) | E22–E24 | O Donkey puxa assunto: prazos, tarefas, o que a pessoa pediu para acompanhar; tetos, horário de trabalho, nunca duas sem resposta | P2 decidida: desligada por padrão, cada pessoa entra |
+| 5 | [Computador por pessoa](prd/PRD-computador-por-pessoa.md) | E25–E29 | O navegador fora do daemon (E25, proposto já); depois, se decidido, computador persistente, despachante sem o socket do Docker no daemon, portão de rede, cofre de senhas, tela | C2 a C7 decididas: vale, no desenho do Supernova; detalhes na linha de base |
 
 A mídia vem antes da aprovação porque a voz que decide um pedido (E20.3)
 precisa da transcrição antes do turno (E18.1); as demais etapas da aprovação

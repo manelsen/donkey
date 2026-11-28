@@ -2,8 +2,8 @@
 # PRD Proatividade: o agente que puxa assunto, sem virar ruído
 
 > **Situação em 27/11/2026:** rascunho. As decisões marcadas **[proposta]**
-> são padrões sugeridos que o mantenedor confirma; **P2** (ligada ou
-> desligada por padrão) está em aberto.
+> são padrões sugeridos que o mantenedor confirma. **P2** decidida em
+> 27/11: desligada por padrão na instância; cada pessoa entra.
 >
 > **Depende de:** agendamentos e lembretes, heartbeat, quadro de tarefas
 > (E4), memória MAGMA, `web_search`, o modelo auxiliar da revisão em segundo
@@ -60,7 +60,7 @@ do código são o teto; o modelo decide dentro dele.**
 | # | Decisão |
 |---|---|
 | P1 | **[proposta]** **Dois gatilhos.** *Fixos:* um prazo do quadro ou um lembrete que vence amanhã, uma tarefa de agente que terminou, uma aprovação pendente há horas. *Fluidos:* temas da conversa e o que a pessoa pediu para acompanhar ("me avisa se essa issue andar"). |
-| P2 | **Em aberto: ligada ou desligada por padrão.** O Supernova liga por padrão (companhia). Num assistente de equipe, **recomendação: desligada por padrão na instância** (`[proactive] enabled = false`), e, quando o operador liga, **cada pessoa entra com `/proativo sim`** ou recebe um convite único para entrar. |
+| P2 | **Decidida (mantenedor, 27/11): desligada por padrão na instância; cada pessoa entra.** O Supernova liga por padrão (companhia). Num assistente de equipe, **recomendação: desligada por padrão na instância** (`[proactive] enabled = false`), e, quando o operador liga, **cada pessoa entra com `/proativo sim`** ou recebe um convite único para entrar. |
 | P3 | **[proposta]** **Quanto:** até **2 mensagens fluidas por dia** por pessoa no começo; **nunca duas seguidas sem resposta** (a próxima fluida espera a pessoa falar); o teto aprende entre **1 e 4** com as respostas; os fixos não contam no teto. `/proativo mais` e `/proativo menos` ajustam. |
 | P4 | **[proposta]** **Quando:** só no **horário de trabalho da pessoa**, no fuso dela (`USER.md`), padrão **9 h às 18 h, dias úteis**; configurável por pessoa (`/proativo horario 8-17`). Fora dele, nem os fixos (ficam para a abertura da próxima janela). |
 | P5 | **[proposta]** **Quem decide:** o código abre a janela (P3, P4, a última sem resposta, o canal permite); dentro dela, o **modelo auxiliar** responde "vale falar agora? sobre o quê?" e pode dizer que não; o texto sai do modelo da conversa, na voz do Donkey. |
@@ -235,7 +235,7 @@ desligar, o WhatsApp.
 ## 9. Riscos
 
 - **Ruído.** O teto baixo, o "nunca duas sem resposta" e o aprendizado para
-  baixo; e P2, se o mantenedor escolher desligada por padrão.
+  baixo; e P2: desligada por padrão, cada pessoa entra.
 - **Invasão.** A mesma frase é cuidado para uma pessoa e intromissão para
   outra. P6 conservador por padrão, configurável por pessoa.
 - **Custo.** Cada janela que decide falar pesquisa e escreve; o modelo

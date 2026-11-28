@@ -1,9 +1,10 @@
 [PRD]
 # PRD Computador por pessoa: um computador de cada um, e nada sai dele sem a pessoa aprovar
 
-> **Situação em 27/11/2026:** rascunho para o mantenedor. As decisões da
-> seção 3 estão **em aberto**, salvo C1 (**[proposta]**, independente das
-> outras). Nenhuma etapa além do E25 começa antes delas.
+> **Situação em 27/11/2026:** o mantenedor decidiu que vale (C2 a C7, em
+> 27/11), no desenho do Supernova. Os detalhes de cada decisão (tamanhos,
+> limites, isolamento) são fechados na linha de base (E25.0) e nas etapas de
+> E26 a E29, que ainda serão escritas a partir dele.
 >
 > **Depende de:** [PRD Rede e interoperabilidade](PRD-rede-e-interop.md)
 > (a conexão conferida) e [PRD Aprovação acessível](PRD-aprovacao-acessivel.md)
@@ -63,12 +64,12 @@ promessas, garantidas pelo **código**:
 | # | Decisão |
 |---|---|
 | C1 | **[proposta]** **O navegador sai do processo do daemon** (como o A1 do Supernova): o Lightpanda passa a rodar num container próprio, sem os segredos da instância, com a saída pela conexão conferida. Vale mesmo que o resto desta PRD não seja feito. |
-| C2 | **Em aberto: vale para o Donkey?** Um computador persistente por pessoa custa memória (o Supernova reserva 1,5 GB e liga até 4) e operação. Para equipes pequenas numa VPS, talvez **por agente nomeado** ou **por equipe**, não por pessoa. |
-| C3 | **Em aberto: isolamento.** gVisor (como o Supernova), Docker comum com `seccomp` e sem capacidades, ou microVM (Firecracker). |
-| C4 | **Em aberto: o despachante.** Tirar o socket do Docker do daemon (como o Supernova) é a mudança de segurança maior; hoje o `bash` precisa dele. |
-| C5 | **Em aberto: o portão.** No navegador, interceptar pedidos que mudam estado (o desenho do Supernova); no shell, saída só para repositórios de pacote, lista que cresce com aprovação. |
-| C6 | **Em aberto: cofre de senhas.** A pessoa passa a senha por comando; o código preenche o campo direto; nunca vai ao modelo nem ao histórico. Onde guardar (o `PersonSecretsPort` existente?) e se a voz pode ditar (o Supernova recusa: a transcrição passa por provider externo). |
-| C7 | **Em aberto: a tela.** Captcha e 2FA pedem uma pessoa: um link da tela (noVNC) por túnel, ou nada disso no Donkey. |
+| C2 | **Vale (mantenedor, 27/11).** Escopo (por pessoa, como o Supernova, ou por agente ou equipe) fechado na linha de base, medindo a memória da VPS. Um computador persistente por pessoa custa memória (o Supernova reserva 1,5 GB e liga até 4) e operação. Para equipes pequenas numa VPS, talvez **por agente nomeado** ou **por equipe**, não por pessoa. |
+| C3 | **Vale, no desenho do Supernova (mantenedor, 27/11); detalhe na linha de base:** isolamento.** gVisor (como o Supernova), Docker comum com `seccomp` e sem capacidades, ou microVM (Firecracker). |
+| C4 | **Vale, no desenho do Supernova (mantenedor, 27/11); detalhe na linha de base:** o despachante.** Tirar o socket do Docker do daemon (como o Supernova) é a mudança de segurança maior; hoje o `bash` precisa dele. |
+| C5 | **Vale, no desenho do Supernova (mantenedor, 27/11); detalhe na linha de base:** o portão.** No navegador, interceptar pedidos que mudam estado (o desenho do Supernova); no shell, saída só para repositórios de pacote, lista que cresce com aprovação. |
+| C6 | **Vale, no desenho do Supernova (mantenedor, 27/11); detalhe na linha de base:** cofre de senhas.** A pessoa passa a senha por comando; o código preenche o campo direto; nunca vai ao modelo nem ao histórico. Onde guardar (o `PersonSecretsPort` existente?) e se a voz pode ditar (o Supernova recusa: a transcrição passa por provider externo). |
+| C7 | **Vale, no desenho do Supernova (mantenedor, 27/11); detalhe na linha de base:** a tela.** Captcha e 2FA pedem uma pessoa: um link da tela (noVNC) por túnel, ou nada disso no Donkey. |
 
 ## 4. Fora de escopo
 

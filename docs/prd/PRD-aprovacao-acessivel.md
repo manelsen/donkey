@@ -2,8 +2,8 @@
 # PRD Aprovação acessível: a pessoa responde do jeito que conseguir, e só ela decide
 
 > **Situação em 27/11/2026:** rascunho. As decisões marcadas **[proposta]**
-> são padrões sugeridos que o mantenedor confirma; a decisão **A5** está em
-> aberto e volta a ele antes da etapa E20.6.
+> são padrões sugeridos que o mantenedor confirma. **A5** decidida em
+> 27/11: o pedido espera a pessoa (opção b).
 >
 > **Depende de:** aprovações (`app/approval_runtime`, E5.2), escrita no
 > GitHub (E11) e A2A (E13.4), todos no master. A etapa E20.3 (a voz decide)
@@ -79,7 +79,7 @@ também há quem use leitor de tela, ditado ou só o celular.
 
 | # | Decisão |
 |---|---|
-| A5 | **Em aberto.** Hoje o turno espera até 300 s e nega. Duas saídas: **(a)** manter a espera no turno, com prazo maior (por exemplo 15 min) e um lembrete no meio; simples, mas o turno fica parado e a sessão também. **(b)** como o Supernova: sem resposta no prazo curto, o turno segue dizendo que pediu confirmação; o pedido fica pendente até **24 h**, com um lembrete às **3 h**; um "sim" depois vira uma **autorização** e chega à agente como mensagem ("[Aprovação #N] aprovada"), que refaz o passo. **Recomendação: (b)**, porque uma pessoa que demora a responder (cega, em reunião, dormindo) não deve perder o pedido nem travar a conversa. |
+| A5 | **Decidida (mantenedor, 27/11): opção (b).** Hoje o turno espera até 300 s e nega. Duas saídas: **(a)** manter a espera no turno, com prazo maior (por exemplo 15 min) e um lembrete no meio; simples, mas o turno fica parado e a sessão também. **(b)** como o Supernova: sem resposta no prazo curto, o turno segue dizendo que pediu confirmação; o pedido fica pendente até **24 h**, com um lembrete às **3 h**; um "sim" depois vira uma **autorização** e chega à agente como mensagem ("[Aprovação #N] aprovada"), que refaz o passo. **Recomendação: (b)**, porque uma pessoa que demora a responder (cega, em reunião, dormindo) não deve perder o pedido nem travar a conversa. |
 | A6 | **[proposta]** Um pedido nascido num **grupo** vai para o **privado** da pessoa; no grupo, a agente só diz que pediu confirmação no privado. Num canal sem privado, fica no chat do turno. |
 
 ### 3.3 Permitir por mais tempo
@@ -99,7 +99,7 @@ também há quem use leitor de tela, ditado ou só o celular.
   segundo.
 - Num grupo, a agente diz "pedi sua confirmação no privado"; o colega que
   responde "sim" no grupo não decide nada.
-- Com A5 (b): a pessoa responde três horas depois; a agente recebe a
+- A pessoa responde três horas depois; a agente recebe a
   aprovação e termina o que pediu.
 - "Pode usar o bash por uma hora": `sim 1 hora`; uma hora depois, volta a
   perguntar. `/permissoes` mostra e revoga.
@@ -194,7 +194,7 @@ A6, nos canais com grupo e privado.
 
 #### E20.6: Esperar sem travar
 
-Conforme a decisão A5. Se (b): pedido pendente até 24 h, lembrete às 3 h,
+A5 (b): pedido pendente até 24 h, lembrete às 3 h,
 autorização de uso único, a mensagem "[Aprovação #N] aprovada" à agente, o
 passo refeito; persistência que sobrevive ao reinício.
 

@@ -2,8 +2,8 @@
 # PRD Mídia acessível: nada que a pessoa manda some, e a resposta vem do jeito que ela precisa
 
 > **Situação em 27/11/2026:** rascunho. As decisões marcadas **[proposta]**
-> são padrões sugeridos que o mantenedor confirma antes da execução; **M3**
-> (quem lê áudio, vídeo e documento) está em aberto.
+> são padrões sugeridos que o mantenedor confirma antes da execução. **M3**
+> decidida em 27/11: o leitor é um dos providers que o Donkey já tem.
 >
 > **Depende de:** mídia nos canais (E9) e as ferramentas de áudio
 > (`transcribe_audio`, `text_to_speech`), no master.
@@ -61,7 +61,7 @@ Duas promessas, garantidas pelo código:
 |---|---|
 | M1 | **[proposta]** **Nada some:** todo tipo que um canal entrega (voz, áudio, vídeo, documento, imagem, figurinha, localização, contato, enquete, o que mais vier) vira texto ou nota antes do turno. A nota diz o tipo, o tamanho ou a duração e por que não foi lido. |
 | M2 | **[proposta]** **Voz e áudio são transcritos antes do turno**, pelo STT configurado; a transcrição entra no texto do turno como se a pessoa tivesse escrito e **fica na memória**. O áudio continua no paddock. |
-| M3 | **Em aberto: quem lê o resto.** (a) **Só o que já existe**: PDF e texto pelo extrator local; vídeo vira nota. (b) **Um leitor multimodal** (Gemini, como no Supernova) para vídeo, documento escaneado e imagem quando o modelo da agente não vê, com custo contado. **Recomendação: começar por (a)** e abrir (b) como etapa separada, porque ela traz um provider e um custo novos. |
+| M3 | **Decidida (mantenedor, 27/11): o leitor é um provider que o Donkey já tem.** Imagem, documento escaneado e quadros de vídeo vão a um **modelo com visão escolhido na configuração** entre os providers existentes (por exemplo o DeepSeek V4.1 Flash, que tem capacidade visual), sem provider novo; PDF e texto continuam no extrator local. Áudio de vídeo segue pelo STT (M2). O leitor é usado quando o modelo da conversa não vê, ou para guardar o texto na memória. |
 | M4 | **[proposta]** Documento: o **essencial primeiro** (num boleto, valor, vencimento e a linha digitável completa; num contrato, partes e prazos), depois o texto. O essencial é pedido ao modelo da agente num prompt fixo, não inventado pelo código. |
 | M5 | **[proposta]** Preferências por pessoa, guardadas no `PREFERENCES.md` e apagadas com o resto: `/voz` (respostas em nota de voz onde o canal manda voz), `/transcricao` (devolve a transcrição dos áudios da própria pessoa), `/curto` e `/longo` (tamanho das respostas), `/cego` (descrição detalhada de imagens e respostas sem depender de ver nada). Cada um liga e desliga (`/voz não`). |
 | M6 | **[proposta]** Áudio **encaminhado** volta como transcrição, sem passar pelo modelo, nos canais que dizem que a mensagem foi encaminhada. |
@@ -83,7 +83,7 @@ Duas promessas, garantidas pelo código:
 
 - Responder com vídeo ou imagem gerada.
 - Voz em canais que não mandam voz (fica em texto, com aviso uma vez).
-- Leitura de vídeo (salvo se M3 for (b)).
+- Assistir vídeo inteiro: só quadros e o áudio (M3).
 
 ## 6. Quality gates
 
@@ -195,10 +195,11 @@ num prompt fixo, depois o texto.
 - [ ] Teste com um boleto e um contrato de exemplo (fixtures sem dado real).
 - [ ] Commit: `feat(midia): documento pelo essencial primeiro`.
 
-#### E18.4: O leitor multimodal (se M3 for (b))
+#### E18.4: O leitor com visão
 
-Vídeo, documento escaneado e imagem para modelo que não vê, por um leitor
-configurável, com custo contado.
+M3: imagem, documento escaneado e quadros de vídeo pelo modelo com visão da
+configuração (`[media] reader = "<provider>/<modelo>"`), pela rota de
+providers existente; custo contado como o de um turno.
 
 **Aceite:**
 - [ ] Contra respostas gravadas do leitor.
