@@ -64,7 +64,7 @@ Duas promessas, garantidas pelo código:
 | M3 | **Decidida (mantenedor, 27/11): o leitor é um provider que o Donkey já tem.** Imagem, documento escaneado e quadros de vídeo vão a um **modelo com visão escolhido na configuração** entre os providers existentes (por exemplo o DeepSeek V4.1 Flash, que tem capacidade visual), sem provider novo; PDF e texto continuam no extrator local. Áudio de vídeo segue pelo STT (M2). O leitor é usado quando o modelo da conversa não vê, ou para guardar o texto na memória. |
 | M4 | **[proposta]** Documento: o **essencial primeiro** (num boleto, valor, vencimento e a linha digitável completa; num contrato, partes e prazos), depois o texto. O essencial é pedido ao modelo da agente num prompt fixo, não inventado pelo código. |
 | M5 | **[proposta]** Preferências por pessoa, guardadas no `PREFERENCES.md` e apagadas com o resto: `/voz` (respostas em nota de voz onde o canal manda voz), `/transcricao` (devolve a transcrição dos áudios da própria pessoa), `/curto` e `/longo` (tamanho das respostas), `/cego` (descrição detalhada de imagens e respostas sem depender de ver nada). Cada um liga e desliga (`/voz não`). |
-| M6 | **[proposta]** Áudio **encaminhado** volta como transcrição, sem passar pelo modelo, nos canais que dizem que a mensagem foi encaminhada. |
+| M6 | **[proposta]** Áudio **encaminhado** volta como transcrição, sem passar pelo modelo, nos canais que dizem que a mensagem foi encaminhada (Telegram; WhatsApp pelo GOWA, [PRD WhatsApp via GOWA](PRD-whatsapp-gowa.md)). |
 | M7 | **[proposta]** Custo e limites: a transcrição de um áudio passa do limite configurado (padrão **20 min**) vira nota; o custo aparece no `/insights` como o de um turno. |
 
 ## 4. O que a pessoa vive

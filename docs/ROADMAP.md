@@ -190,8 +190,11 @@ aberto** voltam ao mantenedor antes da execução.
 | 3 | [Aprovação acessível](prd/PRD-aprovacao-acessivel.md) | E20–E21 | Responder por botão, texto ou voz, reconhecido pelo código; só a pessoa decide; o pedido começa pelo essencial; do grupo para o privado; permissões com prazo e `/permissoes` | A5 decidida: o pedido fica pendente até 24 h |
 | 4 | [Proatividade](prd/PRD-proatividade.md) | E22–E24 | O Donkey puxa assunto: prazos, tarefas, o que a pessoa pediu para acompanhar; tetos, horário de trabalho, nunca duas sem resposta | P2 decidida: desligada por padrão, cada pessoa entra |
 | 5 | [Computador por pessoa](prd/PRD-computador-por-pessoa.md) | E25–E29 | O navegador fora do daemon (E25, proposto já); depois, se decidido, computador persistente, despachante sem o socket do Docker no daemon, portão de rede, cofre de senhas, tela | C2 a C7 decididas: vale, no desenho do Supernova; detalhes na linha de base |
+| 6 | [WhatsApp via GOWA](prd/PRD-whatsapp-gowa.md) | E30–E32 | O GOWA como segundo modo do WhatsApp (a Cloud API continua): número comum, voz nativa, encaminhadas, sem janela de 24 h; a queda avisada por outro canal com o código de pareamento | Aprovada em princípio (27/11); W2 a W8 propostas |
 
-A mídia vem antes da aprovação porque a voz que decide um pedido (E20.3)
+O WhatsApp via GOWA independe das outras e pode ser executado a qualquer
+momento; ele destrava a proatividade no WhatsApp (sem a janela de 24 h) e o
+áudio encaminhado da mídia. A mídia vem antes da aprovação porque a voz que decide um pedido (E20.3)
 precisa da transcrição antes do turno (E18.1); as demais etapas da aprovação
 não dependem dela.
 

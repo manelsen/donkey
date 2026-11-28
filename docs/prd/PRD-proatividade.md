@@ -65,7 +65,7 @@ do código são o teto; o modelo decide dentro dele.**
 | P4 | **[proposta]** **Quando:** só no **horário de trabalho da pessoa**, no fuso dela (`USER.md`), padrão **9 h às 18 h, dias úteis**; configurável por pessoa (`/proativo horario 8-17`). Fora dele, nem os fixos (ficam para a abertura da próxima janela). |
 | P5 | **[proposta]** **Quem decide:** o código abre a janela (P3, P4, a última sem resposta, o canal permite); dentro dela, o **modelo auxiliar** responde "vale falar agora? sobre o quê?" e pode dizer que não; o texto sai do modelo da conversa, na voz do Donkey. |
 | P6 | **[proposta]** **Assuntos sensíveis** (saúde, vida pessoal, desempenho, dinheiro): por padrão o Donkey **não volta a eles por conta própria**; a pessoa libera (`/proativo assuntos livres`). |
-| P7 | **[proposta]** **Canal:** a proativa vai ao canal em que a pessoa falou por último, no privado. No WhatsApp, só dentro da janela de 24 h; fora dela, espera a pessoa falar (nada de template nesta PRD). |
+| P7 | **[proposta]** **Canal:** a proativa vai ao canal em que a pessoa falou por último, no privado. No WhatsApp pela **Cloud API**, só dentro da janela de 24 h; fora dela, espera a pessoa falar (nada de template nesta PRD). No WhatsApp pelo **GOWA** ([PRD WhatsApp via GOWA](PRD-whatsapp-gowa.md)) não há janela; valem os tetos, que também protegem o número. |
 | P8 | **[proposta]** **Custo:** as proativas de uma pessoa cabem num teto diário (padrão US$ 0,05), contado como os turnos; acima dele, nenhuma fluida no dia. |
 
 ## 4. O que a pessoa vive
@@ -104,8 +104,8 @@ Os de sempre (`CLAUDE.md`). Mais:
   fora da máquina nem abre pedido de aprovação; pode pesquisar e ler.
 - **P-I4 – Assunto fechado não volta.** Com P6 no padrão, nenhuma fluida
   menciona um tema marcado sensível; o teste usa conversas marcadas.
-- **P-I5 – O canal manda.** No WhatsApp, nenhuma proativa fora da janela de
-  24 h.
+- **P-I5 – O canal manda.** No WhatsApp pela Cloud API, nenhuma proativa
+  fora da janela de 24 h.
 
 ## 8. Épicos e etapas
 
