@@ -174,7 +174,28 @@ dois sentidos incluído.
 | E12 | Supervisão de adapters | **Feito:** E12.1 (auditoria e trava de padrões perigosos) e E12.2 (supervisor nas threads de canal e nos drenos, com `restarting` e `down` no status) feitos; E12.3, IRC, Mattermost e Discord como processo filho (`DONKEY_CHANNEL_PROCESSES`), que isola um `Defect` | Decidida: inspirar-se no OTP |
 | E13 | Canais restantes | **Feito:** ntfy (#264), SimpleX (#265) e BlueBubbles/iMessage (#266) feitos; A2A feito: o servidor (v1.0, pareado como um editor) e o cliente (`delegate_to_agent`, com lista de agentes e aprovação) | Decididas: A2A entra, também como cliente |
 
-## 7. Decidido não fazer
+## 7. Quinta rodada (proposta em 27/11, rascunhos)
+
+Nascida do catálogo do Supernova de 27/11 (computador por pessoa, aprovação
+acessível, mídia lida antes do turno, proatividade, endurecimento), cujo
+modelo de PRD veio do retorno de uma profissional de acessibilidade. Cada
+PRD tem seus épicos e cada épico, etapas atômicas, com aceite e commit
+próprios. Nenhuma está aprovada: as decisões **[proposta]** e as **em
+aberto** voltam ao mantenedor antes da execução.
+
+| Ordem | PRD | Épicos | O que entrega | Decisões em aberto |
+|---:|---|---|---|---|
+| 1 | [Rede e interoperabilidade](prd/PRD-rede-e-interop.md) | E14–E16 | A conexão vai ao endereço conferido (fecha o *DNS rebinding* do HTTP); A2A provado contra o SDK oficial, com fixtures gravadas, prazo por agente e confirmação pelo operador; IRC contra um servidor real | Nenhuma (só propostas) |
+| 2 | [Mídia acessível](prd/PRD-midia-acessivel.md) | E17–E19 | Nada que a pessoa manda some; voz transcrita antes do turno e na memória; documento pelo essencial; `/voz`, `/transcricao`, `/curto`, `/longo`, `/cego` | M3: quem lê vídeo e documento escaneado |
+| 3 | [Aprovação acessível](prd/PRD-aprovacao-acessivel.md) | E20–E21 | Responder por botão, texto ou voz, reconhecido pelo código; só a pessoa decide; o pedido começa pelo essencial; do grupo para o privado; permissões com prazo e `/permissoes` | A5: o turno espera ou o pedido fica pendente até 24 h |
+| 4 | [Proatividade](prd/PRD-proatividade.md) | E22–E24 | O Donkey puxa assunto: prazos, tarefas, o que a pessoa pediu para acompanhar; tetos, horário de trabalho, nunca duas sem resposta | P2: ligada ou desligada por padrão |
+| 5 | [Computador por pessoa](prd/PRD-computador-por-pessoa.md) | E25–E29 | O navegador fora do daemon (E25, proposto já); depois, se decidido, computador persistente, despachante sem o socket do Docker no daemon, portão de rede, cofre de senhas, tela | C2 a C7: escopo, isolamento, despachante, portão, cofre, tela |
+
+A mídia vem antes da aprovação porque a voz que decide um pedido (E20.3)
+precisa da transcrição antes do turno (E18.1); as demais etapas da aprovação
+não dependem dela.
+
+## 8. Decidido não fazer
 
 | Item | Motivo |
 |---|---|
@@ -185,7 +206,7 @@ dois sentidos incluído.
 | Replay de traço | O traço não guarda conteúdo, por decisão de privacidade ("nunca o que foi dito"); reproduzir um turno exigiria guardar mensagens e saídas de ferramentas. A frente 3 da segunda rodada ficou na exportação OpenTelemetry. |
 | Bots isolados (usuários e memória por bot) | Multi-bot é só fachada (E3); isolamento total seria uma instância por cliente. |
 
-## 8. Pendências fora do código
+## 9. Pendências fora do código
 
 - Revogar a chave da OpenRouter que foi colada numa conversa (criar outra) e
   conferir no painel o uso desde então.
@@ -195,7 +216,7 @@ dois sentidos incluído.
 - Confirmar na documentação da Meta se um BSUID (`BR.…`) pode ser destinatário
   de resposta (WA-009).
 
-## 9. Como cada frente é executada
+## 10. Como cada frente é executada
 
 As regras de sempre: TDD com vermelho visível; suíte completa, build e
 checagem de fronteiras verdes antes do primeiro push de cada PR; nas
